@@ -318,15 +318,17 @@ proposed-design:
     order, entries older than the stream's maximum age are pruned, and a map
     from fingerprint and nonce to entries serves partial-sends. The index also
     holds the stream's epoch and its first and last sequence. The epoch tells
-    stream generations apart. At start, and whenever its consumer ends, which
-    deleting, recreating or restoring the stream causes, the service reads the
-    stream's information and the bucket's `stream.generation`; when the record
+    stream generations apart. At start the service reads the stream's
+    information and the bucket's `stream.generation`; when the record
     is missing or its `created` differs from the stream's creation time, the
     service writes a new record whose epoch is the current time in Unix
     nanoseconds, or the recorded epoch plus one when the clock is not ahead of
     it, with a revision-checked write, and the index discards its entries and
-    replays. A stream that is deleted or recreated, or whose record is
-    deleted, starts a new generation with a new epoch; epochs grow while the
+    replays. So a stream deleted or recreated before the service starts, or
+    whose record is deleted, starts a new generation with a new epoch at that
+    start. Not yet specified: what the index does when the stream is deleted
+    or recreated while the service runs; open question Q02 in
+    concepts/deck.yml. Across generations, epochs grow while the
     record survives, and a client follows a generation change whichever way
     the epoch moved, since positions of different epochs do not order and its
     cursor update accepts any other epoch. A restore from a snapshot keeps the
@@ -348,8 +350,9 @@ proposed-design:
     key, the thread's index entries after the cursor: those with a greater
     sequence when the cursor's epoch is the stream's, and all of them
     otherwise. It counts the ones that are not messages of a type other than
-    0, 19 or 46, lists among them the messages whose sending key is the
-    calling key with their nonces, and sets horizon_passed when the cursor's
+    0, 19 or 46 (not yet specified: which of them `own` lists, and with what
+    key identity, across a rotation of the calling key; open question Q01 in
+    concepts/deck.yml), and sets horizon_passed when the cursor's
     epoch is not the stream's or the cursor's sequence is below the stream's
     first sequence minus one. It reads no Discord and no stream message.
     ListUnread takes the same entries in sequence order up to the limit, reads

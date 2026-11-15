@@ -43,10 +43,11 @@ design-challenges:
     it ships to.
   unread-without-state-on-the-service: >-
     The service holds no read state and knows no session, so the client sends,
-    for each of the session's threads, the cursor, a stream position. The
-    service counts from its index and lists, among what it counted, the
-    messages the calling key sent with their nonces; the client takes away the
-    ones its session sent. A message is the session's own when its sending
+    for each of the session's threads, the cursor, a stream position. Not yet
+    specified: which messages a count lists as the calling key's own and how
+    the client matches them to its session's sends across a rotation of the
+    key; open question Q01 in concepts/deck.yml. A message is the session's
+    own when its sending
     key's fingerprint and its nonce match a send the session recorded before
     sending. The client knows its key's fingerprint before any call: it reads
     the Transit key's public half to sign, and the fingerprint is that key's
@@ -122,9 +123,11 @@ proposed-design:
     For a set of threads, the client builds one Cursor per thread from the
     session's cursor_epoch and cursor_sequence. The unread report sends the
     session's threads that the allow and deny lists keep to CountUnread, and
-    its count for each thread is the response's count less the entries of
-    `own` whose nonce is in one of the session's sends under the client's key
-    fingerprint. Read sends them to ListUnread, leaves out of what it prints
+    its count for each thread is the response's count less the session's own
+    messages among it. Not yet specified: which entries of `own` are the
+    session's own across a rotation of the client's key; open question Q01 in
+    concepts/deck.yml. Read sends them to ListUnread, leaves out of what it
+    prints
     the activity whose sender key and nonce match one of the session's sends,
     and, unless `--keep-unread`, moves each thread's cursor to the response's
     `through` position, whether or not anything was listed, with one `UPDATE

@@ -104,8 +104,9 @@ description: >-
   it. Activity that reaches the stream late, such as a held reply or a
   recovered message, is therefore still after a cursor that moved past it in
   snowflake terms. Messages whose type is not 0, 19 or 46 are never counted.
-  Each count includes the calling key's own messages and lists them with
-  their nonces in `own`, and the client takes away those its session sent. A
+  Not yet specified: which messages a count lists in `own` and what identifies
+  the key each was sent with across a rotation of the calling key; open
+  question Q01 in concepts/deck.yml. A
   thread's state for the calling key is NOT_TOUCHED unless the key is in the
   thread's registry entry, whatever its grants say; for a key in the entry
   it is NOT_GRANTED when no grant of the key covers the thread through its

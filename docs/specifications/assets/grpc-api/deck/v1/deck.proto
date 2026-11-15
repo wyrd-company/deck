@@ -38,8 +38,8 @@ service DeckService {
   rpc ListHistory(ListHistoryRequest) returns (ListHistoryResponse);
 
   // CountUnread counts, for each cursor, the activity in its thread after the
-  // cursor that is not a system message, and lists the calling key's own
-  // messages among it. It reads only the activity index.
+  // cursor that is not a system message, and lists own messages among it in
+  // ThreadCount.own. It reads only the activity index.
   rpc CountUnread(CountUnreadRequest) returns (CountUnreadResponse);
 
   // ListUnread returns the activity CountUnread counts, in stream order.
@@ -274,8 +274,9 @@ message ThreadCount {
   // Activity after the cursor that counts, the calling key's own messages
   // included; zero unless the state is touched.
   uint32 count = 3;
-  // The messages within count that the calling key sent through deck, with
-  // their nonces, so the client can take away the ones its session sent.
+  // Not yet specified: which messages within count this lists and what
+  // identifies the key each was sent with across a rotation of the calling
+  // key; open question Q01 in concepts/deck.yml.
   repeated OwnMessage own = 4;
   // Whether the stream no longer holds everything published after the
   // cursor: the cursor is from another epoch, or the stream's oldest message
@@ -283,6 +284,9 @@ message ThreadCount {
   bool horizon_passed = 5;
 }
 
+// OwnMessage is one entry of ThreadCount.own. Not yet specified: what
+// identifies the key it was sent with across a rotation of that key; open
+// question Q01 in concepts/deck.yml.
 message OwnMessage {
   uint64 id = 1;
   string nonce = 2;

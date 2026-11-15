@@ -39,9 +39,10 @@ decision-outcome:
       thread, so nothing published during the send is skipped.
     own-messages: >-
       A session's own messages are known by its key's fingerprint and a nonce,
-      which the client records before it sends. The service lists, within each
-      count, the calling key's messages with their nonces, and the client
-      takes away its session's; in lists, events and resolve the client
+      which the client records before it sends. Not yet specified: how a
+      count's own messages are selected and matched to the session's sends
+      across a rotation of the key; open question Q01 in concepts/deck.yml. In
+      lists, events and resolve the client
       matches sender key and nonce together, so another key's message that
       happens to carry the same nonce is never taken for the session's own.
       Excluding by snowflake or by position fails for a message that reaches

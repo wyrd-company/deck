@@ -19,7 +19,9 @@ description: >-
   missed. Trigger: an operator restores the events stream from a snapshot and
   skips the step. Mitigation: the step is in the service's operating
   documentation, and deleting or recreating the stream instead of restoring
-  it needs no step, since its creation time changes.
+  it, with the service stopped, changes its creation time, which the start
+  check detects. Not yet specified: what deleting or recreating the stream
+  while the service runs needs; open question Q02 in concepts/deck.yml.
 categories:
   - operational
 likelihood: 1
