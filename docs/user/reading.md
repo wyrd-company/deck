@@ -36,6 +36,9 @@ History reads Discord messages without changing the cursor. Threads accept an ID
 thread state in inbox; read and listen leave that thread out and name it on
 stderr. Client channel allow and deny lists filter every operation.
 
+Text output escapes control characters in titles, names and content. Message
+line breaks remain indented; JSON output preserves the original values.
+
 A listen timeout exits 5 and an interrupt exits 130. The
 [CLI specification](../specifications/command-line-interface.yml) defines the
 output, other exit statuses and cursor guarantees.

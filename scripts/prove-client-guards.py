@@ -79,6 +79,20 @@ probes.extend([
      'if c.Channels.Allow == nil {', 'if len(c.Channels.Allow) == 0 {',
      ['go', 'test', '-count=1', '-run', '^TestPresentEmptyAllowRefusesBeforeDial$', './internal/cli']),
 ])
+probes.extend([
+    ('SSH record bound to server-authenticated key', 'internal/cli/ssh_test.go',
+     'Fingerprint: fingerprint,', 'Fingerprint: keyB,',
+     ['go', 'test', '-count=1', '-run', '^TestCommandsOverSSH$', './internal/cli']),
+    ('terminal controls escaped', 'internal/cli/text.go',
+     'unicode.IsControl(r) || unicode.Is(unicode.Cf, r)', 'false && (unicode.IsControl(r) || unicode.Is(unicode.Cf, r))',
+     ['go', 'test', '-count=1', '-run', '^TestTextEscapesUntrustedControls$', './internal/cli']),
+    ('resolve accepts store creation window', 'internal/store/store.go',
+     'if s.empty {', 'if false {',
+     ['go', 'test', '-count=1', '-run', '^TestResolveWhileStoreIsBeingCreated$', './internal/store']),
+    ('session config diagnostics name file', 'internal/cli/cli.go',
+     'lines = append(lines, path+": "+field.Error())', 'lines = append(lines, field.Error())',
+     ['go', 'test', '-count=1', '-run', '^TestSessionConfigurationErrorsNameFileAndFix$', './internal/cli']),
+])
 for probe in probes:
     mutate(*probe)
 print(f'PASS all {len(probes)} client guard probes completed', flush=True)
