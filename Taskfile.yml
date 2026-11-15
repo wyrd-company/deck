@@ -54,6 +54,15 @@ tasks:
     desc: Fail when generated API code differs from the design proto
     cmds:
       - bash scripts/check-generated.sh
+  docs:check:
+    desc: Validate design documents, schemas, fixtures and proto
+    cmds:
+      - bash docs/check.sh
+  config:check:
+    desc: Validate both annotated example configs without network access
+    cmds:
+      - go run ./cmd/deck config validate --config docs/specifications/assets/configuration/examples/client.yml
+      - go run ./cmd/deck service validate --config docs/specifications/assets/configuration/examples/service.yml
   check:
     desc: Run all repository checks
-    deps: [lint, build, test, generate:check, workflows:check, intentional:check]
+    deps: [lint, build, test, generate:check, docs:check, config:check, workflows:check, intentional:check]
