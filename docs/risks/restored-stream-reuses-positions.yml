@@ -1,0 +1,28 @@
+$schema: https://refinery.systems/ontology/risk
+relationships:
+  mitigated-by:
+    - service
+  related-to:
+    - deliver-activity-at-least-once
+slug: restored-stream-reuses-positions
+title: A stream restored from a snapshot without the documented step reuses positions
+description: >-
+  JetStream's snapshot and restore keep a stream's creation time and its
+  sequences (measured by the round 2 review with NATS 2.11.9). The service
+  tells stream generations apart by creation time, so after a restore it
+  keeps the old epoch, sequences after the snapshot are issued again, and a
+  session whose cursor passed them misses the activity that now holds them.
+  The documented step for a restore is to delete `stream.generation` from the
+  registry bucket before the service starts on the restored stream; the
+  service then begins a new generation, every retained activity counts as
+  unread again (a duplicate, which the guarantees allow), and nothing is
+  missed. Trigger: an operator restores the events stream from a snapshot and
+  skips the step. Mitigation: the step is in the service's operating
+  documentation, and deleting or recreating the stream instead of restoring
+  it needs no step, since its creation time changes.
+categories:
+  - operational
+likelihood: 1
+impact: 3
+response-strategy: mitigate
+status: mitigated

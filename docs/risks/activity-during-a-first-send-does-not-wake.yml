@@ -1,0 +1,25 @@
+$schema: https://refinery.systems/ontology/risk
+relationships:
+  mitigated-by:
+    - client
+  related-to:
+    - deliver-activity-at-least-once
+slug: activity-during-a-first-send-does-not-wake
+title: Activity during a session's first send into a thread does not wake it
+description: >-
+  A session records a thread in its local store when its first post or reply
+  into the thread returns; a post's thread does not exist before Discord
+  answers. A person who replies while that send is in flight produces an event
+  a relay resolves before the session holds the thread, so resolve finds no
+  session and the relay wakes nobody for that event. The reply is not lost:
+  the session's cursor starts at or before the send began, so the reply is
+  unread at the session's next command, and any later activity in the thread
+  wakes it. Trigger: a reply within the post's own round trip, under a second
+  in the spike's measurements. Mitigation: the unread guarantee covers the
+  reply; every session command reports it.
+categories:
+  - operational
+likelihood: 1
+impact: 1
+response-strategy: accept
+status: accepted

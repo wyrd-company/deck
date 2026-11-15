@@ -8,8 +8,12 @@ relationships:
   exposes:
     - stolen-client-key-acts-within-its-grants
     - gateway-gap-loses-interactions
-    - send-outcome-lost-in-a-service-crash
+    - send-outcome-unknown
+    - recovery-replays-published-messages
+    - activity-during-a-first-send-does-not-wake
+    - restored-stream-reuses-positions
   references:
+    - deliver-activity-at-least-once
     - discord-conversations
     - command-line-interface
     - configuration

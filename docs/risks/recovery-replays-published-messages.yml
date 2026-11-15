@@ -1,0 +1,27 @@
+$schema: https://refinery.systems/ontology/risk
+relationships:
+  mitigated-by:
+    - service
+  related-to:
+    - deliver-activity-at-least-once
+slug: recovery-replays-published-messages
+title: Recovery can publish a message again, and sessions see it as unread again
+description: >-
+  A thread's recovery boundary, its registry entry's last_message_id, is
+  written after the service publishes, so a stop can leave it behind messages
+  already published. Recovery then reads those messages from Discord again
+  and publishes each one the activity index does not hold. The index holds
+  what the stream holds, so a message older than the stream's maximum age, or
+  one published before the stream changed generation, is published again with
+  a new position and is unread again for every session whose cursor it
+  follows; within the stream's duplicate window JetStream drops the repeat.
+  Trigger: a service stop between a publish and the boundary's write, followed
+  by a recovery after the message has left the stream. Mitigation: the
+  boundary is raised as the service publishes; the index check removes every
+  repeat the stream still holds; and a repeat is a duplicate, never a loss.
+categories:
+  - operational
+likelihood: 2
+impact: 1
+response-strategy: accept
+status: accepted

@@ -2,23 +2,25 @@ $schema: https://refinery.systems/ontology/risk
 relationships:
   mitigated-by:
     - service
+  related-to:
+    - deliver-activity-at-least-once
 slug: gateway-gap-loses-interactions
 title: Component uses and poll votes during a gateway gap are lost
 description: >-
-  When a bot's gateway session drops and cannot resume, or the service is
-  not running, Discord does not replay the events in between. Messages in
-  that gap are recovered: on every READY, the first after a start included,
-  the service reads the messages after each registered thread's recorded
-  boundary, for threads active now and threads archived since the bot was
-  last seen, and publishes them. Component uses and poll votes in the gap
-  cannot be read back from Discord, so they never reach the stream, and a
-  person who pressed a button during the gap saw "This interaction failed".
-  The same holds for the poll result Discord posts in a text channel for a
-  text channel post's starter message, since recovery reads threads and not
-  their parent channels. Mitigation: disgo resumes sessions where Discord
-  allows, the healthcheck fails while a session is down so the container
-  runtime can act, and the poll itself still shows every vote in Discord.
-  Accepted for component uses.
+  When a bot's gateway session drops and cannot resume, or the service is not
+  running, Discord does not replay the events in between. Messages in that
+  gap are recovered: on every READY the service reads, for each of the bot's
+  registered threads whose newest message is beyond its boundary, the
+  messages after the boundary, and publishes them; a thread whose read fails
+  keeps its boundary and is read again at the next READY. Component uses and
+  poll votes in the gap cannot be read back from Discord, so they never reach
+  the stream, and a person who pressed a button during the gap saw "This
+  interaction failed". The same holds for the poll result Discord posts in a
+  text channel for a text channel post's starter, since recovery reads
+  threads and not their parent channels. Mitigation: disgo resumes sessions
+  where Discord allows, the healthcheck fails while a session is down so the
+  container runtime can act, and the poll itself still shows every vote in
+  Discord. Accepted for component uses.
 categories:
   - operational
 likelihood: 2

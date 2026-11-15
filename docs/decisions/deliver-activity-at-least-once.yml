@@ -1,0 +1,104 @@
+$schema: https://refinery.systems/ontology/decision-record
+relationships:
+  contextualizes:
+    - discord-conversations
+    - service
+    - client
+    - events
+    - grpc-api
+  shaped-by:
+    - discord-forum-post-and-gateway-reply
+    - keep-message-history-in-discord
+    - keep-read-cursors-on-the-client
+  related-to:
+    - send-outcome-unknown
+    - recovery-replays-published-messages
+    - gateway-gap-loses-interactions
+    - activity-during-a-first-send-does-not-wake
+    - restored-stream-reuses-positions
+description: >-
+  Activity passes through Discord, the service's memory, the event stream and
+  each client's store, and any of them can fail between two steps. What deck
+  promises at each step decides how much state it keeps. The issue asks that a
+  reply reach its session's relay within seconds and that a session's inbox
+  show what it has not read; it does not ask that nothing ever repeat. This
+  record holds deck's guarantees in one place, and every mechanism in the
+  service, client, API and event designs exists to keep one of them.
+considered-options:
+  "1": >-
+    Exactly once: a durable journal of every send, a durable set of every
+    published snowflake checked before each publish, and client store writes
+    tied to the calls that cause them.
+  "2": >-
+    At least once with named residuals: activity in touched threads reaches
+    the stream at least once, unread never misses what the stream holds after
+    a cursor, a repeated send is recognised within a stated horizon, and every
+    case outside these promises is a named risk.
+  "3": >-
+    Best effort: publish what the gateway delivers while the service runs,
+    with no recovery and no send recognition.
+decision-outcome:
+  chosen-option: 2
+  justification: >-
+    Option 2 delivers what the issue needs with the state deck already has:
+    the stream, the thread registry and the client's store. Option 1 needs a
+    second durable store on the service and still cannot make Discord and
+    JetStream commit together, so its own crash windows remain. Option 3 loses
+    every reply sent while the service restarts. A duplicate costs a reader a
+    second look; a loss costs a conversation, so every residual below is
+    either a duplicate or an announced loss.
+  decisions:
+    publication: >-
+      Every message in a touched thread that the thread's bot can read is
+      published to the thread's subject at least once while the thread stays
+      registered: live from the gateway, or, when the gateway missed it, by
+      recovery at the bot's next READY. The exception is a message the
+      thread's bot itself authored with type 0 or 19, which only deck sends:
+      that message is published by its send alone, once, with its key and
+      nonce, and is missing from the stream when the service stops between
+      Discord's answer and the publish (risk send-outcome-unknown). A message
+      can be published twice when recovery reads it again after its
+      publication (risk recovery-replays-published-messages). Component uses
+      and poll votes are published only when the gateway delivers them live,
+      at most once (risk gateway-gap-loses-interactions). Activity in a thread
+      that is not touched is never published.
+    unread: >-
+      A session's unread activity in a thread is every activity the stream
+      holds at a position after the session's cursor, except the messages the
+      session sent itself, recognised by the sending key and nonce, and
+      messages of a type other than 0, 19 or 46. Nothing the stream holds
+      after a cursor is missed. A cursor starts at or before the stream's
+      position when the session's first send into the thread began, so
+      activity published during that send is unread. Activity that left the
+      stream at its maximum age is not unread, and the count says so
+      (horizon_passed); it is read with history. A session sees an activity
+      twice when it was published twice, and sees every retained activity
+      again when the service's record of the stream's generation is lost,
+      since the stream then counts as new. A relay resolving activity that
+      arrives while a session's first send into the thread is in flight finds
+      no session to wake (risk activity-during-a-first-send-does-not-wake). A
+      stream restored from a snapshot without the documented step reuses
+      positions, and activity at a reused position is missed (risk
+      restored-stream-reuses-positions).
+    repeated-sends: >-
+      A send repeated with the same key and nonce returns the first send's
+      result while the first is in flight, or while the stream holds a message
+      the first send published, which is the stream's maximum age, whether or
+      not the service restarted in between. A repeat of a send that failed
+      sends again. After that horizon, or when the first send's message never
+      reached the stream (the service stopped first, or Discord's answer to a
+      forum post was lost), a repeat sends again and can duplicate the reply
+      or post; Discord's own nonce check narrows this for replies and text
+      channel posts for a few minutes (risk send-outcome-unknown). The client
+      never repeats a send on its own.
+expected-outcomes:
+  positive:
+    - The service keeps no state beyond the stream, the registry bucket and
+      sends in flight, and the client none beyond its store.
+    - Every gap in a promise is a named risk with its trigger, so a build
+      task meets a promise or carries a residual and has nothing to invent.
+  negative:
+    - A session can see a message or a recovered message twice.
+    - A forum post or a reply can be duplicated by a repeat after the service
+      lost its outcome.
+    - Component uses and poll votes during a gateway gap are lost.
