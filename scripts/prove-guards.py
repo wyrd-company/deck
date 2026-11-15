@@ -50,8 +50,19 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--integration', action='store_true')
     args = parser.parse_args()
-    require_pass(['go', 'test', '-count=1', './internal/config', './internal/vault', './internal/transport'])
+    require_pass(['go', 'test', '-count=1', './cmd/deck', './internal/config', './internal/vault', './internal/transport'])
     probes = [
+        ('validation diagnostic file prefix', 'cmd/deck/main.go',
+         'lines = append(lines, path+": "+field.Error())',
+         'lines = append(lines, field.Error())',
+         ['go', 'test', '-count=1', '-run', '^TestInvalidConfigCommand$', './cmd/deck']),
+        ('validation diagnostic exact lines', 'cmd/deck/main.go',
+         'fmt.Fprintln(stderr, "deck: "+line)',
+         'fmt.Fprintln(stderr, "deck: "+line); fmt.Fprintln(stderr, "deck: "+line); fmt.Fprintln(stderr, "deck: vault.timeout: bogus")',
+         ['go', 'test', '-count=1', '-run', '^TestInvalidConfigCommand$', './cmd/deck']),
+        ('validation JSON error category', 'cmd/deck/main.go',
+         '"category": "invalid"', '"category": "failed"',
+         ['go', 'test', '-count=1', '-run', '^TestInvalidConfigCommand$', './cmd/deck']),
         ('schema validation', 'internal/config/load.go',
          'if err := compiled[name].Validate(raw); err != nil {',
          'if err := compiled[name].Validate(raw); false {',
