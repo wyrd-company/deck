@@ -77,6 +77,8 @@ Until a baseline release tag exists, the intentional check uses `intentional sta
 Homebrew formula in `dist/`, without publishing. `task release:compatibility
 PUBLISHER_ROOT=/path/to/repo.wyrd.foo` additionally exercises the pinned
 publisher's validation, immutable queue, package staging and AUR rendering.
+`task release:install:check` proves a packed npm install using local snapshot bytes
+in place of the HTTPS download; run that proof on a disposable machine.
 It needs `rpm` and `dpkg-deb`, and a clean publisher checkout at the configured
 `PUBLISHER_COMMIT`. The current pin's product allowlist must admit deck before
 that gate can pass; it is an external release prerequisite.

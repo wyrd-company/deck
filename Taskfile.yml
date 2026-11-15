@@ -137,6 +137,12 @@ tasks:
     cmds:
       - RELEASE_VERSION="{{.RELEASE_VERSION}}" {{.GORELEASER}} release --snapshot --clean --parallelism 2
       - python3 scripts/create-homebrew-formula.py --artifacts-dir dist --version "{{.RELEASE_VERSION}}" --output dist/homebrew/Formula/deck.rb
+  release:install:check:
+    desc: Prove packed npm install with local snapshot bytes (run in a disposable machine after release:snapshot)
+    vars:
+      RELEASE_VERSION: '{{.RELEASE_VERSION | default "0.0.0"}}'
+    cmds:
+      - node scripts/prove-release-install.js dist "{{.RELEASE_VERSION}}"
   release:compatibility:
     desc: Prove the pinned publisher queue/staging/AUR contract without publishing (needs rpm, dpkg-deb)
     requires:
