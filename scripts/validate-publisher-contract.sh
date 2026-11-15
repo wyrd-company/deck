@@ -40,5 +40,5 @@ python3 "$repository_script" stage "$inbox/$submitted_path" "$artifacts" "$outpu
 python3 "$repository_script" render-aur "$inbox/$submitted_path" "$output/aur" --artifacts "$artifacts"
 test -s "$output/stage/.new-rpms"
 test -s "$output/aur/PKGBUILD"
-test -s "$output/aur/.SRCINFO"
+grep -Fxq "pkgname='deck-bin'" "$output/aur/PKGBUILD"
 echo 'PASS pinned publisher queue validation, package staging, and AUR rendering'
