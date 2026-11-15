@@ -1,0 +1,12 @@
+$schema: https://refinery.systems/ontology/assumption
+relationships: {}
+description: >-
+  Each bot deck serves is in fewer than 2,500 servers, the size at which
+  Discord requires a bot to shard its gateway connection, so the service
+  keeps one gateway session per bot and no shard manager.
+end-descendant-type: technical-design
+evidence:
+  - deck's bots serve the servers of the teams that deploy them; the test bot
+    is in one.
+  - disgo offers a shard manager (`bot.Client.OpenShardManager`) if a bot
+    outgrows one session, which a change to the service design would adopt.

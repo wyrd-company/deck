@@ -1,0 +1,23 @@
+$schema: https://refinery.systems/ontology/risk
+relationships:
+  mitigated-by:
+    - service
+slug: gateway-gap-loses-interactions
+title: Component uses and poll votes during a gateway gap are lost
+description: >-
+  When a bot's gateway session drops and cannot resume, Discord does not
+  replay the events between the old session and the new one. Messages in that
+  gap are recovered: on the new session's READY the service reads each active
+  touched thread's messages after the newest one it holds and publishes them.
+  Component uses and poll votes in the gap cannot be read back from Discord,
+  so they never reach the stream, and a person who pressed a button during
+  the gap saw "This interaction failed". Mitigation: disgo resumes sessions
+  where Discord allows, the healthcheck fails while a session is down so the
+  container runtime can act, and the poll itself still shows every vote in
+  Discord. Accepted for component uses.
+categories:
+  - operational
+likelihood: 2
+impact: 2
+response-strategy: mitigate
+status: mitigated
