@@ -274,8 +274,8 @@ message ThreadCount {
   // Activity after the cursor that counts, the calling key's own messages
   // included; zero unless the state is touched.
   uint32 count = 3;
-  // One entry per counted message sent under the calling key's name
-  // (sent_by), including messages sent before its public key rotated.
+  // One entry per counted copy of a deck-sent message: every counted
+  // index entry with sender_key and nonce, whichever key or name sent it.
   repeated OwnMessage own = 4;
   // Whether the stream no longer holds everything published after the
   // cursor: the cursor is from another epoch, or the stream's oldest message
@@ -283,9 +283,9 @@ message ThreadCount {
   bool horizon_passed = 5;
 }
 
-// OwnMessage is one counted message sent under the calling key's name.
+// OwnMessage is one counted copy of a deck-sent message, from any key/name.
 // The client subtracts it when sender_key and nonce together match a send
-// recorded by the session, including a send made before key rotation.
+// recorded by the session, including a send made before rotation or rename.
 message OwnMessage {
   uint64 id = 1;
   string nonce = 2;

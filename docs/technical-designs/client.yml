@@ -44,8 +44,9 @@ design-challenges:
   unread-without-state-on-the-service: >-
     The service holds no read state and knows no session, so the client sends,
     for each of the session's threads, the cursor, a stream position. The
-    service returns counted messages sent under the calling key's name in
-    `own`, each with its original sending fingerprint and nonce. A message
+    service returns one `own` entry per counted copy of every deck-sent
+    message with sender_key and nonce, from any key or name, each with its
+    original sending fingerprint and nonce. A message
     is the session's own when its sending
     key's fingerprint and its nonce match a send the session recorded before
     sending. The client knows its key's fingerprint before any call: it reads
@@ -147,8 +148,12 @@ proposed-design:
     Validation includes S recording send (A,n) for message M after its cursor,
     then rotating public key A to B under name K with the same grants, store
     and session. CountUnread returns M in own with (A,n); S subtracts it for
-    count 0, and read suppresses M for 0 printed. Another session's send
-    (B,n), even under K, remains unread for S: its fingerprint differs.
+    count 0, and read suppresses M for 0 printed. For rename, K becomes K2
+    with A unchanged; S sends M as (A,n) under K and M2 as (A,n2) under K2,
+    touching the thread for K2. Own lists both; count is 0 and read prints 0.
+    Renaming and rotating together also matches the stored pairs. For the
+    same-nonce trace S holds (A,n), and another session sends (B,n) under K;
+    own has two entries, S's count is 1 and read prints 1.
   listen: >-
     Listen sends the threads' cursors to the Listen call and reads responses
     until one carries activity that is not the session's own (sender key and

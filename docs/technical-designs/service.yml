@@ -385,11 +385,11 @@ proposed-design:
     key, the thread's index entries after the cursor: those with a greater
     sequence when the cursor's epoch is the stream's, and all of them
     otherwise. It counts the ones that are not messages of a type other than
-    0, 19 or 46, and lists in `own` one entry per counted message whose
-    sent_by is the calling key's name, with its id, nonce and original
-    sending fingerprint as sender_key. This includes messages sent before
-    that name's public key rotated; the service never selects own by the
-    caller's current fingerprint. It sets horizon_passed when the cursor's
+    0, 19 or 46, and lists in `own` one entry per counted copy of a deck-sent
+    message: every counted index entry with sender_key and nonce, whichever
+    key or name sent it. Each entry carries its id, nonce and original
+    sending fingerprint as sender_key; selection uses neither the caller's
+    name nor its fingerprint. It sets horizon_passed when the cursor's
     epoch is not the stream's or the cursor's sequence is below the stream's
     first sequence minus one. It reads no Discord and no stream message.
     ListUnread takes the same entries in sequence order up to the limit, reads

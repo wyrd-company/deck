@@ -176,9 +176,11 @@ aggregates:
       unread activity in the thread is every activity the stream holds after
       the cursor, except the messages the session sent (matched by sender key
       and nonce) and system messages. A key keeps its name through public-key
-      rotation; counts select own messages by that name and identify each by
-      its original sending fingerprint and nonce, so count exclusion and read
-      suppression use the same session send record across rotation.
+      rotation; counts carry every deck-sent counted copy with sender_key and
+      nonce, whichever key or name sent it, and the client matches its
+      original sending fingerprint and nonce. Count exclusion and read
+      suppression use the same session send record across rotation, rename,
+      or both together.
     identity: The session's primary identifier (the first configured variable
       that is set) and the thread's snowflake.
     commands:

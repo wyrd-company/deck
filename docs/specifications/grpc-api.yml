@@ -105,8 +105,10 @@ description: >-
   it. Activity that reaches the stream late, such as a held reply or a
   recovered message, is therefore still after a cursor that moved past it in
   snowflake terms. Messages whose type is not 0, 19 or 46 are never counted.
-  Each ThreadCount.own contains one entry per counted message whose `sent_by`
-  is the calling key's name, whatever public key that name held when it sent.
+  Each ThreadCount.own contains one entry per counted copy of a deck-sent
+  message: every counted index entry with both sender_key and nonce,
+  whichever key or name sent it. The service selects by neither the calling
+  key's name nor its fingerprint.
   Each OwnMessage carries `id`, `nonce` and `sender_key`, the sending key's
   original SHA256 fingerprint. The client subtracts each entry exactly when
   its sender_key and nonce together match a send recorded for the session;
@@ -181,7 +183,10 @@ validation-criteria: >-
   cursor. Rotate the public key from A to B under the same name K, retaining
   the grants, store and session. CountUnread counts M and returns its own
   entry with sender_key A and nonce n; S subtracts it, giving count 0.
-  ListUnread returns M with sender_key A and nonce n; read prints 0. With two
-  keys sending the same nonce, only the entry matching S's sending
-  fingerprint is subtracted or suppressed; the other key's message remains
-  unread, including when both sends used name K before and after rotation.
+  ListUnread returns M with sender_key A and nonce n; read prints 0. For the
+  rename trace, K becomes K2 with public key A unchanged. S sends M as (A,n)
+  under K and M2 as (A,n2) under K2, touching the thread for K2. Own lists
+  both entries; count is 0 and read prints 0. Renaming and rotating together
+  uses the same stored pairs. For the same-nonce trace, S holds (A,n) and
+  another session sends (B,n) under K: own has two entries, S's count is 1
+  and read prints 1. Matching by nonce alone fails this trace.

@@ -39,9 +39,9 @@ decision-outcome:
       thread, so nothing published during the send is skipped.
     own-messages: >-
       A session's own messages are known by its key's fingerprint and a nonce,
-      which the client records before it sends. A count selects own messages
-      by the calling key's name and carries each message's original sending
-      fingerprint and nonce, as grpc-api specifies. In counts, lists, events
+      which the client records before it sends. A count carries every counted
+      copy of a deck-sent message with sender_key and nonce, whichever key or
+      name sent it, as grpc-api specifies. In counts, lists, events
       and resolve the client
       matches sender key and nonce together, so another key's message that
       happens to carry the same nonce is never taken for the session's own.
@@ -58,6 +58,6 @@ expected-outcomes:
     - Read state does not follow a session to another machine.
     - >-
       Each unread call carries one cursor per thread of the session, and each
-      count carries own messages under the calling key's name for the client
-      to subtract by their sending fingerprint and nonce, including across a
-      rotation of that key.
+      count carries every deck-sent counted copy with sender_key and nonce for
+      the client to subtract by its sending fingerprint and nonce, including
+      across a rotation, a rename or both together.
