@@ -1,0 +1,122 @@
+$schema: https://refinery.systems/ontology/spike
+title: A Transit key signs the SSH handshake for gRPC served with Wish
+
+relationships:
+  references:
+    - transport
+    - grpc-api
+  shapes:
+    - carry-grpc-in-an-ssh-subsystem-channel
+
+objective:
+  - Can an ed25519 key in OpenBao Transit be the SSH identity of a client, so
+    that the private key never leaves OpenBao?
+  - Does a Wish server that knows only that key's public half accept the
+    handshake, and refuse a second, unknown Transit key?
+  - Can gRPC run over one SSH channel, with unary calls, a server stream and
+    concurrent calls?
+  - Can a gRPC handler learn which SSH key the call came in on?
+  - How many Transit signatures does one connection cost?
+
+background:
+  current-design: >-
+    The operator chose gRPC over SSH served with Wish, with the client's SSH
+    identity backed by its Transit key, and TLS with a built-in ACME client as
+    the fallback if that fails. No deck code exists yet.
+  problems:
+    - gRPC expects an HTTP/2 byte stream; SSH offers channels on an
+      authenticated connection, and nothing joins the two in either library.
+    - The service has to resolve every call to the calling key's grants, so the
+      key's identity has to reach the gRPC handler.
+    - Transit signs over its HTTP API; an SSH client needs a signer that
+      produces SSH signature blobs.
+
+ideas:
+  - >-
+    An ssh.Signer whose PublicKey is read from the Transit key and whose Sign
+    posts the session data to Transit's sign endpoint and wraps the raw
+    ed25519 signature as an ssh-ed25519 signature.
+  - >-
+    A Wish subsystem named `deck` whose handler hands the session channel, as a
+    net.Conn, to a net.Listener that a grpc.Server serves. The client opens a
+    session channel, requests the subsystem, and gives the channel to gRPC
+    through a context dialer.
+  - >-
+    gRPC transport credentials whose server handshake reads the key
+    fingerprint that the public-key handler stored on the SSH context and
+    returns it as AuthInfo, so every handler reads it from the call's peer.
+
+environment:
+  location: >-
+    Branch `task/2-design` in wyrd-company/deck,
+    `docs/spikes/assets/transit-key-signs-ssh-for-grpc/`, in the standalone
+    module `docs/spikes/assets` (not part of deck's build). `run.sh` starts an
+    OpenBao dev server listening on a unix socket in a temporary directory,
+    enables Transit, creates the ed25519 keys `deck-client` and `deck-stranger`,
+    runs `main.go` against the socket, and stops the server. The gRPC service
+    is the standard health service, so no generated code is needed. The run
+    below is `result.jsonl` beside the program.
+  tools:
+    - Go 1.27.3, linux/amd64
+    - OpenBao v2.7.2 (`bao server -dev` with an extra unix listener)
+    - github.com/openbao/openbao/api/v2 v2.7.1
+    - charm.land/wish/v2 v2.0.5 and charm.land/ssh v0.4.3
+    - golang.org/x/crypto v0.59.0
+    - google.golang.org/grpc v1.85.0
+
+findings:
+  transit-key-is-the-ssh-identity:
+    verdict: confirmed working
+    measurements:
+      handshake-ms: 1
+      transit-signs-per-connection: 1
+    notes: >-
+      Measured: the client reads the Transit key's latest ed25519 public key,
+      and the handshake with the Transit-backed signer completes. One SSH
+      connection costs one Transit signature, and eight further calls on it
+      cost none.
+
+  unknown-key-refused:
+    verdict: confirmed working
+    measurements:
+      transit-signs: 0
+    notes: >-
+      Measured: the second Transit key fails with "ssh: unable to authenticate"
+      and the server's public-key handler refuses it once. The client offers
+      the key before signing and the server rejects the offer, so a refused key
+      costs no Transit signature.
+
+  grpc-over-a-subsystem-channel:
+    verdict: confirmed working
+    notes: >-
+      Measured: Health.Check returns SERVING over the `deck` subsystem channel.
+      Health.Watch, a server stream, delivers SERVING and then NOT_SERVING when
+      the server changes the status. Eight concurrent Check calls succeed on the
+      same channel. The connection's deadlines are no-ops, and gRPC needs none.
+
+  caller-identity-reaches-the-handler:
+    verdict: confirmed working
+    notes: >-
+      Measured: unary and stream interceptors read the fingerprint from
+      peer.AuthInfo and it equals the Transit key's SHA256 fingerprint.
+
+  openbao-over-a-unix-socket:
+    verdict: confirmed working
+    notes: >-
+      Measured: the OpenBao Go client reaches the dev server at a unix://
+      address. The client cleared any ambient token and read the address and
+      token only from its flags.
+
+conclusion: >-
+  gRPC over SSH with Wish works with a Transit-backed client key, and the
+  fallback the issue names (TLS with a built-in ACME client) is not needed. The
+  service carries one HTTP/2 connection per SSH session channel on a `deck`
+  subsystem, and lifts the SSH key's fingerprint into gRPC AuthInfo, where
+  each call resolves its grants. A client pays one Transit signature per
+  connection.
+
+next-steps:
+  - The transport technical design specifies the subsystem, the signer, the
+    credentials and the keepalive.
+  - The decision record carry-grpc-in-an-ssh-subsystem-channel records the
+    channel arrangement against SSH port forwarding.
