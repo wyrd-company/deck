@@ -2,7 +2,9 @@
 """Restore every source mutation and require the corresponding behavior test to fail.
 
 Run alone in an implementation worktree. A compile failure is not evidence that
-its guard works. The final PASS marker is emitted only after every probe ends.
+its guard works. Each probe runs only its named behavior test; this is targeted
+mutation evidence, not a claim of exhaustive coverage. The final PASS marker is
+emitted only after every probe ends.
 """
 from pathlib import Path
 import runpy
@@ -142,10 +144,10 @@ probe('ListChannels returns required-tag flag', 'handler.go',
       'c.RequiresTag = requires', 'c.RequiresTag = requires && false',
       './internal/service', 'TestListChannelsAnswer')
 probe('metadata outages retain unavailable classification', 'handler.go',
-      'return nil, nil, existing, discord.Error(err)', 'return nil, nil, existing, denied()',
+      'return nil, nil, existing, discord.MetadataError(err)', 'return nil, nil, existing, denied()',
       './internal/service', 'TestMetadataReadErrors')
 probe('non-guild metadata uses the uniform refusal', 'discord/errors.go',
-      'if errors.Is(err, errNotGuild) {', 'if false {',
+      'errors.Is(err, errNotGuild) ||', 'errors.Is(err, errNotGuild) && false ||',
       './internal/service', 'TestMetadataReadErrors')
 probe('empty bot does not disclose an unreachable touched thread', 'handler.go',
       'if bot == "" && !reachable {', 'if false {',
@@ -153,4 +155,46 @@ probe('empty bot does not disclose an unreachable touched thread', 'handler.go',
 probe('single-bot grants accept empty bot references', 'handler.go',
       'if len(bots) != 1 {', 'if len(bots) != 1 || true {',
       './internal/service', 'TestEmptyBotTouchedAndSingleBot')
-print(f'PASS all {completed} service guard probes completed', flush=True)
+probe('flight identity includes the key fingerprint', 'send.go',
+      'id := h.fingerprints[k.Name] + ":" + nonce', 'id := nonce',
+      './internal/service', 'TestFlightsSeparateKeyFingerprints')
+probe('a flight refuses another operation', 'send.go',
+      'if f.operation != operation {', 'if false {',
+      './internal/service', 'TestFlightRejectsDifferentOperation')
+probe('failed flights are removed so a repeat can send', 'send.go',
+      'delete(h.flights, id)', '_ = id',
+      './internal/service', 'TestFailedFlightCanRetry')
+probe('completed Reply returns the retained result without sending', 'send.go',
+      'if completed != nil && len(completed.Messages) > 0 {', 'if false {',
+      './internal/service', 'TestCompletedReplyReplay')
+probe('completed Reply refreshes metadata and rechecks actual thread grants', 'handler.go',
+      'if c.Thread == nil {', 'return c.Thread,nil; if c.Thread == nil {',
+      './internal/service', 'TestCompletedReplyReplay')
+probe('publisher continues beyond four returned publish errors', 'activity/publisher.go',
+      'if delay < 2*time.Second {',
+      'if delay >= 400*time.Millisecond { q.done<-Result{Err:err};close(q.done);p.mu.Lock();p.queue=p.queue[1:];p.mu.Unlock();break }; if delay < 2*time.Second {',
+      './internal/service/activity', 'TestPublishRetryAndEnvelope')
+probe('history full-page probe exposes more results', 'handler.go',
+      'out.More = len(more) > 0', 'out.More = len(more) > 0 && false',
+      './internal/service', 'TestHistoryMoreAndBeforeCursor')
+probe('history before probe uses the oldest page message', 'handler.go',
+      'before = uint64(messages[0].ID)', 'before = 0',
+      './internal/service', 'TestHistoryMoreAndBeforeCursor')
+probe('history REST page passes the requested before cursor', 'discord/client.go',
+      'snowflake.ID(before), snowflake.ID(after), limit',
+      'snowflake.ID(0), snowflake.ID(after), limit',
+      './internal/service', 'TestHistoryMoreAndBeforeCursor')
+probe('known StartThread failures delete the starter', 'send.go',
+      'if !discord.Unknown(err) {', 'if false {',
+      './internal/service', 'TestStarterCleanupAfterThreadFailure')
+probe('unknown StartThread outcomes retain the starter', 'send.go',
+      'if !discord.Unknown(err) {', 'if true {',
+      './internal/service', 'TestStarterCleanupAfterThreadFailure')
+probe('position lookup failure finishes the pending reply attempt', 'send.go',
+      'h.Registry.FinishReply(id, k.Name, false, false)\n\t\t\treturn nil, unavailable()',
+      'return nil, unavailable()',
+      './internal/service', 'TestReplyPositionFailureCleansTouch')
+probe('metadata HTTP refusals take precedence over Discord error codes', 'discord/errors.go',
+      'errors.As(err, &r) && r.Response != nil && (r.Response.StatusCode == 403 || r.Response.StatusCode == 404)',
+      'errors.As(err, &r) && false', './internal/service', 'TestMetadataReadErrors')
+print(f'PASS all {completed} targeted service mutation probes completed', flush=True)

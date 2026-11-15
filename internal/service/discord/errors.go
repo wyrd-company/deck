@@ -35,10 +35,16 @@ func Unknown(err error) bool {
 	var r *rest.Error
 	return !errors.As(err, &r) || r.Response == nil || r.Response.StatusCode >= 500
 }
-func Error(err error) error {
-	if errors.Is(err, errNotGuild) {
+
+// MetadataError hides target existence before applying ordinary REST mappings.
+func MetadataError(err error) error {
+	var r *rest.Error
+	if errors.Is(err, errNotGuild) || errors.As(err, &r) && r.Response != nil && (r.Response.StatusCode == 403 || r.Response.StatusCode == 404) {
 		return status.Error(codes.PermissionDenied, "target is not granted")
 	}
+	return Error(err)
+}
+func Error(err error) error {
 	if err == nil {
 		return nil
 	}

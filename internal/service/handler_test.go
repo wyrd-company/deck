@@ -50,6 +50,12 @@ type fakeDiscord struct {
 	entered          chan struct{}
 	archived, locked bool
 	metadataStatus   int
+	metadataCode     int
+	startReject      int
+	startLose        bool
+	historyMore      bool
+	threadName       string
+	replyID          string
 	onSend           func()
 }
 
@@ -74,7 +80,9 @@ func (f *fakeDiscord) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	f.requests = append(f.requests, request{r.Method, r.URL.RequestURI(), body})
 	reject, lose, pollFail, already, block, entered, onSend := f.reject, f.lose, f.pollFail, f.already, f.block, f.entered, f.onSend
 	archived, locked := f.archived, f.locked
-	metadataStatus := f.metadataStatus
+	metadataStatus, metadataCode := f.metadataStatus, f.metadataCode
+	startReject, startLose, historyMore, threadName := f.startReject, f.startLose, f.historyMore, f.threadName
+	replyID := f.replyID
 	f.mu.Unlock()
 	w.Header().Set("Content-Type", "application/json")
 	respond := func(v any) { _ = json.NewEncoder(w).Encode(v) }
@@ -82,7 +90,7 @@ func (f *fakeDiscord) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method == "GET" {
 		if metadataStatus != 0 {
 			w.WriteHeader(metadataStatus)
-			respond(map[string]any{"code": 0, "message": "private upstream error"})
+			respond(map[string]any{"code": metadataCode, "message": "private upstream error"})
 			return
 		}
 		switch path {
@@ -101,7 +109,15 @@ func (f *fakeDiscord) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		default:
 			if strings.HasSuffix(path, "/messages") {
 				if r.URL.Query().Get("limit") == "1" {
-					respond([]any{})
+					if historyMore {
+						id := "101"
+						if r.URL.Query().Get("after") != "" {
+							id = "104"
+						}
+						respond([]any{messageJSON(id, "100", map[string]any{"content": "probe"})})
+					} else {
+						respond([]any{})
+					}
 					return
 				}
 				respond([]any{messageJSON("103", "100", map[string]any{"content": "newer"}), messageJSON("102", "100", map[string]any{"content": "older"})})
@@ -113,6 +129,9 @@ func (f *fakeDiscord) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				parent = "20"
 			}
 			value := threadJSON(id, parent)
+			if threadName != "" {
+				value["name"] = threadName
+			}
 			value["thread_metadata"] = map[string]any{"archived": archived, "locked": locked}
 			respond(value)
 		}
@@ -150,6 +169,16 @@ func (f *fakeDiscord) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "/channels/20/messages":
 		respond(messageJSON("200", "20", body))
 	case "/channels/20/messages/200/threads":
+		if startLose {
+			conn, _, _ := w.(http.Hijacker).Hijack()
+			_ = conn.Close()
+			return
+		}
+		if startReject != 0 {
+			w.WriteHeader(400)
+			respond(map[string]any{"code": startReject, "message": "private StartThread rejection"})
+			return
+		}
 		if already {
 			w.WriteHeader(400)
 			respond(map[string]any{"code": 160004, "message": "already has thread"})
@@ -162,7 +191,10 @@ func (f *fakeDiscord) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			respond(map[string]any{"code": 50035, "message": "no poll"})
 			return
 		}
-		respond(messageJSON("101", strings.Split(path, "/")[2], body))
+		if replyID == "" {
+			replyID = "101"
+		}
+		respond(messageJSON(replyID, strings.Split(path, "/")[2], body))
 	}
 }
 func (f *fakeDiscord) posts() []request {

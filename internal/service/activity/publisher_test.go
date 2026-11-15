@@ -48,7 +48,19 @@ func TestPublishRetryAndEnvelope(t *testing.T) {
 	if p.Pending() != 1 {
 		t.Fatal("deadline dropped accepted publish")
 	}
-	testutil.Until(t, func() bool { return observed.failures.Load() > 0 })
+	deadline := time.After(15 * time.Second)
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for observed.failures.Load() < 6 && p.Pending() == 1 {
+		select {
+		case <-deadline:
+			t.Fatal("publisher did not continue through six returned errors")
+		case <-ticker.C:
+		}
+	}
+	if observed.failures.Load() < 6 {
+		t.Fatal("publisher gave up before six returned errors")
+	}
 	if p.Pending() != 1 {
 		t.Fatal("publisher dropped queue head after its own publish error")
 	}

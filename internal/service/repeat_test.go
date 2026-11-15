@@ -55,7 +55,7 @@ func (i retainedIndex) Completed(ctx context.Context, fingerprint, nonce string)
 			start := strings.Split(m.Header.Get("Deck-Send-Start"), ":")
 			epoch, _ := strconv.ParseUint(start[0], 10, 64)
 			sequence, _ := strconv.ParseUint(start[1], 10, 64)
-			out = &CompletedSend{Thread: &pb.Thread{Bot: a.Bot, ServerId: a.ServerId, ChannelId: a.ChannelId, ThreadId: a.ThreadId, CreatedByDeck: true}, Position: &pb.StreamPosition{Epoch: epoch, Sequence: sequence}, PollError: m.Header.Get("Deck-Poll-Error")}
+			out = &CompletedSend{Thread: &pb.Thread{Bot: a.Bot, ServerId: a.ServerId, ChannelId: a.ChannelId, ThreadId: a.ThreadId}, Position: &pb.StreamPosition{Epoch: epoch, Sequence: sequence}, PollError: m.Header.Get("Deck-Poll-Error")}
 		}
 		out.Messages = append(out.Messages, a)
 	}
@@ -143,5 +143,48 @@ func TestRepeatWaitsForIndexAndRestoresPollFailure(t *testing.T) {
 	_, err = restricted.Post(s.ctx, changed)
 	if status.Code(err) != codes.PermissionDenied {
 		t.Fatal("completed result bypassed its thread's current grants", err)
+	}
+}
+
+func TestCompletedReplyReplay(t *testing.T) {
+	s := setup(t)
+	s.h.Index = retainedIndex{js: s.js}
+	request := &pb.ReplyRequest{Thread: &pb.ThreadRef{Bot: "a", ThreadId: 100}, Content: content(), Nonce: "replyreplay"}
+	first, err := s.h.Reply(s.ctx, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.fake.mu.Lock()
+	s.fake.threadName = "fresh thread name"
+	s.fake.archived = true
+	s.fake.mu.Unlock()
+	restarted, err := NewHandler(s.cfg, Dependencies{Context: s.h.ctx, Bots: s.h.bots, Registry: s.reg, Publisher: s.h.Publisher, Index: retainedIndex{js: s.js}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, h := range []*Handler{s.h, restarted} {
+		repeated, err := h.Reply(s.ctx, request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !proto.Equal(repeated.Message, first.Message) || !proto.Equal(repeated.Position, first.Position) || repeated.Thread.ThreadId != 100 || repeated.Thread.Name != "fresh thread name" || !repeated.Thread.Archived || !repeated.Thread.Touched || repeated.Thread.CreatedByDeck {
+			t.Fatal("reply replay lost stored result or refreshed metadata", repeated)
+		}
+	}
+	if len(s.fake.posts()) != 1 {
+		t.Fatal("completed reply sent again")
+	}
+	cfg := *s.cfg
+	cfg.Keys = append([]config.Key(nil), cfg.Keys...)
+	cfg.Keys[0].Grants = []config.Grant{{Bot: "a", Server: "1", Channels: []string{"20"}}}
+	restricted, err := NewHandler(&cfg, Dependencies{Context: s.h.ctx, Bots: s.h.bots, Registry: s.reg, Publisher: s.h.Publisher, Index: retainedIndex{js: s.js}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	changed := proto.Clone(request).(*pb.ReplyRequest)
+	changed.Thread.ThreadId = 200
+	_, err = restricted.Reply(s.ctx, changed)
+	if status.Code(err) != codes.PermissionDenied || len(s.fake.posts()) != 1 {
+		t.Fatal("completed reply bypassed actual thread grants", err)
 	}
 }
