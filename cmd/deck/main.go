@@ -8,9 +8,12 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"slices"
 	"strings"
+	"syscall"
 
+	"github.com/wyrd-company/deck/internal/cli"
 	"github.com/wyrd-company/deck/internal/config"
 )
 
@@ -21,10 +24,13 @@ var Version = "dev"
 var serviceCommand = func(context.Context, []string, io.Writer, io.Writer) (int, bool) { return 0, false }
 
 func run(args []string, stdout, stderr io.Writer) int {
+	return runContext(context.Background(), args, stdout, stderr)
+}
+func runContext(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if code, handled := validateCommand(args, stdout, stderr); handled {
 		return code
 	}
-	if code, handled := serviceCommand(context.Background(), args, stdout, stderr); handled {
+	if code, handled := serviceCommand(ctx, args, stdout, stderr); handled {
 		return code
 	}
 	if len(args) == 1 && args[0] == "--version" {
@@ -35,11 +41,15 @@ func run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "deck service start: not implemented")
 		return 1
 	}
-	fmt.Fprintln(stderr, "usage: deck --version | deck service start [--help]")
-	return 1
+	return (cli.App{Stdout: stdout, Stderr: stderr}).Run(ctx, args)
 }
 
-func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr)) }
+func main() {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	code := runContext(ctx, os.Args[1:], os.Stdout, os.Stderr)
+	stop()
+	os.Exit(code)
+}
 
 // validateCommand owns only offline validation; the other commands are built by
 // the service and CLI tasks.

@@ -1,3 +1,13 @@
+/*
+---
+relationships:
+
+  implements:
+    - client
+    - command-line-interface
+
+---
+*/
 // Package session detects only the explicitly configured ambient identifiers.
 package session
 

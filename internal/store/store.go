@@ -1,3 +1,14 @@
+/*
+---
+relationships:
+
+  implements:
+    - client
+    - store-session-affinity-in-sqlite
+    - keep-read-cursors-on-the-client
+
+---
+*/
 // Package store owns the local SQLite session affinity, sends and read cursors.
 package store
 
@@ -43,6 +54,11 @@ PRAGMA user_version=1;`
 func OpenReadOnly(path string) (*Store, error) { return open(path, true) }
 func Open(path string) (*Store, error)         { return open(path, false) }
 func open(path string, readOnly bool) (*Store, error) {
+	if readOnly {
+		if _, err := os.Stat(path); err != nil {
+			return nil, err
+		}
+	}
 	if !readOnly {
 		if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 			return nil, err
@@ -116,7 +132,7 @@ func open(path string, readOnly bool) (*Store, error) {
 	return s, nil
 }
 func (s *Store) Close() error { return s.db.Close() }
-func now() string             { return time.Now().UTC().Format(time.RFC3339Nano) }
+func now() string             { return time.Now().UTC().Format("2006-01-02T15:04:05.000000000Z") }
 func upsertSession(tx *sql.Tx, ss session.Session) error {
 	raw, err := json.Marshal(ss.Identifiers)
 	if err != nil {

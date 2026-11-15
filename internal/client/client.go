@@ -1,3 +1,13 @@
+/*
+---
+relationships:
+
+  implements:
+    - client
+    - command-line-interface
+
+---
+*/
 // Package client combines the API with local session state. No session
 // identifiers are ever included in an RPC.
 package client

@@ -99,11 +99,22 @@ func TestCursorEpochAndConcurrentReaders(t *testing.T) {
 		}(i)
 	}
 	wg.Wait()
+	if err := s.Advance(testSession(), []uint64{10}, &pb.StreamPosition{Epoch: 100, Sequence: 6}); err != nil {
+		t.Fatal(err)
+	}
 	ts, err := s.Threads(testSession())
 	if err != nil || ts[0].After.Sequence != 29 {
 		t.Fatalf("%+v %v", ts, err)
 	}
-	// A replacement stream can have a lower epoch and sequence. <> is required.
+	// A replacement stream can have either a higher or lower epoch.
+	if err = s.Advance(testSession(), []uint64{10}, &pb.StreamPosition{Epoch: 200, Sequence: 1}); err != nil {
+		t.Fatal(err)
+	}
+	ts, err = s.Threads(testSession())
+	if err != nil || ts[0].After.Epoch != 200 || ts[0].After.Sequence != 1 {
+		t.Fatalf("higher epoch cursor: %+v %v", ts, err)
+	}
+	// <> is required regardless of which epoch is larger.
 	if err = s.Advance(testSession(), []uint64{10}, &pb.StreamPosition{Epoch: 50, Sequence: 1}); err != nil {
 		t.Fatal(err)
 	}

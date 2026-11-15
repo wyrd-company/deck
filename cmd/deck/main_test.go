@@ -24,7 +24,6 @@ func TestRun(t *testing.T) {
 	}{
 		{name: "version", args: []string{"--version"}, code: 0, stdout: "1.2.3\n"},
 		{name: "service start help", args: []string{"service", "start", "--help"}, code: 1, stderr: "deck service start: not implemented\n"},
-		{name: "usage", code: 1, stderr: "usage: deck --version | deck service start [--help]\n"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -131,5 +130,18 @@ func TestValidationUsageJSON(t *testing.T) {
 		if err := json.Unmarshal(stdout.Bytes(), &result); err != nil || stderr.Len() != 0 {
 			t.Fatalf("JSON usage for %v: stdout=%s stderr=%s error=%v", args, stdout.String(), stderr.String(), err)
 		}
+	}
+}
+
+func TestClientDispatch(t *testing.T) {
+	for _, command := range []string{"post", "reply", "inbox", "read", "history", "listen", "resolve", "channels", "skill"} {
+		var out, err bytes.Buffer
+		if code := run([]string{command, "--help"}, &out, &err); code != 0 || !strings.Contains(out.String(), "usage: deck "+command) || !strings.Contains(out.String(), "Example:") || err.Len() != 0 {
+			t.Fatalf("%s: %d %q %q", command, code, out.String(), err.String())
+		}
+	}
+	var out, err bytes.Buffer
+	if code := run(nil, &out, &err); code != 2 || !strings.Contains(err.String(), "usage: deck") {
+		t.Fatalf("usage: %d %q", code, err.String())
 	}
 }
