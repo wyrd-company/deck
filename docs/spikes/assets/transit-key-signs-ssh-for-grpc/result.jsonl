@@ -1,7 +1,7 @@
-{"step":"transit-key","result":"pass","detail":{"address_scheme":"unix","allowed":"SHA256:jfr/WwosAQrjE53zb9kvlmqSfDSHcIp/T2WcDhiukPE","stranger":"SHA256:w9sAx77plhp+bpRivKPZLCm1fGBG1bMoMEeyo8nAQjg"}}
+{"step":"transit-key","result":"pass","detail":{"address_scheme":"unix","allowed":"SHA256:owyR31k/pnIBkAj7WCkBlGbcDw1gtVpFolgHSYhN84Q","stranger":"SHA256:T/uCEeLAyydAtCRuRiL4bLf+yVgDMpq/GiJBmVJyvao"}}
 {"step":"unknown-key-refused","result":"pass","detail":{"error":"ssh: handshake failed: ssh: unable to authenticate, attempted methods [none publickey], no supported methods remain","refusals":1,"transit_signs":0}}
 {"step":"allowed-key-handshake","result":"pass","detail":{"handshake_ms":2,"transit_signs":1}}
-{"step":"grpc-unary","result":"pass","detail":{"call_ms":0,"server_saw_key":true,"status":"SERVING"}}
+{"step":"grpc-unary","result":"pass","detail":{"call_ms":1,"server_saw_key":true,"status":"SERVING"}}
 {"step":"grpc-stream","result":"pass","detail":{"first":"SERVING","second":"NOT_SERVING","server_saw_key":true,"update_ms":0}}
 {"step":"grpc-concurrent","result":"pass","detail":{"calls":8,"transit_signs":1}}
 {"step":"keepalive-holds-stream-past-idle-timeout","result":"pass","detail":{"idle_timeout":"15s","quiet_for":"30s","with_keepalive":"update after 30s","without_keepalive":"stream ended after 15s: rpc error: code = Unavailable desc = error reading from server: EOF"}}

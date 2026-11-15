@@ -5,7 +5,17 @@ set -euo pipefail
 
 here=$(cd "$(dirname "$0")" && pwd)
 work=$(mktemp -d)
-trap 'kill "${bao_pid:-0}" 2>/dev/null || true; wait "${bao_pid:-0}" 2>/dev/null || true; rm -rf "$work"' EXIT
+bao_pid=""
+cleanup() {
+  # Signal only the dev server this script started; with no child yet there
+  # is nothing to stop.
+  if [ -n "$bao_pid" ]; then
+    kill "$bao_pid" 2>/dev/null || true
+    wait "$bao_pid" 2>/dev/null || true
+  fi
+  rm -rf "$work"
+}
+trap cleanup EXIT
 
 if ! command -v bao >/dev/null; then
   echo '{"step":"bao","result":"skip","detail":{"missing":"bao"}}'
