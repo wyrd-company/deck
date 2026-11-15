@@ -111,13 +111,12 @@ func dialSigner(ctx context.Context, cfg *config.Client, signer ssh.Signer, time
 		if recorder.err != nil {
 			return nil, recorder.err
 		}
+		if ctx.Err() != nil {
+			return nil, status.FromContextError(ctx.Err()).Err()
+		}
 		var networkError net.Error
 		if errors.As(err, &networkError) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
 			return nil, status.Error(codes.Unavailable, "SSH service disconnected during handshake")
-		}
-		var authErr *ssh.ServerAuthError
-		if errors.As(err, &authErr) {
-			return nil, ErrAuthentication
 		}
 		// Client-side SSH does not export a typed authentication refusal.
 		// Never expose the raw handshake error, which may carry upstream text.
@@ -167,8 +166,11 @@ func dialSigner(ctx context.Context, cfg *config.Client, signer ssh.Signer, time
 		return nil, errors.New("cannot configure gRPC connection")
 	}
 	grpcConn.Connect()
-	for grpcConn.GetState() != connectivity.Ready {
+	for {
 		state := grpcConn.GetState()
+		if state == connectivity.Ready {
+			break
+		}
 		if state == connectivity.Shutdown || !grpcConn.WaitForStateChange(ctx, state) {
 			_ = grpcConn.Close()
 			_ = sshClient.Close()

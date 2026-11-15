@@ -7,6 +7,14 @@ helpers = runpy.run_path(str(Path(__file__).with_name('prove-guards.py')))
 mutate, require_pass = helpers['mutate'], helpers['require_pass']
 require_pass(['go', 'test', '-count=1', './internal/config', './internal/transport'])
 probes = [
+    ('host public key pin', 'internal/transport/client.go',
+     'if string(key.Marshal()) != string(host.Marshal()) {',
+     'if false && string(key.Marshal()) != string(host.Marshal()) {',
+     ['go', 'test', '-count=1', '-run', '^TestLiveSSHGrants$', './internal/transport']),
+    ('keepalive carries quiet Listen past SSH idle', 'internal/transport/client.go',
+     'Time: 30 * time.Second, Timeout: 10 * time.Second',
+     'Time: 2 * time.Hour, Timeout: 10 * time.Second',
+     ['go', 'test', '-count=1', '-run', '^TestKeepaliveHoldsQuietListen$', './internal/transport']),
     ('configured KV mount', 'internal/vault/kv.go',
      'apiPath(ref.Mount, "data", ref.Path)', 'apiPath("secret", "data", ref.Path)',
      ['go', 'test', '-count=1', '-run', '^TestLiveHostKeyAndRotation$', './internal/transport']),

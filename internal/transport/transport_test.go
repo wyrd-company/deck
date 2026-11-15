@@ -179,9 +179,11 @@ func serveTest(t *testing.T, keys []config.Key, host ssh.Signer, handler deckv1.
 type grantHandler struct {
 	deckv1.UnimplementedDeckServiceServer
 	metadataReads atomic.Int32
+	calls         sync.Map
 }
 
 func (h *grantHandler) ListChannels(ctx context.Context, _ *deckv1.ListChannelsRequest) (*deckv1.ListChannelsResponse, error) {
+	h.calls.Store(KeyName(ctx)+":ListChannels", true)
 	out := &deckv1.ListChannelsResponse{}
 	for _, channel := range []*deckv1.Channel{{Bot: "helper", ServerId: 10, ChannelId: 11, Name: KeyName(ctx)}, {Bot: "helper", ServerId: 20, ChannelId: 21, Name: KeyName(ctx)}} {
 		if CheckTarget(ctx, channel.Bot, channel.ServerId, channel.ChannelId) == nil {
@@ -191,6 +193,7 @@ func (h *grantHandler) ListChannels(ctx context.Context, _ *deckv1.ListChannelsR
 	return out, nil
 }
 func (h *grantHandler) GetThread(ctx context.Context, req *deckv1.GetThreadRequest) (*deckv1.GetThreadResponse, error) {
+	h.calls.Store(KeyName(ctx)+":GetThread", true)
 	ref := req.GetThread()
 	if err := CheckBot(ctx, ref.GetBot()); err != nil {
 		return nil, err
@@ -206,6 +209,7 @@ func (h *grantHandler) GetThread(ctx context.Context, req *deckv1.GetThreadReque
 	return &deckv1.GetThreadResponse{Thread: &deckv1.Thread{Bot: ref.Bot, ThreadId: ref.ThreadId, ServerId: server, ChannelId: channel, Name: KeyName(ctx)}}, nil
 }
 func (h *grantHandler) Listen(req *deckv1.ListenRequest, stream grpc.ServerStreamingServer[deckv1.ListenResponse]) error {
+	h.calls.Store(KeyName(stream.Context())+":Listen", true)
 	if len(Grants(stream.Context())) != 1 || KeyName(stream.Context()) == "" {
 		return status.Error(codes.Internal, "missing stream identity")
 	}
@@ -293,6 +297,30 @@ func TestLiveSSHGrants(t *testing.T) {
 				requireCode(t, err, codes.PermissionDenied)
 				if handler.metadataReads.Load() != before {
 					t.Fatal("bot authorization followed metadata read")
+				}
+			}
+
+			if _, err := conn.API.GetThread(ctx, &deckv1.GetThreadRequest{Thread: &deckv1.ThreadRef{Bot: "helper", ThreadId: map[string]uint64{"a": 12, "b": 22}[test.key]}}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := conn.API.Post(ctx, &deckv1.PostRequest{}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := conn.API.Reply(ctx, &deckv1.ReplyRequest{}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := conn.API.ListHistory(ctx, &deckv1.ListHistoryRequest{}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := conn.API.CountUnread(ctx, &deckv1.CountUnreadRequest{}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := conn.API.ListUnread(ctx, &deckv1.ListUnreadRequest{}); err != nil {
+				t.Fatal(err)
+			}
+			for _, method := range []string{"ListChannels", "GetThread", "Post", "Reply", "ListHistory", "CountUnread", "ListUnread", "Listen"} {
+				if _, ok := handler.calls.Load(test.name + ":" + method); !ok {
+					t.Fatalf("key-name accessor did not reach %s", method)
 				}
 			}
 			if b.signs.Load() != before+1 {
@@ -643,5 +671,105 @@ func TestStartupAndShutdown(t *testing.T) {
 	secret.reads = 0
 	if err := ListenAndServe(ctx, serviceCfg, secret, &probeHandler{}); !errors.Is(err, context.Canceled) || secret.reads != 0 {
 		t.Fatalf("canceled startup: %v, %d reads", err, secret.reads)
+	}
+}
+
+type quietListenHandler struct {
+	deckv1.UnimplementedDeckServiceServer
+	update <-chan struct{}
+}
+
+func (h *quietListenHandler) Listen(_ *deckv1.ListenRequest, stream grpc.ServerStreamingServer[deckv1.ListenResponse]) error {
+	if err := stream.Send(&deckv1.ListenResponse{Through: &deckv1.StreamPosition{Sequence: 1}}); err != nil {
+		return err
+	}
+	select {
+	case <-h.update:
+		return stream.Send(&deckv1.ListenResponse{Through: &deckv1.StreamPosition{Sequence: 2}})
+	case <-stream.Context().Done():
+		return stream.Context().Err()
+	}
+}
+func TestKeepaliveHoldsQuietListen(t *testing.T) {
+	signer, host := testHost(t), testHost(t)
+	update := make(chan struct{})
+	server, err := NewServer([]config.Key{{Name: "client", PublicKey: DescribeKey(signer.PublicKey(), "").PublicKey}}, host, &quietListenHandler{update: update})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The real client pings at 30 seconds. The shortened Wish idle timeout lets
+	// this test exercise the same wire traffic without waiting ten minutes.
+	server.ssh.IdleTimeout = 35 * time.Second
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- server.Serve(listener) }()
+	defer func() {
+		_ = server.Close()
+		if err := <-done; err != nil {
+			t.Error(err)
+		}
+	}()
+	cfg := &config.Client{Service: config.ServiceEndpoint{Address: listener.Addr().String(), HostKey: DescribeKey(host.PublicKey(), "").PublicKey}}
+	ctx, cancel := context.WithTimeout(context.Background(), 55*time.Second)
+	defer cancel()
+	conn, err := dialSigner(ctx, cfg, signer, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	stream, err := conn.API.Listen(ctx, &deckv1.ListenRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := stream.Recv(); err != nil {
+		t.Fatal(err)
+	}
+	timer := time.AfterFunc(40*time.Second, func() { close(update) })
+	defer timer.Stop()
+	response, err := stream.Recv()
+	if err != nil || response.GetThrough().GetSequence() != 2 {
+		t.Fatalf("quiet listen did not survive the SSH idle timeout: %v", err)
+	}
+}
+
+// The API probes below verify identity propagation for every generated method.
+// Domain send/read semantics are exercised by task 6's Handler tests.
+func (h *grantHandler) noteIdentity(ctx context.Context, method string) error {
+	if KeyName(ctx) == "" || len(Grants(ctx)) != 1 {
+		return status.Error(codes.Unauthenticated, "missing identity or grants")
+	}
+	h.calls.Store(KeyName(ctx)+":"+method, true)
+	return nil
+}
+func (h *grantHandler) Post(ctx context.Context, _ *deckv1.PostRequest) (*deckv1.PostResponse, error) {
+	return &deckv1.PostResponse{}, h.noteIdentity(ctx, "Post")
+}
+func (h *grantHandler) Reply(ctx context.Context, _ *deckv1.ReplyRequest) (*deckv1.ReplyResponse, error) {
+	return &deckv1.ReplyResponse{}, h.noteIdentity(ctx, "Reply")
+}
+func (h *grantHandler) ListHistory(ctx context.Context, _ *deckv1.ListHistoryRequest) (*deckv1.ListHistoryResponse, error) {
+	return &deckv1.ListHistoryResponse{}, h.noteIdentity(ctx, "ListHistory")
+}
+func (h *grantHandler) CountUnread(ctx context.Context, _ *deckv1.CountUnreadRequest) (*deckv1.CountUnreadResponse, error) {
+	return &deckv1.CountUnreadResponse{}, h.noteIdentity(ctx, "CountUnread")
+}
+func (h *grantHandler) ListUnread(ctx context.Context, _ *deckv1.ListUnreadRequest) (*deckv1.ListUnreadResponse, error) {
+	return &deckv1.ListUnreadResponse{}, h.noteIdentity(ctx, "ListUnread")
+}
+
+func TestInterceptorsRequireAuthenticatedKey(t *testing.T) {
+	unary, stream := grantInterceptors([]config.Key{{Name: "known"}})
+	for _, ctx := range []context.Context{context.Background(), WithKeyName(context.Background(), "unknown")} {
+		called := false
+		_, err := unary(ctx, nil, &grpc.UnaryServerInfo{}, func(context.Context, any) (any, error) { called = true; return nil, nil })
+		requireCode(t, err, codes.Unauthenticated)
+		err = stream(nil, &authenticatedStream{ctx: ctx}, &grpc.StreamServerInfo{}, func(any, grpc.ServerStream) error { called = true; return nil })
+		requireCode(t, err, codes.Unauthenticated)
+		if called {
+			t.Fatal("handler ran without an authenticated configured key")
+		}
 	}
 }
