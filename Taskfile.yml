@@ -47,6 +47,7 @@ tasks:
     desc: Validate GitHub Actions workflows
     cmds:
       - '{{.ACTIONLINT}}'
+      - python3 scripts/check-ci-go.py
   intentional:check:
     desc: Validate intentional configuration and intents
     cmds:
