@@ -29,8 +29,6 @@ const subsystem = "deck"
 const maxSSHChannels = 4
 const maxConcurrentStreams = 32
 
-type authenticatedName struct{}
-
 // Server serves only the deck subsystem. Close cancels all outstanding calls.
 type Server struct {
 	ssh       *wishssh.Server
@@ -70,19 +68,15 @@ func NewServer(keys []config.Key, host ssh.Signer, handler deckv1.DeckServiceSer
 	sshServer, err := wish.NewServer(
 		wish.WithIdleTimeout(10*time.Minute),
 		wish.WithPublicKeyAuth(func(ctx wishssh.Context, key wishssh.PublicKey) bool {
-			ctx.SetValue(authenticatedName{}, "")
-			name, ok := byFingerprint[ssh.FingerprintSHA256(key)]
+			_, ok := byFingerprint[ssh.FingerprintSHA256(key)]
 			if !ok || ctx.User() != "deck" {
 				return false
 			}
-			ctx.SetValue(authenticatedName{}, name)
 			return true
 		}),
 		wish.WithSubsystem(subsystem, func(session wishssh.Session) {
-			name, _ := session.Context().Value(authenticatedName{}).(string)
-			// Bind the callback identity to the key in the signed connection too.
-			public := session.PublicKey()
-			if public == nil || name == "" || byFingerprint[ssh.FingerprintSHA256(public)] != name {
+			name := signedKeyName(session, byFingerprint)
+			if name == "" {
 				return
 			}
 			conn := &channelConn{ReadWriteCloser: session, local: session.LocalAddr(), remote: session.RemoteAddr(), name: name, done: make(chan struct{})}
@@ -220,4 +214,14 @@ func (c *subsystemChannel) Accept() (ssh.Channel, <-chan *ssh.Request, error) {
 		}
 	}()
 	return channel, filtered, nil
+}
+
+// PublicKey comes from the successful authentication's Permissions, unlike a
+// public-key callback which can describe a key that was only queried.
+func signedKeyName(session wishssh.Session, byFingerprint map[string]string) string {
+	public := session.PublicKey()
+	if public == nil {
+		return ""
+	}
+	return byFingerprint[ssh.FingerprintSHA256(public)]
 }

@@ -32,8 +32,8 @@ design-challenges:
   identity-into-grpc: >-
     SSH authenticates the connection and gRPC serves the calls, and the
     identity must pass from one to the other without a second credential. The
-    public-key handler stores the key's name on the SSH context; the subsystem
-    handler wraps the channel in a connection that carries the name; the gRPC
+    subsystem handler derives the key's name from the successfully signed
+    session public key and wraps the channel in a connection carrying it; the gRPC
     transport credentials' server handshake reads it from that connection and
     returns it as AuthInfo. A connection that did not come from the subsystem
     fails the handshake, so no call can run without a key.
@@ -74,17 +74,17 @@ proposed-design:
   authentication: >-
     The service builds a map from each configured public key's SHA256
     fingerprint to its key name at start. The public-key handler accepts a key
-    whose fingerprint is in the map and whose username is `deck`, stores the
-    key's name on the context, and refuses everything else with the same
-    failure, so an unknown key and a wrong username are indistinguishable.
-    Each SSH callback clears the stored name first. The handler also runs for
-    keys a client only offers without signing, so the name on the context is
-    the signed key's only because the SSH server calls the handler again for
-    the key that signs: golang.org/x/crypto v0.31.0 and later keep one cached
-    public-key result (maxCachedPubKeys = 1), and the service requires at
-    least that version. A transport test offers one configured key without
-    signing, then authenticates with another, and checks that calls carry the
-    second key's name.
+    whose fingerprint is in the map and whose username is `deck`, and refuses
+    everything else with the same failure. The handler also runs for keys a
+    client only queries without signing. The subsystem derives its key name
+    exclusively from `session.PublicKey()`, which charm.land/ssh takes from
+    the successful authentication's Permissions, and never from callback
+    context. A transport test queries A, queries B with an invalid signature
+    format, then authenticates as A and verifies A's name and grants. A proving
+    script repeats it against an isolated x/crypto copy with an eight-entry
+    callback cache to reproduce CVE-2024-45337 without trusting the cache's
+    present single-entry behavior. Missing or unconfigured signed keys are
+    refused before the channel reaches gRPC.
   subsystem-to-grpc: >-
     The subsystem handler wraps the ssh.Session in a channel connection (a
     net.Conn whose Read, Write and Close are the channel's, whose addresses are
@@ -117,7 +117,12 @@ proposed-design:
     Keepalive: the client pings every 30 seconds with a 10-second timeout while
     a call is open; the service's enforcement policy allows pings every 15
     seconds with no stream open. The Wish idle timeout is 10 minutes and the
-    maximum connection time is unset. The client bounds connecting, the
+    maximum connection time is unset. An absolute 30-second SSH handshake
+    timeout bounds unauthenticated connections independently of idle traffic.
+    Each authenticated SSH connection permits at most four session channels;
+    each gRPC transport permits 32 concurrent streams. Shutdown closes the
+    owned listener even before Wish registers it, and waits for canceled
+    handlers to return before service resources close. The client bounds connecting, the
     handshake and every call but Listen by `service.timeout`.
   modules: >-
     `internal/transport` holds both halves: the Transit signer, the client

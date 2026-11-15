@@ -16,6 +16,7 @@ import (
 	"github.com/wyrd-company/deck/internal/config"
 	"golang.org/x/crypto/ssh"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 )
 
 type startupSecret struct {
@@ -99,8 +100,17 @@ func TestCancellationBeforeServe(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := server.Serve(listener); err != nil {
-		t.Fatal(err)
+	stopped := make(chan error, 1)
+	go func() { stopped <- server.Serve(listener) }()
+	select {
+	case err := <-stopped:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		_ = listener.Close()
+		<-stopped
+		t.Fatal("Close before Serve was not final")
 	}
 	requireClosedPort(t, listener.Addr().String())
 }
@@ -255,4 +265,54 @@ func TestShutdownJoinsHandlersAndClientClose(t *testing.T) {
 	if err := conn.Close(); err != nil {
 		t.Fatalf("second Close: %v", err)
 	}
+}
+
+func TestConnectionResourceLimits(t *testing.T) {
+	host, signer := testHost(t), testHost(t)
+	address := serveTest(t, []config.Key{{Name: "client", PublicKey: DescribeKey(signer.PublicKey(), "").PublicKey}}, host, &probeHandler{})
+	client, err := ssh.Dial("tcp", address, &ssh.ClientConfig{User: "deck", Auth: []ssh.AuthMethod{ssh.PublicKeys(signer)}, HostKeyCallback: ssh.FixedHostKey(host.PublicKey()), Timeout: time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	for range maxSSHChannels {
+		channel, requests, err := client.OpenChannel("session", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		go ssh.DiscardRequests(requests)
+		defer channel.Close()
+	}
+	channel, _, err := client.OpenChannel("session", nil)
+	if err == nil {
+		_ = channel.Close()
+		t.Fatal("extra SSH session was accepted")
+	}
+	var rejected *ssh.OpenChannelError
+	if !errors.As(err, &rejected) || rejected.Reason != ssh.ResourceShortage {
+		t.Fatalf("SSH cap error: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	conn, err := dialSigner(ctx, &config.Client{Service: config.ServiceEndpoint{Address: address, HostKey: DescribeKey(host.PublicKey(), "").PublicKey}}, signer, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	for range maxConcurrentStreams {
+		stream, err := conn.API.Listen(ctx, &deckv1.ListenRequest{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := stream.Recv(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	overflow, overflowCancel := context.WithTimeout(ctx, 60*time.Millisecond)
+	defer overflowCancel()
+	stream, err := conn.API.Listen(overflow, &deckv1.ListenRequest{})
+	if err == nil {
+		_, err = stream.Recv()
+	}
+	requireCode(t, err, codes.DeadlineExceeded)
 }
