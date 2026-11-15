@@ -45,6 +45,13 @@ Preferences:
 - wyrd.foo user docs, a logo (cyberpunk deck theme) - light/dark, social preview, demo.gif (VHS)
 - intentional
 
+## Design
+
+The design is under [`docs/`](docs/). Start with
+[`docs/concepts/deck.yml`](docs/concepts/deck.yml);
+[`docs/AGENTS.md`](docs/AGENTS.md) maps the rest. Run `docs/check.sh` after
+changing anything there.
+
 ## Development
 
 Install Go (the version in `go.mod`), [Task](https://taskfile.dev/) and
