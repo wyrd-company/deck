@@ -1,0 +1,33 @@
+{
+  "id": "1571484634081529857",
+  "time": "2026-11-15T11:18:53.537Z",
+  "bot": "helper",
+  "server_id": "1287000000000000001",
+  "channel_id": "1287000000000000002",
+  "thread_id": "1571484634081529857",
+  "author": {
+    "id": "1287000000000000009",
+    "username": "deck-helper",
+    "bot": true
+  },
+  "sent_by": "agents-laptop",
+  "message": {
+    "content": "<@1100000000000000003>",
+    "mention_user_ids": ["1100000000000000003"],
+    "embeds": [
+      {
+        "type": "rich",
+        "author": {"name": "Release agent", "icon_url": "https://example.com/release-agent.png"},
+        "description": "Which changelog wording should the release use?"
+      }
+    ],
+    "poll": {
+      "question": "Changelog wording",
+      "answers": [
+        {"answer_id": 1, "text": "Short"},
+        {"answer_id": 2, "text": "Detailed"}
+      ],
+      "expires_at": "2026-11-16T11:18:53Z"
+    }
+  }
+}
