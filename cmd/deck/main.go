@@ -5,11 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"os"
+	"slices"
 	"strings"
 
 	"github.com/wyrd-company/deck/internal/config"
-	"io"
-	"os"
 )
 
 // Version is supplied at build time from the release version.
@@ -38,7 +39,7 @@ func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr)) }
 func validateCommand(args []string, stdout, stderr io.Writer) (int, bool) {
 	var words []string
 	var path string
-	jsonMode, help := false, false
+	jsonMode, help := slices.Contains(args, "--json"), false
 	for i := 0; i < len(args); i++ {
 		switch {
 		case args[i] == "--json":
@@ -47,13 +48,18 @@ func validateCommand(args []string, stdout, stderr io.Writer) (int, bool) {
 			help = true
 		case args[i] == "--config":
 			if i+1 >= len(args) {
-				fmt.Fprintln(stderr, "deck: --config requires a path")
-				return 2, true
+				return validationFailure(stdout, stderr, jsonMode, "--config requires a path"), true
 			}
 			i++
 			path = args[i]
+			if path == "" {
+				return validationFailure(stdout, stderr, jsonMode, "--config requires a non-empty path"), true
+			}
 		case strings.HasPrefix(args[i], "--config="):
 			path = strings.TrimPrefix(args[i], "--config=")
+			if path == "" {
+				return validationFailure(stdout, stderr, jsonMode, "--config requires a non-empty path"), true
+			}
 		default:
 			words = append(words, args[i])
 		}
@@ -66,8 +72,7 @@ func validateCommand(args []string, stdout, stderr io.Writer) (int, bool) {
 		return 0, true
 	}
 	if len(words) != 2 {
-		fmt.Fprintln(stderr, "deck: unexpected argument; use --help")
-		return 2, true
+		return validationFailure(stdout, stderr, jsonMode, "unexpected argument; use --help"), true
 	}
 	var err error
 	if words[0] == "config" {
@@ -94,14 +99,7 @@ func validateCommand(args []string, stdout, stderr io.Writer) (int, bool) {
 		} else {
 			message = err.Error()
 		}
-		if jsonMode {
-			_ = json.NewEncoder(stdout).Encode(map[string]any{"error": map[string]string{"category": "invalid", "message": message}})
-		} else {
-			for _, line := range strings.Split(message, "\n") {
-				fmt.Fprintln(stderr, "deck: "+line)
-			}
-		}
-		return 2, true
+		return validationFailure(stdout, stderr, jsonMode, message), true
 	}
 	if jsonMode {
 		_ = json.NewEncoder(stdout).Encode(map[string]any{"ok": true, "path": path})
@@ -109,4 +107,15 @@ func validateCommand(args []string, stdout, stderr io.Writer) (int, bool) {
 		fmt.Fprintln(stdout, "ok "+path)
 	}
 	return 0, true
+}
+
+func validationFailure(stdout, stderr io.Writer, jsonMode bool, message string) int {
+	if jsonMode {
+		_ = json.NewEncoder(stdout).Encode(map[string]any{"error": map[string]string{"category": "invalid", "message": message}})
+	} else {
+		for _, line := range strings.Split(message, "\n") {
+			fmt.Fprintln(stderr, "deck: "+line)
+		}
+	}
+	return 2
 }

@@ -185,3 +185,14 @@ func TestHomeIgnoresEnvironment(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestAliasNamedTimeout(t *testing.T) {
+	raw := mutate(t, "client", func(m map[string]any) {
+		object(object(m["aliases"])["channels"])["timeout"] = "helper/123"
+		object(object(m["aliases"])["users"])["timeout"] = "123"
+		object(m["channels"])["default"] = "timeout"
+	})
+	if _, err := ParseClient(raw, "/tmp/config.yml"); err != nil {
+		t.Fatal(err)
+	}
+}

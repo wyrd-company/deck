@@ -88,3 +88,16 @@ func TestInvalidConfigCommand(t *testing.T) {
 		}
 	}
 }
+
+func TestValidationUsageJSON(t *testing.T) {
+	for _, args := range [][]string{{"config", "validate", "--config", "--json"}, {"config", "validate", "--json", "--config"}, {"config", "validate", "--config=", "--json"}, {"config", "validate", "extra", "--json"}} {
+		var stdout, stderr bytes.Buffer
+		if code := run(args, &stdout, &stderr); code != 2 {
+			t.Fatalf("usage status %d for %v", code, args)
+		}
+		var result map[string]any
+		if err := json.Unmarshal(stdout.Bytes(), &result); err != nil || stderr.Len() != 0 {
+			t.Fatalf("JSON usage for %v: stdout=%s stderr=%s error=%v", args, stdout.String(), stderr.String(), err)
+		}
+	}
+}

@@ -60,6 +60,9 @@ func walkValues(problems *Errors, raw any, path string) {
 			if ok {
 				switch key {
 				case "timeout", "max_age", "duplicate_window":
+					if p != "service.timeout" && p != "vault.timeout" && p != "nats.timeout" && p != "nats.stream.max_age" && p != "nats.stream.duplicate_window" && p != "nats.threads.max_age" {
+						break
+					}
 					if _, err := time.ParseDuration(s); err != nil {
 						problems.add(p, "must be a Go duration within the supported range")
 					}
