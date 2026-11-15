@@ -177,21 +177,27 @@ func (c *Client) request(ctx context.Context, method, path string, body any) (ma
 	response, err := c.http.Do(req)
 	if err != nil {
 		if ctx.Err() != nil {
-			return nil, fmt.Errorf("request cancelled: %w", ctx.Err())
+			return nil, fmt.Errorf("%w: request cancelled: %w", ErrUnavailable, ctx.Err())
 		}
-		return nil, errors.New("cannot reach OpenBao or Vault (check address, CA and timeout)")
+		if errors.Is(err, context.DeadlineExceeded) {
+			return nil, fmt.Errorf("%w: request timed out: %w", ErrUnavailable, context.DeadlineExceeded)
+		}
+		return nil, fmt.Errorf("%w: check address, CA and timeout", ErrUnavailable)
 	}
 	defer response.Body.Close()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return nil, fmt.Errorf("OpenBao or Vault returned HTTP %d", response.StatusCode)
+		return nil, &StatusError{Code: response.StatusCode}
 	}
 	if response.StatusCode == http.StatusNoContent {
 		return nil, nil
 	}
 	const maxResponse = 16 << 20
 	raw, err := io.ReadAll(io.LimitReader(response.Body, maxResponse+1))
-	if err != nil || len(raw) > maxResponse {
-		return nil, errors.New("cannot read bounded API response")
+	if err != nil {
+		return nil, fmt.Errorf("%w: cannot read API response", ErrUnavailable)
+	}
+	if len(raw) > maxResponse {
+		return nil, errors.New("API response exceeds size limit")
 	}
 	var result map[string]any
 	dec := json.NewDecoder(bytes.NewReader(raw))

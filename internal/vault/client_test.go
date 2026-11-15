@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -392,5 +393,57 @@ func TestHTTPSRejectsUntrustedCA(t *testing.T) {
 	defer c.Close(context.Background())
 	if _, err := c.request(context.Background(), "GET", "sys/health", nil); err == nil {
 		t.Fatal("trusted a private CA that was absent from configuration")
+	}
+}
+
+func TestClassifiedErrors(t *testing.T) {
+	ctx := context.Background()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	address := "http://" + listener.Addr().String()
+	listener.Close()
+	c, err := New(ctx, config.Vault{Address: address})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close(ctx)
+	_, err = c.ReadSecret(ctx, "bots[0].token", config.SecretRef{Mount: "secret", Path: "x", Field: "token"})
+	if !errors.Is(err, ErrUnavailable) || !strings.HasPrefix(err.Error(), "bots[0].token:") {
+		t.Fatalf("unreachable classification: %v", err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(403)
+		fmt.Fprint(w, "do-not-leak-response")
+	}))
+	defer server.Close()
+	denied, err := New(ctx, config.Vault{Address: server.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer denied.Close(ctx)
+	_, err = denied.ReadSecret(ctx, "host_key", config.SecretRef{Mount: "secret", Path: "x", Field: "key"})
+	var status *StatusError
+	if !errors.As(err, &status) || status.Code != 403 || errors.Is(err, ErrUnavailable) || strings.Contains(err.Error(), "do-not-leak-response") {
+		t.Fatalf("status classification/redaction: %v", err)
+	}
+	// A client timeout is independent of the caller's context deadline.
+	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { <-r.Context().Done() }))
+	defer slow.Close()
+	timeout, err := New(ctx, config.Vault{Address: slow.URL, Timeout: 20 * time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer timeout.Close(ctx)
+	_, err = timeout.ReadTransitKey(ctx, "transit", "agent")
+	if !errors.Is(err, ErrUnavailable) || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("timeout classification: %v", err)
+	}
+	cancelled, cancel := context.WithCancel(ctx)
+	cancel()
+	_, err = timeout.ReadTransitKey(cancelled, "transit", "agent")
+	if !errors.Is(err, ErrUnavailable) || !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancellation classification: %v", err)
 	}
 }
