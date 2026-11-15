@@ -1,0 +1,48 @@
+version: 2
+project_name: deck
+snapshot:
+  version_template: '{{ .Env.RELEASE_VERSION }}'
+builds:
+  - id: deck
+    main: ./cmd/deck
+    binary: deck
+    env: [CGO_ENABLED=0]
+    goos: [linux, darwin]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags: ['-s -w -X main.Version={{ .Version }}']
+archives:
+  - id: archives
+    ids: [deck]
+    formats: [tar.gz]
+    name_template: '{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ if eq .Arch "amd64" }}x86_64{{ else }}aarch64{{ end }}'
+    files:
+      - LICENSE
+      - README.md
+      - src: docs/specifications/assets/configuration/examples/client.yml
+        dst: client.example.yml
+      - src: docs/specifications/assets/configuration/examples/service.yml
+        dst: service.example.yml
+nfpms:
+  - id: packages
+    ids: [deck]
+    package_name: deck
+    formats: [deb, rpm]
+    vendor: Wyrd Company
+    homepage: https://github.com/wyrd-company/deck
+    maintainer: Wyrd Company <support@wyrd.company>
+    description: Discord conversations for agents through a secret-holding service
+    license: Apache-2.0
+    bindir: /usr/bin
+    file_name_template: '{{ .PackageName }}_{{ .Version }}_{{ .Os }}_{{ if eq .Arch "amd64" }}x86_64{{ else }}aarch64{{ end }}'
+    contents:
+      - src: LICENSE
+        dst: /usr/share/licenses/deck/LICENSE
+      - src: docs/specifications/assets/configuration/examples/client.yml
+        dst: /usr/share/doc/deck/client.example.yml
+checksum:
+  name_template: checksums.txt
+release:
+  mode: replace
+changelog:
+  disable: true

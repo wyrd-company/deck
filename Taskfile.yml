@@ -3,6 +3,9 @@ version: "3"
 vars:
   VERSION: '{{.VERSION | default "dev"}}'
   LDFLAGS: -s -w -X main.Version={{.VERSION}}
+  IMAGE: ghcr.io/wyrd-company/deck
+  GORELEASER: go run github.com/goreleaser/goreleaser/v2@v2.17.0
+  PUBLISHER_COMMIT: c973ba1080ab52a86cdd2a3108ad158e0f2386a7
   ACTIONLINT: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
 
 tasks:
@@ -104,4 +107,60 @@ tasks:
       - config:check
       - workflows:check
       - intentional:check
+      - release:check
+      - release:scripts:check
+      - npm:check
       - task: '{{default "test" .TEST_TASK}}'
+
+  release:check:
+    desc: Validate pinned GoReleaser configuration
+    cmds:
+      - '{{.GORELEASER}} check .goreleaser.yaml'
+  release:scripts:check:
+    desc: Check release scripts and their failure guards
+    cmds:
+      - bash -n scripts/release-notes.sh scripts/validate-publisher-contract.sh scripts/prove-config-home-macos.sh
+      - python3 -m unittest discover -s scripts/tests -p 'test_release.py'
+  npm:check:
+    desc: Test the native binary installer and launcher without publishing
+    cmds:
+      - npm test --prefix npm
+      - npm pack --dry-run --ignore-scripts ./npm
+  release:guards:check:
+    desc: Prove checksum, HTTPS, stable-version and handoff guards with restored mutations
+    cmds:
+      - python3 scripts/prove-release-guards.py
+  release:snapshot:
+    desc: Build all release archives/packages/formula into dist/ without publishing
+    vars:
+      RELEASE_VERSION: '{{.RELEASE_VERSION | default "0.0.0"}}'
+    cmds:
+      - RELEASE_VERSION="{{.RELEASE_VERSION}}" {{.GORELEASER}} release --snapshot --clean --parallelism 2
+      - python3 scripts/create-homebrew-formula.py --artifacts-dir dist --version "{{.RELEASE_VERSION}}" --output dist/homebrew/Formula/deck.rb
+  release:compatibility:
+    desc: Prove the pinned publisher queue/staging/AUR contract without publishing (needs rpm, dpkg-deb)
+    requires:
+      vars: [PUBLISHER_ROOT]
+    vars:
+      RELEASE_VERSION: '{{.RELEASE_VERSION | default "0.0.0"}}'
+      RELEASE_COMMIT:
+        sh: git rev-parse HEAD
+    cmds:
+      - task: release:snapshot
+        vars:
+          RELEASE_VERSION: '{{.RELEASE_VERSION}}'
+      - python3 scripts/create-release-manifest.py --artifacts-dir dist --version "{{.RELEASE_VERSION}}" --commit "{{.RELEASE_COMMIT}}" --output dist/release-manifest.json
+      - bash scripts/validate-publisher-contract.sh "{{.PUBLISHER_ROOT}}" "{{.PUBLISHER_COMMIT}}" dist/release-manifest.json dist dist/publisher-contract
+  config:home:macos:check:
+    desc: Prove the CGO-disabled CLI uses the macOS directory-service home despite hostile env
+    cmds:
+      - bash scripts/prove-config-home-macos.sh
+  image:build:
+    desc: Build/load the service image locally without pushing
+    cmds:
+      - docker build --build-arg VERSION={{.VERSION}} -t {{.IMAGE}}:{{.VERSION}} .
+  image:build:multiarch:
+    desc: Build a local multi-arch OCI archive without pushing (requires buildx)
+    cmds:
+      - mkdir -p dist
+      - docker buildx build --platform linux/amd64,linux/arm64 --build-arg VERSION={{.VERSION}} --output type=oci,dest=dist/deck-image.tar .

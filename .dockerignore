@@ -1,0 +1,9 @@
+*
+!go.mod
+!go.sum
+!schemas.go
+!events.go
+!cmd/**
+!internal/**
+!docs/specifications/assets/configuration/*.schema.json
+!docs/specifications/assets/events/*.schema.json

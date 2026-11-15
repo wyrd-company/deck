@@ -33,3 +33,9 @@ go.work.sum
 
 # Build artifacts
 /bin/
+/dist/
+/.release-proof/
+/npm/bin/deck-native
+/npm/*.tgz
+
+__pycache__/
