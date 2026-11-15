@@ -54,11 +54,11 @@ environment:
     `docs/spikes/assets/transit-key-signs-ssh-for-grpc/`, in the standalone
     module `docs/spikes/assets` (not part of deck's build). `run.sh` starts an
     OpenBao dev server listening on a unix socket in a temporary directory,
-    enables Transit, creates the ed25519 keys `deck-client` and `deck-stranger`,
-    runs `main.go` against the socket with `-idle 15s`, and stops the server.
-    The gRPC service
-    is the standard health service, so no generated code is needed. The run
-    below is `result.jsonl` beside the program.
+    enables Transit, creates the ed25519 keys `deck-client` and
+    `deck-stranger`, runs `main.go` against the socket with `-idle 15s`, and
+    stops the server. The gRPC service is the standard health service, so no
+    generated code is needed. Every measurement below is from the committed
+    run, `result.jsonl` beside the program.
   tools:
     - Go 1.27.3, linux/amd64
     - OpenBao v2.7.2 (`bao server -dev` with an extra unix listener)
@@ -71,7 +71,7 @@ findings:
   transit-key-is-the-ssh-identity:
     verdict: confirmed working
     measurements:
-      handshake-ms: 1
+      handshake-ms: 2
       transit-signs-per-connection: 1
     notes: >-
       Measured: the client reads the Transit key's latest ed25519 public key,
@@ -84,18 +84,19 @@ findings:
     measurements:
       transit-signs: 0
     notes: >-
-      Measured: the second Transit key fails with "ssh: unable to authenticate"
-      and the server's public-key handler refuses it once. The client offers
-      the key before signing and the server rejects the offer, so a refused key
-      costs no Transit signature.
+      Measured: the second Transit key fails with "ssh: unable to
+      authenticate" and the server's public-key handler refuses it once. The
+      client offers the key before signing and the server rejects the offer,
+      so a refused key costs no Transit signature.
 
   grpc-over-a-subsystem-channel:
     verdict: confirmed working
     notes: >-
-      Measured: Health.Check returns SERVING over the `deck` subsystem channel.
-      Health.Watch, a server stream, delivers SERVING and then NOT_SERVING when
-      the server changes the status. Eight concurrent Check calls succeed on the
-      same channel. The connection's deadlines are no-ops, and gRPC needs none.
+      Measured: Health.Check returns SERVING over the `deck` subsystem
+      channel. Health.Watch, a server stream, delivers SERVING and then
+      NOT_SERVING when the server changes the status. Eight concurrent Check
+      calls succeed on the same channel. The connection's deadlines are
+      no-ops, and gRPC needs none.
 
   caller-identity-reaches-the-handler:
     verdict: confirmed working
@@ -110,11 +111,11 @@ findings:
       quiet-for: 30s
     notes: >-
       Measured: behind a Wish idle timeout of 15 s, a Watch stream whose
-      client sends gRPC keepalive pings every 10 s delivers its update after 30
-      s of silence. The same stream from a client without keepalive ends after
-      15 s with Unavailable (EOF), which shows the idle timeout is real and
-      that the pings, as traffic on the SSH channel, are what hold the stream
-      open.
+      client sends gRPC keepalive pings every 10 s delivers its update after
+      30 s of silence. The same stream from a client without keepalive ends
+      after 15 s with Unavailable (EOF), which shows the idle timeout is real
+      and that the pings, as traffic on the SSH channel, are what hold the
+      stream open.
 
   openbao-over-a-unix-socket:
     verdict: confirmed working
@@ -125,12 +126,12 @@ findings:
 
 conclusion: >-
   gRPC over SSH with Wish works with a Transit-backed client key, and the
-  fallback the issue names (TLS with a built-in ACME client) is not needed. The
-  service carries one HTTP/2 connection per SSH session channel on a `deck`
-  subsystem, and lifts the SSH key's fingerprint into gRPC AuthInfo, where
-  each call resolves its grants. A client pays one Transit signature per
-  connection, and gRPC keepalive pings hold a waiting listen open past the
-  SSH idle timeout.
+  fallback the issue names (TLS with a built-in ACME client) is not needed.
+  The service carries one HTTP/2 connection per SSH session channel on a
+  `deck` subsystem, and lifts the SSH key's fingerprint into gRPC AuthInfo,
+  where each call resolves its grants. A client pays one Transit signature per
+  connection, and gRPC keepalive pings hold a waiting listen open past the SSH
+  idle timeout.
 
 next-steps:
   - The transport technical design specifies the subsystem, the signer, the

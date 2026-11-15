@@ -47,17 +47,18 @@ description: >-
   Post and Reply carry the client's `nonce`, an identifier for the send that
   is unique for its key, and the repeated-sends guarantee of
   deliver-activity-at-least-once holds for them: a repeat with the same key
-  and nonce returns the first send's result, without sending, while the
-  first is in flight or the event stream holds a message it published, which
-  is the stream's maximum age, restart or not; a repeat of a send that
-  failed, or of one whose message never reached the stream, sends again.
-  Reply and a text channel post also send Discord a nonce derived from the
-  key's fingerprint and the client nonce, with enforce_nonce, which answers
-  a repeat Discord still remembers with the first message; a forum post has
-  no such check in Discord, and when Discord's answer to one is lost the
-  call ends UNAVAILABLE with its outcome unknown. The nonce and the key's
-  fingerprint travel on the published message, and are together how a client
-  recognises its own messages in counts, lists and events.
+  and nonce returns the first send's result, its starting position included,
+  without sending, while the first is in flight or the event stream holds a
+  message it published, which is the stream's maximum age, restart or not; a
+  repeat of a send that failed, or of one whose message never reached the
+  stream, sends again. Reply and a text channel post also send Discord a
+  nonce derived from the key's fingerprint and the client nonce, with
+  enforce_nonce, which answers a repeat Discord still remembers with the
+  first message; a forum post has no such check in Discord, and when
+  Discord's answer to one is lost the call ends UNAVAILABLE with its outcome
+  unknown. The nonce and the key's fingerprint travel on the published
+  message, and are together how a client recognises its own messages in
+  counts, lists and events.
 
 
   Content carries embeds and components as `google.protobuf.Struct` values
@@ -112,8 +113,9 @@ description: >-
   `horizon_passed`; what fell out of the stream is read with ListHistory.
   ListUnread returns at most its limit in stream order and sets `more` when
   activity remains. A client that marks read moves each cursor to the
-  response's `through` position, and never to an earlier position; with
-  nothing listed, that clears `horizon_passed`.
+  response's `through` position, never to an earlier position within one
+  epoch, and to the response's epoch when it differs; with nothing listed,
+  that clears `horizon_passed`.
 
 
   Listen answers at once with each thread's state, as CountUnread reports

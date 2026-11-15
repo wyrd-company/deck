@@ -32,11 +32,11 @@ decision-outcome:
       activity is after it by position. A snowflake cursor would skip activity
       the stream receives late: a message held in the settling buffer, a
       recovered message, or a poll vote stamped by the service's clock. The
-      epoch names a stream generation and only grows, so a new generation's
-      positions are later than every position of the old one, and a cursor can
-      always move on and never back. A cursor starts at the position the
-      service held before the session's first send into the thread, so nothing
-      published during the send is skipped.
+      epoch names a stream generation; within one generation a cursor only
+      moves forward, and on a generation change it follows the service's
+      epoch, so it is never stuck behind a generation. A cursor starts at the
+      position the service held before the session's first send into the
+      thread, so nothing published during the send is skipped.
     own-messages: >-
       A session's own messages are known by its key's fingerprint and a nonce,
       which the client records before it sends. The service lists, within each

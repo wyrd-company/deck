@@ -22,8 +22,8 @@ decision-outcome:
     One message defines activity for the API, the events and the activity
     index, and protojson with proto names gives subscribers snake_case JSON
     with embeds and components as plain objects. The contract test makes the
-    JSON Schema and the proto fail together. Option 2 is a second model to keep
-    in step. Option 3 hides the payload from relays that transform JSON.
+    JSON Schema and the proto fail together. Option 2 is a second model to
+    keep in step. Option 3 hides the payload from relays that transform JSON.
 expected-outcomes:
   positive:
     - A field added to Activity reaches the API and the events in one change.

@@ -15,15 +15,16 @@ description: >-
   thread's bot can read reaches the stream at least once, live or by
   recovery, and may reach it twice; component uses and poll votes reach it
   only when the gateway delivers them live; a thread that is not touched
-  produces nothing. Only the thread's bot publishes: when several of deck's
-  bots can see a touched thread, the others ignore it. A message deck sent
-  is published only by the send that sent it, with `sent_by`, `sender_key`
-  and `nonce`; the gateway's and recovery's copies of the thread's bot's
-  type 0 and 19 messages are dropped, and the bot's other messages, such as
-  type 46 poll results, are published like any other. Activity on the
-  starter message of a thread started in a text or announcement channel (a
-  poll vote or component use on it, and its poll result) belongs to that
-  thread.
+  produces nothing. Only the thread's bot publishes its messages and poll
+  votes: when several of deck's bots can see a touched thread, the others
+  ignore them; a component use is published by the one bot Discord delivers
+  it to. A message deck sent is published only by the send that sent it,
+  with `sent_by`, `sender_key` and `nonce`; the gateway's and recovery's
+  copies of the thread's bot's type 0 and 19 messages are dropped, and the
+  bot's other messages, such as type 46 poll results, are published like any
+  other. Activity on the starter message of a thread started in a text or
+  announcement channel (a poll vote or component use on it, and its poll
+  result) belongs to that thread.
 
 
   The subject is `<prefix>.<server id>.<channel id>.<thread id>`, with each
@@ -62,10 +63,11 @@ description: >-
   identifiers. `Deck-Kind` is `message`, `component` or `poll_vote`.
   `Deck-Activity-Id` is the activity's snowflake. `Deck-Message-Type` is the
   Discord message type, on messages only. `Deck-Sent-By` is the client key's
-  name, `Deck-Sender-Key` its fingerprint and `Deck-Nonce` the client's
-  nonce, on messages deck sent only. `Deck-Schema` is `deck.v1.Activity`.
-  The headers carry everything the service's activity index needs, so the
-  index replays the stream headers only.
+  name, `Deck-Sender-Key` its fingerprint, `Deck-Nonce` the client's nonce
+  and `Deck-Send-Start` the stream position the send started at, as
+  `<epoch>:<sequence>`, on messages deck sent only. `Deck-Schema` is
+  `deck.v1.Activity`. The headers carry everything the service's activity
+  index needs, so the index replays the stream headers only.
 
 
   The stream is `nats.stream.name` (default `DECK`) with the single subject

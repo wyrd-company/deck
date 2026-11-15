@@ -20,8 +20,8 @@ considered-options:
     reaches the gRPC server as an ordinary socket, and the key has to be
     matched to it through a side table keyed by connection.
   "3": >-
-    The TLS fallback the issue names: gRPC over TLS with a built-in ACME client
-    and the Transit key proving the client by a signed token per call.
+    The TLS fallback the issue names: gRPC over TLS with a built-in ACME
+    client and the Transit key proving the client by a signed token per call.
 decision-outcome:
   chosen-option: 1
   justification: >-

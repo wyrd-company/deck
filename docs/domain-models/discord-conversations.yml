@@ -182,7 +182,7 @@ aggregates:
       resolve: >-
         Returns the identifiers of every session related to a thread.
     invariants:
-      - A cursor never moves to an earlier position.
+      - Within one stream generation, a cursor never moves to an earlier position.
       - A message the session sent is never unread for that session, and never
         wakes it, whenever it reaches the stream.
       - Activity published after a session's first send into a thread began is

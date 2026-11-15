@@ -51,13 +51,14 @@ decision-outcome:
     publication: >-
       Every message in a touched thread that the thread's bot can read is
       published to the thread's subject at least once while the thread stays
-      registered: live from the gateway, or, when the gateway missed it, by
-      recovery at the bot's next READY. The exception is a message the
-      thread's bot itself authored with type 0 or 19, which only deck sends:
-      that message is published by its send alone, once, with its key and
-      nonce, and is missing from the stream when the service stops between
-      Discord's answer and the publish (risk send-outcome-unknown). A message
-      can be published twice when recovery reads it again after its
+      registered: live from the gateway, with each publish retried for as long
+      as the service runs, or, when the gateway missed it or the service
+      stopped first, by recovery at the bot's next READY. The exception is a
+      message the thread's bot itself authored with type 0 or 19, which only
+      deck sends: that message is published by its send alone, once, with its
+      key and nonce, and is missing from the stream when the service stops
+      between Discord's answer and the publish (risk send-outcome-unknown). A
+      message can be published twice when recovery reads it again after its
       publication (risk recovery-replays-published-messages). Component uses
       and poll votes are published only when the gateway delivers them live,
       at most once (risk gateway-gap-loses-interactions). Activity in a thread
@@ -74,7 +75,8 @@ decision-outcome:
       (horizon_passed); it is read with history. A session sees an activity
       twice when it was published twice, and sees every retained activity
       again when the service's record of the stream's generation is lost,
-      since the stream then counts as new. A relay resolving activity that
+      since the stream then counts as new, or when a read taken before a
+      generation change is written after it. A relay resolving activity that
       arrives while a session's first send into the thread is in flight finds
       no session to wake (risk activity-during-a-first-send-does-not-wake). A
       stream restored from a snapshot without the documented step reuses

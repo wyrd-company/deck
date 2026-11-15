@@ -30,11 +30,10 @@ decision-outcome:
     maximum age bounds what deck keeps of interactions. It adds that the
     stream, which already holds every message because every message is
     published, also serves recent messages, so a count after every command is
-    a lookup in memory, whatever the cursor, and one ordering rule covers every
-    kind. Option 2 costs
-    a Discord REST call for each thread with new messages on every command and
-    merges two sources for every list. Option 1 adds a volume and a store to a
-    container that otherwise needs neither.
+    a lookup in memory, whatever the cursor, and one ordering rule covers
+    every kind. Option 2 costs a Discord REST call for each thread with new
+    messages on every command and merges two sources for every list. Option 1
+    adds a volume and a store to a container that otherwise needs neither.
   decisions:
     max-age: >-
       The stream's maximum age, 168 hours by default, is the horizon of

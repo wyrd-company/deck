@@ -22,8 +22,8 @@ decision-outcome:
   chosen-option: 1
   justification: >-
     The grant is the boundary of what a key sees, at channel granularity, and
-    a thread in a granted channel is inside it. Being told about a thread means
-    discovery: counts, lists, listens and events, which stay limited to
+    a thread in a granted channel is inside it. Being told about a thread
+    means discovery: counts, lists, listens and events, which stay limited to
     touched threads. A client that already holds a thread's snowflake learns
     nothing it was not told by reading it, and an agent can read a person's
     question before it answers. Option 2 forces a reply before any read.

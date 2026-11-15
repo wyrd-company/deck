@@ -1,15 +1,16 @@
 $schema: https://refinery.systems/ontology/term
 title: Cursor
 description: >-
-  A session's read position in one thread, kept in the client's local store:
-  a position in the event stream, its epoch and sequence. Activity published
-  at a later position is after the cursor, so activity that reaches the stream
+  A session's read position in one thread, kept in the client's local store: a
+  position in the event stream, its epoch and sequence. Activity published at
+  a later position is after the cursor, so activity that reaches the stream
   late is still unread. A post or a session's first reply starts the cursor at
   the position the service returns, which it takes before the send calls
   Discord, so activity during the send is after it. Reading without keeping
   unread moves the cursor to the position through which the read showed the
-  thread's activity, and it never moves to an earlier position; a new stream
-  generation has a greater epoch, so the cursor moves on to its positions.
+  thread's activity, and within one stream generation it never moves to an
+  earlier position; a new generation has another epoch, and the cursor moves
+  on to its positions.
 terms:
   - activity
   - unread

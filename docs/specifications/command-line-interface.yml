@@ -106,8 +106,10 @@ description: >-
 
   `deck reply THREAD [--reply-to MESSAGE] [content flags]` sends a message
   into the thread. On the session's first message in the thread it records
-  the thread with the cursor at that message; it always records the message
-  as the session's own. Text: `replied 1571485045016997890 in
+  the thread with the cursor at the position the service returns, which is
+  from before the reply, so activity during the reply is unread; it records
+  every send, under its key's fingerprint and nonce, as the session's own
+  before it calls the service. Text: `replied 1571485045016997890 in
   1571484634081529857` and the message URL. JSON: as post.
 
 

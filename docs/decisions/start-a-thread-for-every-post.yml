@@ -27,10 +27,10 @@ decision-outcome:
   justification: >-
     The spike showed a thread started from a message has the message's
     snowflake, as a forum post has its starter message's, so one model covers
-    all four channel types: every conversation is a thread, every subject names
-    one, and replies and reads work the same. Option 3 breaks the subject and
-    the touched-thread rule, since the channel would carry everyone's
-    messages. Option 1 leaves text channels unusable for no gain.
+    all four channel types: every conversation is a thread, every subject
+    names one, and replies and reads work the same. Option 3 breaks the
+    subject and the touched-thread rule, since the channel would carry
+    everyone's messages. Option 1 leaves text channels unusable for no gain.
 expected-outcomes:
   positive:
     - post, reply, read, listen and events behave the same in every channel
