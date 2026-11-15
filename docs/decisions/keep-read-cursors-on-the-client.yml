@@ -56,5 +56,8 @@ expected-outcomes:
     - Two sessions on one machine have independent read state.
   negative:
     - Read state does not follow a session to another machine.
-    - Each unread call carries one cursor per thread of the session, and each
-      count carries the key's own unread messages for the client to subtract.
+    - >-
+      Each unread call carries one cursor per thread of the session, and each
+      count carries own messages for the client to subtract. Not yet specified:
+      which own messages a count carries across a rotation of the key; open
+      question Q01 in concepts/deck.yml.

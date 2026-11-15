@@ -58,7 +58,9 @@ description: >-
   Discord's answer to one is lost the call ends UNAVAILABLE with its outcome
   unknown. The nonce and the key's fingerprint travel on the published
   message, and are together how a client recognises its own messages in
-  counts, lists and events.
+  lists, events, listen and resolve. Not yet specified: how a client
+  recognises them in counts across a rotation of the key; open question Q01
+  in concepts/deck.yml.
 
 
   Content carries embeds and components as `google.protobuf.Struct` values
