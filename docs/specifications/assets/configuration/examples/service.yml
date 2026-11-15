@@ -1,4 +1,4 @@
-# deck service configuration: /etc/deck/service.yml in the container image, or
+# deck service configuration: /etc/deck/config.yml in the container image, or
 # the path given with --config. Every secret comes from OpenBao or Vault.
 
 listen:

@@ -1,0 +1,35 @@
+$schema: https://refinery.systems/ontology/decision-record
+relationships:
+  contextualizes:
+    - command-line-interface
+    - client
+description: >-
+  The issue asks that every command report the unread count, so that an agent
+  sees its inbox whatever it runs. The count belongs to a session, and some
+  commands run for no session: a relay resolving an event, an operator
+  validating configuration or printing a key, and the service itself.
+considered-options:
+  "1": >-
+    Report after every session command (post, reply, inbox, read, history,
+    listen, channels, skill), and not after resolve, config and service
+    commands.
+  "2": >-
+    Report after every command, the default session's count where no session
+    applies.
+decision-outcome:
+  chosen-option: 1
+  justification: >-
+    An unread count is only meaningful for the session that will read it.
+    resolve runs inside a relay, for every event, where a service call would
+    add latency and a failure mode to each wake-up and print a count nobody
+    reads; config and service commands are run by an operator, often before a
+    service exists. Option 2 makes those commands depend on the service and
+    reports a count for a session that is not the caller. The operator was
+    told of this reading on the issue.
+expected-outcomes:
+  positive:
+    - resolve, config and service commands work without a reachable service.
+    - Every command an agent runs reports its unread count.
+  negative:
+    - The literal reading of "every command" is narrowed to the commands that
+      run as a session.

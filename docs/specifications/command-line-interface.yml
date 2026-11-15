@@ -5,6 +5,8 @@ relationships:
     - grpc-api
     - events
     - client
+  shaped-by:
+    - report-unread-after-session-commands
   terms:
     - unread
     - cursor
@@ -39,7 +41,11 @@ description: >-
   2}]}`. When the count cannot be had, the line is `unread: unknown
   (<reason>)` and the member is `{"error": "<reason>"}`, and the command's
   own result and exit status stand. Threads whose channel the client's allow
-  and deny lists exclude are left out of every count and list.
+  and deny lists exclude are left out of every count and list. A thread the
+  session holds that the service reports as not touched by the key (its
+  registry entry expired) or not granted adds nothing to the count; inbox
+  shows it with its state in place of a count, read and listen leave it out
+  and name it on stderr, and the JSON `unread.threads` carries its state.
 
 
   References. A CHANNEL is an alias from `aliases.channels`,
@@ -85,8 +91,8 @@ description: >-
 
 
   `deck inbox [--all]` lists the session's threads that have unread activity,
-  or with `--all` every thread the session holds, the one the session touched
-  most recently first. It changes no cursor. Text: one line per thread,
+  or with `--all` every thread the session holds, the one the session last
+  sent a message in first. It changes no cursor. Text: one line per thread,
   `<count>  <thread>  <bot>/<channel>  <title>`. JSON: `{"threads":
   [{"thread_id": "1571484634081529857", "bot": "helper", "channel_id":
   "1287000000000000002", "title": "Changelog wording", "count": 2, "state":
@@ -94,9 +100,11 @@ description: >-
 
 
   `deck read [THREAD...] [--keep-unread] [--limit N]` prints the unread
-  activity of the given threads, or of all the session's threads, oldest
-  first, up to N (default 500), and then moves each thread's cursor to the
-  newest activity it printed for that thread, unless `--keep-unread`. Text:
+  activity of the given threads, or of all the session's threads, up to N
+  (default 500) in the order the service published it, grouped by thread in
+  the order of each thread's first unread activity, and then moves each
+  thread's cursor to the last activity it printed for that thread, unless
+  `--keep-unread`. Text:
   each thread opens with a line `## <title> (<thread>)`, and each activity is
   a line `<time> <author> <kind> <id>` followed by its content indented by two
   spaces: a message's text, one `embed:` line per embed with its title or
@@ -126,7 +134,8 @@ description: >-
 
   `deck resolve THREAD` or `deck resolve --event PATH` (`-` reads stdin)
   prints the sessions in the local store that touched the thread, or the
-  event's thread, and that have identifiers, oldest touch first. Given an
+  event's thread, and that have identifiers, the one that last sent a message
+  there first. Given an
   event whose message the session sent itself, it leaves that session out, so
   a relay does not wake a session for its own message. It is not a session
   command, reads only the local store and contacts nothing. Text: one line per
@@ -143,9 +152,9 @@ description: >-
 
 
   `deck skill` prints the agent skill embedded in the executable, a Markdown
-  file with name and description front matter, to stdout. It needs no
-  configuration; without one, its unread line is `unread: unknown (no
-  configuration)`.
+  file with name and description front matter, to stdout, and JSON `{"skill":
+  "<markdown>", "unread": ...}`. It needs no configuration; without one, its
+  unread line is `unread: unknown (no configuration)`.
 
 
   `deck config validate` loads the client configuration without contacting
@@ -173,14 +182,17 @@ description: >-
   holds a bot token, an OpenBao token, a signature or a private key.
 
 
-  Exit statuses are categorical. 0: success. 1 (`failed`): anything not below.
-  2 (`invalid`): a usage error, an invalid configuration, an invalid event, or
-  content the service rejects as invalid. 3 (`refused`): the allow or deny
-  lists, or the key's grants (PERMISSION_DENIED), do not cover the target, or
-  the bot cannot see it (NOT_FOUND). 4 (`unavailable`): the service, OpenBao or
-  Vault, or a service dependency (UNAVAILABLE, RESOURCE_EXHAUSTED) cannot be
-  reached. 5 (`timeout`): listen's timeout passed with no activity. 130:
-  interrupted.
+  Exit statuses are categorical, and every gRPC code maps to one. 0: success.
+  1 (`failed`): INTERNAL, UNAUTHENTICATED, UNKNOWN and every other code not
+  below, a service host key that differs from `service.host_key`, and a local
+  store failure. 2 (`invalid`): a usage error, an invalid configuration, an
+  invalid event, and INVALID_ARGUMENT. 3 (`refused`): a target the allow or
+  deny lists exclude, PERMISSION_DENIED, NOT_FOUND, FAILED_PRECONDITION, and a
+  listen with no thread still touched. 4 (`unavailable`): the service, OpenBao
+  or Vault cannot be reached, UNAVAILABLE, RESOURCE_EXHAUSTED, and
+  DEADLINE_EXCEEDED from `service.timeout`. 5 (`timeout`): listen's timeout
+  passed with no activity. 130: interrupted. The JSON error category is the
+  word in backticks.
 validation-criteria: >-
   Command tests run every command against a fake service over a real SSH
   connection and check exact text and JSON output, each exit status for the

@@ -17,16 +17,19 @@ description: >-
   `assets/configuration/invalid/` each break one rule and fail.
 
 
-  All configuration comes from these files. deck expands no `${NAME}`
-  reference and reads no environment variable for configuration, including
-  `BAO_*` and `VAULT_*`. The one use of the environment is the session
-  identifiers: the client reads the variables that `session.variables` names,
-  and only those. The client's file is the path given with `--config`, or
-  `deck/config.yml` in the user configuration directory that Go's
-  `os.UserConfigDir` returns (`~/.config/deck/config.yml` on Linux,
-  `~/Library/Application Support/deck/config.yml` on macOS). The service's
-  file is the path given with `--config`, or `/etc/deck/service.yml`, the path
-  the container image uses.
+  All configuration comes from these files, each named `config.yml`. deck
+  expands no `${NAME}` reference and reads no environment variable for a
+  configuration value, including `BAO_*`, `VAULT_*` and the HTTP proxy
+  variables: every HTTP client deck builds, for OpenBao or Vault and for
+  Discord, has no proxy. The environment is used in two places only. The
+  client reads the session identifiers, the variables that
+  `session.variables` names and only those. And when `--config` is absent,
+  the client finds its file through Go's `os.UserConfigDir`, which follows
+  the operating system's convention: `$XDG_CONFIG_HOME/deck/config.yml` or
+  `~/.config/deck/config.yml` on Linux, `~/Library/Application
+  Support/deck/config.yml` on macOS. The service's file is the path given
+  with `--config`, or `/etc/deck/config.yml`, the path the container image
+  uses.
 
 
   Loading is strict. A document is decoded as YAML with unknown keys rejected,
@@ -85,4 +88,5 @@ validation-criteria: >-
   document, and are tested against the same files, so the schemas and the
   loaders cannot drift; a test shows a failure for each rule beyond the
   schema with its field path. A test runs the client with `BAO_ADDR`,
-  `VAULT_ADDR` and `VAULT_TOKEN` set and shows that deck ignores them.
+  `VAULT_ADDR`, `VAULT_TOKEN` and `HTTPS_PROXY` set and shows that deck
+  ignores them.

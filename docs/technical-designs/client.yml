@@ -71,35 +71,43 @@ proposed-design:
     INTEGER NOT NULL, channel_id INTEGER NOT NULL, title TEXT NOT NULL)`.
     `session_threads(session_key TEXT NOT NULL REFERENCES sessions(key),
     thread_id INTEGER NOT NULL REFERENCES threads(thread_id), role TEXT NOT
-    NULL CHECK (role IN ('created', 'replied')), cursor INTEGER NOT NULL,
-    touched_at TEXT NOT NULL, PRIMARY KEY (session_key, thread_id))`.
+    NULL CHECK (role IN ('created', 'replied')), cursor_id INTEGER NOT NULL,
+    cursor_sequence INTEGER NOT NULL, touched_at TEXT NOT NULL, PRIMARY KEY
+    (session_key, thread_id))`, where touched_at is when the session last sent
+    a message in the thread.
     `sent_messages(message_id INTEGER PRIMARY KEY, thread_id INTEGER NOT NULL,
     session_key TEXT NOT NULL, sent_at TEXT NOT NULL)` with an index on
     `(session_key, thread_id)`. Snowflakes are stored as SQLite integers, which
     hold any snowflake below 2^63. Times are RFC 3339 in UTC.
   recording: >-
     After a successful post, one transaction upserts the session, inserts the
-    thread, inserts the session thread with role `created` and the cursor at
-    the new message, and inserts the message into sent_messages. After a
-    successful reply, one transaction upserts the session and the thread,
-    inserts the session thread with role `replied` and the cursor at the reply
-    when the session held none for it, and inserts the message. A post or
+    thread, inserts the session thread with role `created`, the cursor at the
+    new message (its snowflake, and its sequence from the response, which is
+    zero when NATS did not acknowledge it in time) and touched_at now, and
+    inserts the message into sent_messages. After a successful reply, one
+    transaction upserts the session and the thread, inserts the session thread
+    with role `replied` and the cursor at the reply when the session held none
+    for it, sets touched_at to now, and inserts the message. A post or
     reply that the service performed but the store failed to record reports
     the message and exits 1, naming the store failure.
   cursors-and-unread: >-
     For a set of threads, the client builds one Cursor per thread: the
-    session's cursor and the sent_messages snowflakes of that session in that
-    thread greater than the cursor. The unread report sends the session's
+    session's cursor_id and cursor_sequence, and the sent_messages snowflakes
+    of that session in that thread that are greater than cursor_id. The unread report sends the session's
     threads that the allow and deny lists keep to CountUnread. Read sends them
     to ListUnread and, unless `--keep-unread`, moves each thread's cursor to
-    the greatest activity snowflake it received for that thread, with
-    `UPDATE ... SET cursor = max(cursor, ?)` so that a cursor never moves back
-    even when two processes read at once. Sent messages at or below a cursor
-    are no longer sent in requests, and stay in the store for resolve.
+    the last activity it received for that thread, in stream order, with one
+    `UPDATE ... SET cursor_sequence = ?, cursor_id = ? WHERE ... AND
+    cursor_sequence <= ?` so that a cursor never moves back even when two
+    processes read at once. A sent message stays in the store for resolve;
+    once the cursor's snowflake is past it, it is no longer sent in requests.
   listen: >-
-    Listen sends the threads' cursors to the Listen call, reads responses
-    until one carries activity, prints it, marks it read unless asked not to,
-    and ends the call. When the first response shows none of the threads in
+    Listen sends the threads' cursors to the Listen call and reads responses
+    until one carries activity that is not the session's own: the exclusions
+    are a snapshot, so the client drops activity whose snowflake sent_messages
+    holds for the session by the time it arrives, which covers a reply the same
+    session sent from another process while listen waited. It prints what
+    remains, marks it read unless asked not to, and ends the call. When the first response shows none of the threads in
     the touched state, nothing can arrive, and listen prints the states and
     exits 3. Its timeout is a context deadline on the call; when it
     passes, listen exits 5. An interrupt ends the call and exits 130.
@@ -108,9 +116,9 @@ proposed-design:
     OpenBao. Given an event, it decodes the payload with protojson into an
     Activity, rejecting anything that is not one with exit status 2, and takes
     its thread. It returns every session thread of that thread whose session
-    has identifiers, oldest touch first, leaving out the session whose
+    has identifiers, leaving out the session whose
     sent_messages hold the event's message snowflake when the event is a
-    message.
+    message. Sessions are ordered by touched_at, the latest first.
   allow-and-deny: >-
     Channel references in the configuration resolve to `{bot?, channel}` at
     load. A target channel is allowed when `channels.allow` is absent or one
