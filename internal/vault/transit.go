@@ -54,10 +54,15 @@ func number(v any) (int, error) {
 }
 
 // SignTransit asks Transit to sign data at the version returned by
-// ReadTransitKey. The returned bytes are an ed25519 signature, never a key.
-func (c *Client) SignTransit(ctx context.Context, mount, name string, version int, data []byte) ([]byte, error) {
+// ReadTransitKey, verifies the signature against that public key, and returns
+// the verified ed25519 signature bytes.
+func (c *Client) SignTransit(ctx context.Context, mount, name string, key TransitKey, data []byte) ([]byte, error) {
+	version := key.Version
 	if version < 1 {
 		return nil, errors.New("key: a positive Transit key version is required")
+	}
+	if len(key.PublicKey) != ed25519.PublicKeySize {
+		return nil, errors.New("key: a valid ed25519 public key is required")
 	}
 	path, err := apiPath(mount, "sign", name)
 	if err != nil {
@@ -76,6 +81,9 @@ func (c *Client) SignTransit(ctx context.Context, mount, name string, version in
 	signature, err := base64.StdEncoding.DecodeString(parts[2])
 	if err != nil || len(signature) != ed25519.SignatureSize {
 		return nil, errors.New("key: invalid ed25519 signature in Transit response")
+	}
+	if !ed25519.Verify(key.PublicKey, data, signature) {
+		return nil, errors.New("key: Transit signature does not verify with the read public key")
 	}
 	return signature, nil
 }

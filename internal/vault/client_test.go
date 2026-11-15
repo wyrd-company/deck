@@ -3,6 +3,8 @@ package vault
 import (
 	"context"
 	"crypto/ed25519"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -119,7 +121,7 @@ func verifyOperations(t *testing.T, c *Client) {
 		t.Fatal(err)
 	}
 	data := []byte("an SSH handshake transcript")
-	signature, err := c.SignTransit(ctx, "custom/transit", "agent", key.Version, data)
+	signature, err := c.SignTransit(ctx, "custom/transit", "agent", key, data)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -151,7 +153,7 @@ func TestLiveAddressForms(t *testing.T) {
 				t.Fatal(err)
 			}
 			admin(t, s.root, "POST", "custom/transit/keys/agent/rotate", nil)
-			signature, err := c.SignTransit(context.Background(), "custom/transit", "agent", key.Version, []byte("pinned"))
+			signature, err := c.SignTransit(context.Background(), "custom/transit", "agent", key, []byte("pinned"))
 			if err != nil || !ed25519.Verify(key.PublicKey, []byte("pinned"), signature) {
 				t.Fatalf("pinned signature after rotation: %v", err)
 			}
@@ -300,7 +302,7 @@ func TestRequestGuardsAndRedaction(t *testing.T) {
 		{"signature version", func(w http.ResponseWriter, r *http.Request) {
 			fmt.Fprint(w, `{"data":{"signature":"vault:v2:private-server-value"}}`)
 		}, func(c *Client) error {
-			_, err := c.SignTransit(context.Background(), "transit", "agent", 1, []byte("x"))
+			_, err := c.SignTransit(context.Background(), "transit", "agent", TransitKey{Version: 1, PublicKey: make(ed25519.PublicKey, ed25519.PublicKeySize)}, []byte("x"))
 			return err
 		}},
 	}
@@ -456,5 +458,30 @@ func TestClassifiedErrors(t *testing.T) {
 	_, err = timeout.ReadTransitKey(cancelled, "transit", "agent")
 	if !errors.Is(err, ErrUnavailable) || !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancellation classification: %v", err)
+	}
+}
+
+func TestSignTransitRejectsWrongKey(t *testing.T) {
+	expected, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, other, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := []byte("SSH handshake")
+	signature := ed25519.Sign(other, data)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]string{"signature": "vault:v1:" + base64.StdEncoding.EncodeToString(signature)}})
+	}))
+	defer server.Close()
+	c, err := New(context.Background(), config.Vault{Address: server.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close(context.Background())
+	if _, err = c.SignTransit(context.Background(), "transit", "agent", TransitKey{PublicKey: expected, Version: 1}, data); err == nil {
+		t.Fatal("accepted a well-formed signature from a different key")
 	}
 }
