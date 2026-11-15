@@ -768,11 +768,11 @@ func TestSkillWithoutConfigAndHelp(t *testing.T) {
 func TestErrorMapping(t *testing.T) {
 	cases := map[codes.Code]int{codes.Internal: 1, codes.Unauthenticated: 1, codes.Unknown: 1, codes.InvalidArgument: 2, codes.PermissionDenied: 3, codes.NotFound: 3, codes.FailedPrecondition: 3, codes.Unavailable: 4, codes.ResourceExhausted: 4, codes.DeadlineExceeded: 4, codes.Canceled: 130}
 	for c, want := range cases {
-		if got := exitCode(status.Error(c, "failure")); got != want {
+		if got := ExitCode(status.Error(c, "failure")); got != want {
 			t.Errorf("%s=%d want %d", c, got, want)
 		}
 	}
-	if exitCode(context.Canceled) != 130 || exitCode(context.DeadlineExceeded) != 4 {
+	if ExitCode(context.Canceled) != 130 || ExitCode(context.DeadlineExceeded) != 4 {
 		t.Fatal("context mapping")
 	}
 }
@@ -785,7 +785,7 @@ func TestRefusedSendAndUnreadStatus(t *testing.T) {
 				return nil, status.Error(c, "request refused")
 			}
 			code, out, err := f.run("post", "--title", "Q", "--text", "body", "--json")
-			if code != exitCode(status.Error(c, "refused")) || strings.Contains(out, "outcome unknown") || err != "" {
+			if code != ExitCode(status.Error(c, "refused")) || strings.Contains(out, "outcome unknown") || err != "" {
 				t.Fatalf("%d %s %s", code, out, err)
 			}
 			var result map[string]any
@@ -946,7 +946,7 @@ func TestOutputContainsNoConfigurationSecrets(t *testing.T) {
 					code, out, errout := f.run(args...)
 					want := 0
 					if failureCode != codes.OK && command[0] != "resolve" && command[0] != "skill" {
-						want = exitCode(status.Error(failureCode, "failure"))
+						want = ExitCode(status.Error(failureCode, "failure"))
 						if (command[0] == "post" || command[0] == "reply") && unknownSend(status.Error(failureCode, "failure")) {
 							want = 4
 						}

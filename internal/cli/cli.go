@@ -139,9 +139,9 @@ func (a App) Run(ctx context.Context, args []string) int {
 	if err != nil {
 		// A successful Discord send whose local commit failed still prints its IDs.
 		if len(inv.result) > 0 && f.has("json") {
-			inv.result["error"] = map[string]string{"category": category(exitCode(err)), "message": err.Error()}
+			inv.result["error"] = map[string]string{"category": category(ExitCode(err)), "message": err.Error()}
 			json.NewEncoder(a.Stdout).Encode(inv.result)
-			return exitCode(err)
+			return ExitCode(err)
 		}
 		if inv.text.Len() > 0 && !f.has("json") {
 			fmt.Fprint(a.Stdout, inv.text.String())
@@ -178,7 +178,7 @@ func (i *invocation) writeOutput() error {
 	return err
 }
 func (a App) error(err error, jsonMode bool) int {
-	code := exitCode(err)
+	code := ExitCode(err)
 	if jsonMode {
 		json.NewEncoder(a.Stdout).Encode(map[string]any{"error": map[string]string{"category": category(code), "message": err.Error()}})
 	} else {

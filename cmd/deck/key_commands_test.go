@@ -20,6 +20,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/wyrd-company/deck/internal/cli"
 	"github.com/wyrd-company/deck/internal/transport"
 	"github.com/wyrd-company/deck/internal/vault"
 	"go.yaml.in/yaml/v3"
@@ -278,7 +279,7 @@ func TestKeyCommandFailures(t *testing.T) {
 		err  error
 		code int
 	}{{context.Canceled, 130}, {context.DeadlineExceeded, 4}, {vault.ErrUnavailable, 4}, {transport.ErrHostKeyMismatch, 1}} {
-		if got := serviceExitCode(test.err); got != test.code {
+		if got := cli.ExitCode(test.err); got != test.code {
 			t.Fatalf("exit code %v: %d", test.err, got)
 		}
 	}

@@ -18,7 +18,9 @@ type failure struct {
 func (e *failure) Error() string               { return e.message }
 func invalid(format string, args ...any) error { return &failure{2, fmt.Sprintf(format, args...)} }
 func refused(format string, args ...any) error { return &failure{3, fmt.Sprintf(format, args...)} }
-func exitCode(err error) int {
+
+// ExitCode maps command, transport and Vault errors to the shared CLI status.
+func ExitCode(err error) int {
 	if err == nil {
 		return 0
 	}

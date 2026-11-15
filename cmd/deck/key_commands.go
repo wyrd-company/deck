@@ -9,11 +9,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/wyrd-company/deck/internal/cli"
 	"github.com/wyrd-company/deck/internal/config"
 	"github.com/wyrd-company/deck/internal/transport"
 	"github.com/wyrd-company/deck/internal/vault"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 )
 
 type commandOptions struct {
@@ -89,7 +88,7 @@ func keyCommand(ctx context.Context, args []string, stdout, stderr io.Writer) (i
 		identity, err = hostPublicKey(ctx, cfg)
 	}
 	if err != nil {
-		return serviceFailure(stdout, stderr, options.json, serviceExitCode(err), err), true
+		return serviceFailure(stdout, stderr, options.json, cli.ExitCode(err), err), true
 	}
 	if options.json {
 		_ = json.NewEncoder(stdout).Encode(identity)
@@ -127,28 +126,6 @@ func closeVault(client *vault.Client) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	_ = client.Close(ctx)
-}
-func serviceExitCode(err error) int {
-	if err == nil {
-		return 0
-	}
-	if errors.Is(err, context.Canceled) {
-		return 130
-	}
-	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, vault.ErrUnavailable) {
-		return 4
-	}
-	switch status.Code(err) {
-	case codes.InvalidArgument:
-		return 2
-	case codes.PermissionDenied, codes.NotFound, codes.FailedPrecondition:
-		return 3
-	case codes.Unavailable, codes.ResourceExhausted, codes.DeadlineExceeded:
-		return 4
-	case codes.Canceled:
-		return 130
-	}
-	return 1
 }
 func serviceFailure(stdout, stderr io.Writer, jsonMode bool, code int, err error) int {
 	category := map[int]string{1: "failed", 2: "invalid", 3: "refused", 4: "unavailable", 130: "interrupted"}[code]
