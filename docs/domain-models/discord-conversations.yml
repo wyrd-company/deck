@@ -113,7 +113,7 @@ aggregates:
         touched it. Events on the stream cover every touched thread, and who
         may subscribe to them is NATS authorization.
       - A thread has one bot. A call that names another bot for a touched
-        thread is refused, and only the thread's bot publishes its events. A
+        thread is refused, and only the thread's bot publishes its messages and poll votes; a component use is published by the bot Discord delivered it to, the one that sent its message. A
         thread whose bot is no longer configured, or can no longer see it,
         produces nothing and refuses calls until its registry entry expires or
         is deleted.

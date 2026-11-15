@@ -60,9 +60,11 @@ decision-outcome:
       between Discord's answer and the publish (risk send-outcome-unknown). A
       message can be published twice when recovery reads it again after its
       publication (risk recovery-replays-published-messages). Component uses
-      and poll votes are published only when the gateway delivers them live,
-      at most once (risk gateway-gap-loses-interactions). Activity in a thread
-      that is not touched is never published.
+      and poll votes are published only when the gateway delivers them live
+      (risk gateway-gap-loses-interactions). Like every activity, one can be
+      stored twice when its publish is retried after the stream's duplicate
+      window because JetStream's acknowledgement was lost. Activity in a
+      thread that is not touched is never published.
     unread: >-
       A session's unread activity in a thread is every activity the stream
       holds at a position after the session's cursor, except the messages the

@@ -14,7 +14,9 @@ considered-options:
   "1": >-
     One bot per thread: the bot that first touches a thread through deck is
     recorded with it, every call on it uses that bot, a call naming another
-    bot is refused, and only that bot publishes the thread's events.
+    bot is refused, and only that bot publishes the thread's messages and poll
+    votes. A component use, which Discord delivers only to the application
+    that sent its message, is published by the bot that received it.
   "2": >-
     Touches per bot and thread: the registry records each (bot, key) pair, a
     thread can be served through several bots, and one bot is chosen to

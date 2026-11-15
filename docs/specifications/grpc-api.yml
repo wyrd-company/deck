@@ -98,24 +98,25 @@ description: >-
   deliver-activity-at-least-once. A Cursor is a thread and a stream
   position; the activity after it is the thread's activity at a later
   position in the same epoch, or all of the thread's activity the stream
-  holds when the cursor is from another epoch. Epochs only grow, and each
-  stream generation has its own. Activity that reaches the stream late, such
-  as a held reply or a recovered message, is therefore still after a cursor
-  that moved past it in snowflake terms. Messages whose type is not 0, 19 or
-  46 are never counted. Each count includes the calling key's own messages
-  and lists them with their nonces in `own`, and the client takes away those
-  its session sent. A thread's state for the calling key is NOT_TOUCHED
-  unless the key is in the thread's registry entry, whatever its grants say;
-  for a key in the entry it is NOT_GRANTED when no grant of the key covers
-  the thread through its bot, and TOUCHED otherwise. Only a TOUCHED thread
-  has a count, and neither other state fails the call. A thread whose stream
-  history no longer reaches back to the cursor answers with
-  `horizon_passed`; what fell out of the stream is read with ListHistory.
-  ListUnread returns at most its limit in stream order and sets `more` when
-  activity remains. A client that marks read moves each cursor to the
-  response's `through` position, never to an earlier position within one
-  epoch, and to the response's epoch when it differs; with nothing listed,
-  that clears `horizon_passed`.
+  holds when the cursor is from another epoch. Each stream generation has
+  its own epoch, and positions of different epochs do not order: a cursor
+  from another epoch than the stream's has everything the stream holds after
+  it. Activity that reaches the stream late, such as a held reply or a
+  recovered message, is therefore still after a cursor that moved past it in
+  snowflake terms. Messages whose type is not 0, 19 or 46 are never counted.
+  Each count includes the calling key's own messages and lists them with
+  their nonces in `own`, and the client takes away those its session sent. A
+  thread's state for the calling key is NOT_TOUCHED unless the key is in the
+  thread's registry entry, whatever its grants say; for a key in the entry
+  it is NOT_GRANTED when no grant of the key covers the thread through its
+  bot, and TOUCHED otherwise. Only a TOUCHED thread has a count, and neither
+  other state fails the call. A thread whose stream history no longer
+  reaches back to the cursor answers with `horizon_passed`; what fell out of
+  the stream is read with ListHistory. ListUnread returns at most its limit
+  in stream order and sets `more` when activity remains. A client that marks
+  read moves each cursor to the response's `through` position, never to an
+  earlier position within one epoch, and to the response's epoch when it
+  differs; with nothing listed, that clears `horizon_passed`.
 
 
   Listen answers at once with each thread's state, as CountUnread reports

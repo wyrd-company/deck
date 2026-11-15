@@ -196,10 +196,11 @@ message ReplyResponse {
 }
 
 // StreamPosition is a place in the event stream. The epoch names the
-// stream's generation: Unix nanoseconds when the service began following it,
-// never lower than an earlier generation's, so a new generation has a greater
-// epoch and its sequences start again. Positions order by epoch, then by
-// sequence.
+// stream's generation: Unix nanoseconds when the service began following it.
+// Each generation has its own epoch and its sequences start again. Positions
+// of one epoch order by sequence; positions of different epochs do not order,
+// and a client moves a cursor to a position of another epoch whenever the
+// service reports one.
 message StreamPosition {
   uint64 epoch = 1;
   uint64 sequence = 2;

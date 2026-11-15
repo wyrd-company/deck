@@ -125,17 +125,18 @@ description: >-
   `deck read [THREAD...] [--keep-unread] [--limit N]` prints the unread
   activity of the given threads, or of all the session's threads, up to N
   (default 500) in the order the service published it, grouped by thread in
-  the order of each thread's first unread activity, and then moves each
-  thread's cursor to the last activity it printed for that thread, unless
-  `--keep-unread`. Text: each thread opens with a line `## <title>
-  (<thread>)`, and each activity is a line `<time> <author> <kind> <id>`
-  followed by its content indented by two spaces: a message's text, one
-  `embed:` line per embed with its title or author, one `attachment: <name>
-  <size> <url>` line per file, and a poll's question and answers; a
-  component use as `pressed <custom_id>` or `chose <values> in <custom_id>`
-  on its message; a poll vote as `voted <answer>` or `removed vote <answer>`
-  on its message. JSON: `{"activity": [Activity], "more": false, "unread":
-  ...}`.
+  the order of each thread's first unread activity, and then, unless
+  `--keep-unread`, moves each thread's cursor to the position the service
+  reports the list complete through, even when nothing was printed, so a
+  quiet thread's horizon note clears. Text: each thread opens with a line
+  `## <title> (<thread>)`, and each activity is a line `<time> <author>
+  <kind> <id>` followed by its content indented by two spaces: a message's
+  text, one `embed:` line per embed with its title or author, one
+  `attachment: <name> <size> <url>` line per file, and a poll's question and
+  answers; a component use as `pressed <custom_id>` or `chose <values> in
+  <custom_id>` on its message; a poll vote as `voted <answer>` or `removed
+  vote <answer>` on its message. JSON: `{"activity": [Activity], "more":
+  false, "unread": ...}`.
 
 
   `deck history THREAD [--after MESSAGE | --before MESSAGE] [--limit N]`

@@ -328,16 +328,16 @@ proposed-design:
     replays. A stream that is deleted or recreated, or whose record is
     deleted, starts a new generation with a new epoch; epochs grow while the
     record survives, and a client follows a generation change whichever way
-    the epoch moved, since its cursor update accepts any other epoch. A
-    restore from a snapshot keeps the stream's creation time (measured by the
-    round 2 review), so its documented step is to delete `stream.generation`
-    before the service runs on the restored stream (risk
-    restored-stream-reuses-positions). Until a replay ends, calls that read
-    the index wait up to their deadline and then return UNAVAILABLE, so no
-    response pairs an epoch with another generation's sequences. The index is
-    the only source of unread counts, lists, listens and completed sends, and
-    every instance of the service that follows the stream holds the same
-    index.
+    the epoch moved, since positions of different epochs do not order and its
+    cursor update accepts any other epoch. A restore from a snapshot keeps the
+    stream's creation time (measured by the round 2 review), so its documented
+    step is to delete `stream.generation` before the service runs on the
+    restored stream (risk restored-stream-reuses-positions). Until a replay
+    ends, calls that read the index wait up to their deadline and then return
+    UNAVAILABLE, so no response pairs an epoch with another generation's
+    sequences. The index is the only source of unread counts, lists, listens
+    and completed sends, and every instance of the service that follows the
+    stream holds the same index.
   unread: >-
     A thread's state for a key is NOT_TOUCHED unless the key is in the
     thread's registry entry, whatever its grants say, so a key cannot tell
