@@ -2,7 +2,10 @@
 // reading environment variables or contacting any server.
 package config
 
-import "time"
+import (
+	"fmt"
+	"time"
+)
 
 type Client struct {
 	Service        ServiceEndpoint    `yaml:"service"`
@@ -115,4 +118,14 @@ type Grant struct {
 	Bot      string   `yaml:"bot"`
 	Server   string   `yaml:"server"`
 	Channels []string `yaml:"channels"`
+}
+
+// SecretRefs lists the service's secret fields by their config paths. Values
+// have their default mounts after LoadService/ParseService.
+func (s *Service) SecretRefs() map[string]SecretRef {
+	refs := map[string]SecretRef{"host_key": s.HostKey, "nats.creds": s.NATS.Creds}
+	for i, bot := range s.Bots {
+		refs[fmt.Sprintf("bots[%d].token", i)] = bot.Token
+	}
+	return refs
 }
