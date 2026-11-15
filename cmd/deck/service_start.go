@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/wyrd-company/deck/internal/cli"
 	"github.com/wyrd-company/deck/internal/config"
 	"github.com/wyrd-company/deck/internal/service"
 	"github.com/wyrd-company/deck/internal/vault"
@@ -51,7 +52,7 @@ func startCommand(ctx context.Context, args []string, stdout, stderr io.Writer) 
 		return 0, true
 	}
 	if err != nil {
-		return serviceFailure(stdout, stderr, options.json, serviceExitCode(err), err), true
+		return serviceFailure(stdout, stderr, options.json, cli.ExitCode(err), err), true
 	}
 	return 0, true
 }
