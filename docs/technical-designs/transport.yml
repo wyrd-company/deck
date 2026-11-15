@@ -98,8 +98,8 @@ proposed-design:
     either lists the channel or holds `*`. A thread is checked by its parent
     channel, from the thread registry, or from Discord (cached for 10 minutes)
     when the thread is not touched. Every call that names a channel or thread
-    checks before it touches Discord or NATS, and lists filter by the same
-    check.
+    checks before it sends a message, reads messages or reads the stream, and
+    lists filter by the same check.
   limits: >-
     The gRPC server accepts messages up to 64 MiB and sends up to 16 MiB.
     Keepalive: the client pings every 30 seconds with a 10-second timeout while

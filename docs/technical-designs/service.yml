@@ -162,7 +162,8 @@ proposed-design:
     An ordered consumer with headers only and deliver policy all follows
     `<prefix>.>` from the stream's first message and stays live. For each event
     it records, under the thread from the subject: the activity's snowflake,
-    kind, message type, `sent_by`, stream sequence and time, from the headers.
+    kind, message type and `sent_by` from the headers, and the stream
+    sequence and timestamp from the message's metadata.
     Entries per thread stay sorted by snowflake, and entries older than the
     stream's maximum age are pruned every minute. The index is the only
     source of unread counts, lists and listens, and every instance of the
@@ -215,9 +216,10 @@ proposed-design:
     The image `ghcr.io/wyrd-company/deck` holds the static `deck` executable,
     runs as a non-root user, exposes the SSH and health ports, reads
     `/etc/deck/service.yml`, and has the entrypoint `deck service start` and
-    the HEALTHCHECK above. It needs no volume. Its bot permissions in each
-    granted channel are View Channel, Send Messages, Send Messages in Threads,
-    Create Public Threads, Embed Links, Attach Files and Read Message History.
+    the HEALTHCHECK above. It needs no volume. Each bot needs View Channel,
+    Send Messages, Send Messages in Threads, Create Public Threads, Embed
+    Links, Attach Files and Read Message History in every channel a grant
+    names for it.
   modules: >-
     `internal/service` wires the process and owns startup and shutdown.
     `internal/service/discord` owns the bot registry, the gateway listeners,

@@ -81,11 +81,11 @@ proposed-design:
     After a successful post, one transaction upserts the session, inserts the
     thread, inserts the session thread with role `created` and the cursor at
     the new message, and inserts the message into sent_messages. After a
-    successful reply, the same transaction upserts the thread, inserts the
-    session thread with role `replied` and the cursor at the reply when the
-    session held none for it, and inserts the message. A post or reply that the
-    service performed but the store failed to record reports the message and
-    exits 1, naming the store failure.
+    successful reply, one transaction upserts the session and the thread,
+    inserts the session thread with role `replied` and the cursor at the reply
+    when the session held none for it, and inserts the message. A post or
+    reply that the service performed but the store failed to record reports
+    the message and exits 1, naming the store failure.
   cursors-and-unread: >-
     For a set of threads, the client builds one Cursor per thread: the
     session's cursor and the sent_messages snowflakes of that session in that
@@ -99,7 +99,9 @@ proposed-design:
   listen: >-
     Listen sends the threads' cursors to the Listen call, reads responses
     until one carries activity, prints it, marks it read unless asked not to,
-    and ends the call. Its timeout is a context deadline on the call; when it
+    and ends the call. When the first response shows none of the threads in
+    the touched state, nothing can arrive, and listen prints the states and
+    exits 3. Its timeout is a context deadline on the call; when it
     passes, listen exits 5. An interrupt ends the call and exits 130.
   resolve: >-
     Resolve opens the store read-only and needs neither the service nor
