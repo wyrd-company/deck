@@ -504,3 +504,27 @@ func TestBodyTimeoutClassification(t *testing.T) {
 		t.Fatalf("body timeout classification: %v", err)
 	}
 }
+
+func TestSignTransitRejectsWrongVersion(t *testing.T) {
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := []byte("SSH handshake")
+	// Valid encoding, length and cryptographic signature isolate the version
+	// label check from all the other response guards.
+	signature := ed25519.Sign(privateKey, data)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]string{"signature": "vault:v2:" + base64.StdEncoding.EncodeToString(signature)}})
+	}))
+	defer server.Close()
+	c, err := New(context.Background(), config.Vault{Address: server.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close(context.Background())
+	_, err = c.SignTransit(context.Background(), "transit", "agent", TransitKey{PublicKey: publicKey, Version: 1}, data)
+	if err == nil || err.Error() != "key: invalid signature version in Transit response" {
+		t.Fatalf("wrong version: %v", err)
+	}
+}
