@@ -45,7 +45,11 @@ description: >-
   session holds that the service reports as not touched by the key (its
   registry entry expired) or not granted adds nothing to the count; inbox
   shows it with its state in place of a count, read and listen leave it out
-  and name it on stderr, and the JSON `unread.threads` carries its state.
+  and name it on stderr, and the JSON `unread.threads` carries its state. The
+  session's own messages are never counted. A thread whose cursor is older
+  than what the service's event stream holds adds `(older activity may have
+  expired; deck history <thread>)` to the line, and `"horizon_passed": true`
+  to its JSON entry.
 
 
   References. A CHANNEL is an alias from `aliases.channels`,
@@ -77,7 +81,12 @@ description: >-
   thread named TITLE: a forum post in a forum or media channel, with tags by
   name or snowflake, or in a text or announcement channel a message and a
   thread started from it. It records the thread against the session with the
-  cursor at the new message. Text: `posted 1571484634081529857 in
+  cursor at the new message. Every post and reply records a nonce for the send
+  in the local store before it calls the service. When the outcome of a send
+  is unknown, the command sends it once more with the same nonce, which the
+  service and Discord answer without sending twice; if that fails too, it
+  reports `outcome unknown` with the nonce and exits 4, and checking with
+  `deck inbox --all` or `deck history` comes before sending again. Text: `posted 1571484634081529857 in
   helper/1287000000000000002` and the thread URL, on stdout. JSON: `{"thread":
   Thread, "message": Activity, "unread": ...}`, with Thread and Activity in
   the protojson form of the gRPC API.
@@ -187,8 +196,9 @@ description: >-
   below, a service host key that differs from `service.host_key`, and a local
   store failure. 2 (`invalid`): a usage error, an invalid configuration, an
   invalid event, and INVALID_ARGUMENT. 3 (`refused`): a target the allow or
-  deny lists exclude, PERMISSION_DENIED, NOT_FOUND, FAILED_PRECONDITION, and a
-  listen with no thread still touched. 4 (`unavailable`): the service, OpenBao
+  deny lists exclude, PERMISSION_DENIED (which also covers a target the bot
+  cannot see), NOT_FOUND (a `--reply-to` message that does not exist),
+  FAILED_PRECONDITION, and a listen with no thread still touched. 4 (`unavailable`): the service, OpenBao
   or Vault cannot be reached, UNAVAILABLE, RESOURCE_EXHAUSTED, and
   DEADLINE_EXCEEDED from `service.timeout`. 5 (`timeout`): listen's timeout
   passed with no activity. 130: interrupted. The JSON error category is the
@@ -199,6 +209,11 @@ validation-criteria: >-
   case that causes it, the unread report after every session command and its
   absence after the others, that read and listen move cursors only without
   `--keep-unread`, and that the allow and deny lists refuse before any call
-  reaches the service. A test shows that no output contains a token,
-  signature or private key, and that an environment variable outside
-  `session.variables` changes nothing.
+  reaches the service. Cursor tests cover a read that moves a cursor to a
+  recreated stream's positions, two processes reading at once, a session's own
+  message that reaches the stream after a newer message was read (never
+  unread), and a relay resolving the event of a reply before the replying
+  command has recorded its result (the sender is left out). A test shows that
+  no output contains a token, signature or private key, and that an
+  environment variable outside `session.variables`, including `HOME` and
+  `XDG_CONFIG_HOME`, changes nothing.

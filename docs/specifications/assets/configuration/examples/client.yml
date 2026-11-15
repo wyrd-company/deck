@@ -1,5 +1,6 @@
-# deck client configuration: ~/.config/deck/config.yml on Linux, or the path
-# given with --config. deck reads no other configuration source.
+# deck client configuration: .config/deck/config.yml in the home directory the
+# user database records for the user, or the path given with --config. deck
+# reads no other configuration source.
 
 service:
   # The service's SSH listener.

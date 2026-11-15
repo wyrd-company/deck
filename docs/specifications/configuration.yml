@@ -17,19 +17,23 @@ description: >-
   `assets/configuration/invalid/` each break one rule and fail.
 
 
-  All configuration comes from these files, each named `config.yml`. deck
-  expands no `${NAME}` reference and reads no environment variable for a
-  configuration value, including `BAO_*`, `VAULT_*` and the HTTP proxy
-  variables: every HTTP client deck builds, for OpenBao or Vault and for
-  Discord, has no proxy. The environment is used in two places only. The
-  client reads the session identifiers, the variables that
-  `session.variables` names and only those. And when `--config` is absent,
-  the client finds its file through Go's `os.UserConfigDir`, which follows
-  the operating system's convention: `$XDG_CONFIG_HOME/deck/config.yml` or
-  `~/.config/deck/config.yml` on Linux, `~/Library/Application
-  Support/deck/config.yml` on macOS. The service's file is the path given
-  with `--config`, or `/etc/deck/config.yml`, the path the container image
-  uses.
+  All configuration comes from these files, each named `config.yml`. The
+  only environment variables deck reads are the session identifiers that the
+  client's `session.variables` names. It expands no `${NAME}` reference and
+  reads no other variable: not `BAO_*` or `VAULT_*` (the OpenBao or Vault
+  client is built from the configuration alone, never with the library's
+  environment reading), not the HTTP proxy variables (every HTTP client deck
+  builds has no proxy), and not `HOME` or `XDG_CONFIG_HOME`. The client's file
+  is the path given with `--config`, or `.config/deck/config.yml` under the
+  current user's home directory as the operating system's user database
+  records it: Go's `user.LookupId` for the process's user ID, which reads
+  `/etc/passwd` on Linux and the directory service on macOS, with no
+  environment fallback. When the user database has no entry for the user, as
+  in a container run with an arbitrary user ID, `--config` is required, and a
+  command without it fails naming the user ID. The service's file is the path
+  given with `--config`, or `/etc/deck/config.yml`, the path the container
+  image uses. The Go runtime's own variables, such as `GODEBUG` and `TZ`,
+  are read by the runtime and configure nothing of deck's.
 
 
   Loading is strict. A document is decoded as YAML with unknown keys rejected,
@@ -88,5 +92,6 @@ validation-criteria: >-
   document, and are tested against the same files, so the schemas and the
   loaders cannot drift; a test shows a failure for each rule beyond the
   schema with its field path. A test runs the client with `BAO_ADDR`,
-  `VAULT_ADDR`, `VAULT_TOKEN` and `HTTPS_PROXY` set and shows that deck
-  ignores them.
+  `VAULT_ADDR`, `VAULT_TOKEN`, `HTTPS_PROXY`, `HOME` and `XDG_CONFIG_HOME`
+  set and shows that deck ignores them, finding its file under the home
+  directory the user database records.
