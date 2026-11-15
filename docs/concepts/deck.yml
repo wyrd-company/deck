@@ -120,19 +120,6 @@ features:
     >-
       Reports the service healthy only while every bot's gateway session and
       the NATS connection are connected.
-open-questions:
-  Q01: >-
-    Own-message identity across a key rotation: when a client's key is rotated
-    (a new public key under the same key name), how do a count's own messages
-    (ThreadCount.own) identify the key each was sent with, so the session still
-    subtracts its own messages sent before the rotation? Raised as R3-01 on
-    pull request #5; settled by task 12.
-  Q02: >-
-    The activity index when the events stream is deleted or recreated while the
-    service runs: how does the index notice the new stream and start its
-    generation, so that no retained activity is missed? Raised as R3-02 on
-    pull request #5, where an ordered consumer survived a recreation; settled
-    by task 12.
 exclusions:
   - deck imposes no conversation model. A forum post and a reply are each one
     operation, and nothing groups them beyond the thread Discord gives them.

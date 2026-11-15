@@ -12,16 +12,22 @@ description: >-
   tells stream generations apart by creation time, so after a restore it
   keeps the old epoch, sequences after the snapshot are issued again, and a
   session whose cursor passed them misses the activity that now holds them.
-  The documented step for a restore is to delete `stream.generation` from the
-  registry bucket before the service starts on the restored stream; the
+  The documented restore procedure is to stop the service before deleting or
+  restoring the stream, restore the snapshot, delete `stream.generation`
+  from the registry bucket, and start the service on the restored stream; the
   service then begins a new generation, every retained activity counts as
   unread again (a duplicate, which the guarantees allow), and nothing is
   missed. Trigger: an operator restores the events stream from a snapshot and
-  skips the step. Mitigation: the step is in the service's operating
-  documentation, and deleting or recreating the stream instead of restoring
-  it, with the service stopped, changes its creation time, which the start
-  check detects. Not yet specified: what deleting or recreating the stream
-  while the service runs needs; open question Q02 in concepts/deck.yml.
+  skips the procedure, including deleting and restoring it while the service
+  runs. The consumer error alone does not identify a restore, because the
+  restored creation time matches the record; this live restore is unsupported
+  and is the named residual. Mitigation: the procedure is in the service's
+  operating documentation. A newly created stream has a different creation
+  time: recreation while running triggers the error/end check and gated
+  replay in service, measured by stream-recreation. Recreation with the
+  service stopped is detected at startup. With nats.stream.manage true,
+  a running service can create the missing stream itself, so operators stop
+  it before deleting a stream they intend to restore.
 categories:
   - operational
 likelihood: 1

@@ -175,7 +175,10 @@ aggregates:
       fingerprint and nonce, before the send leaves the client. The session's
       unread activity in the thread is every activity the stream holds after
       the cursor, except the messages the session sent (matched by sender key
-      and nonce) and system messages.
+      and nonce) and system messages. A key keeps its name through public-key
+      rotation; counts select own messages by that name and identify each by
+      its original sending fingerprint and nonce, so count exclusion and read
+      suppression use the same session send record across rotation.
     identity: The session's primary identifier (the first configured variable
       that is set) and the thread's snowflake.
     commands:

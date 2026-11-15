@@ -106,4 +106,19 @@ validation-criteria: >-
   publishing the messages sent while the service was down, in an active
   thread and in an archived one, public or private, with live messages
   during recovery left behind none, and a thread whose read fails read again
-  at the next READY.
+  at the next READY. The embedded-NATS recreation trace indexes old sequences
+  1 through 5, deletes and recreates the stream while the ordered consumer
+  runs, and publishes new sequences 1 through 7. The consumer error triggers
+  the service's generation check even though its consume context stays open;
+  the index changes epoch and receives all new sequences 1 through 7. Repeat
+  with the stream absent at the check and management enabled, and with
+  management disabled until an operator creates it; the index stays gated
+  until the stream exists and replay finishes. A consumer-only deletion
+  keeps the epoch and resumes after the last indexed sequence. Concurrent
+  counts, ListUnread and an already-open Listen either complete against the
+  old generation, wait for replay, or reach their deadline with UNAVAILABLE;
+  their cursors never skip retained activity in the new generation, and a
+  body fetched by sequence is never returned under another generation's
+  epoch. A live delete-and-snapshot-restore is outside this trace and follows
+  the stop/restore/delete-generation/start procedure in service and the
+  named residual restored-stream-reuses-positions.

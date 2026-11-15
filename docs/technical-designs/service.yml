@@ -14,6 +14,7 @@ relationships:
     - carry-embeds-and-components-as-discord-json
     - start-a-thread-for-every-post
     - read-threads-by-id-in-granted-channels
+    - stream-recreation
   assumes:
     - one-service-instance-per-configuration
     - poll-votes-reach-the-gateway
@@ -318,26 +319,60 @@ proposed-design:
     order, entries older than the stream's maximum age are pruned, and a map
     from fingerprint and nonce to entries serves partial-sends. The index also
     holds the stream's epoch and its first and last sequence. The epoch tells
-    stream generations apart. At start the service reads the stream's
-    information and the bucket's `stream.generation`; when the record
+    stream generations apart. At start, whenever the consume context ends,
+    and on any error reported to its ConsumeErrHandler (measured for
+    `nats: consumer deleted` by stream-recreation), the service runs the
+    generation check. The error callback marks the index unavailable and
+    invalidates ingestion before returning, and signals a worker; it does
+    not stop or replace the consumer inside the callback, which nats.go calls
+    while holding its consumer lock. The worker stops the old context and
+    waits for Closed, rejecting queued callbacks from that context. It runs
+    the same stream create/check step as startup, under nats.stream.manage,
+    before reading creation time: with manage true a missing stream is
+    created; with manage false the index stays unavailable and retries until
+    the operator supplies the stream. A failed management or generation
+    read/write leaves the gate closed and is retried. The check reads the
+    stream's information and the bucket's `stream.generation`; when the record
     is missing or its `created` differs from the stream's creation time, the
     service writes a new record whose epoch is the current time in Unix
     nanoseconds, or the recorded epoch plus one when the clock is not ahead of
     it, with a revision-checked write, and the index discards its entries and
-    replays. So a stream deleted or recreated before the service starts, or
-    whose record is deleted, starts a new generation with a new epoch at that
-    start. Not yet specified: what the index does when the stream is deleted
-    or recreated while the service runs; open question Q02 in
-    concepts/deck.yml. Across generations, epochs grow while the
+    replays with a fresh ordered consumer and deliver policy all. The
+    library's internal reset is never used to resume a new generation,
+    because it can keep the previous stream's last sequence and skip the new
+    stream's early activity. When the generation is unchanged, the index
+    keeps its entries and epoch and a fresh consumer resumes from its last
+    indexed sequence plus one. The check captures the stream's last sequence
+    after stream management, and opens the gate once the new consumer reaches
+    that position (immediately for an empty stream); later arrivals continue
+    live. Errors during replay close the gate and repeat the check. So a
+    stream deleted or recreated while the service runs, before start, or
+    whose record is deleted before start, begins a new generation at the
+    check. Across generations, epochs grow while the
     record survives, and a client follows a generation change whichever way
     the epoch moved, since positions of different epochs do not order and its
     cursor update accepts any other epoch. A restore from a snapshot keeps the
     stream's creation time (measured by the round 2 review), so its documented
-    step is to delete `stream.generation` before the service runs on the
-    restored stream (risk restored-stream-reuses-positions). Until a replay
-    ends, calls that read the index wait up to their deadline and then return
-    UNAVAILABLE, so no response pairs an epoch with another generation's
-    sequences. The index is the only source of unread counts, lists, listens
+    procedure is to stop the service before deleting/restoring the stream,
+    restore it, delete `stream.generation`, and then start the service. Live
+    delete-and-restore is unsupported: the consumer error cannot distinguish
+    a restored stream with its preserved creation time (risk
+    restored-stream-reuses-positions).
+    Between deletion and detection, an index-only count can still return the
+    old generation's view. Its cursor cannot skip the replacement stream:
+    after the check the epoch differs, so every retained entry is after that
+    cursor. A call reading bodies by sequence verifies the stream's creation
+    time before returning; missing messages, a changed creation time, or an
+    index invalidated during the call send it through the same check and
+    retry gate, rather than pairing a new body with an old epoch. A deletion
+    after that verification can leave a completed response from the old
+    generation, whose cursor is treated the same way. From detection until
+    replay ends, calls that read the index wait up to their deadline and then
+    return UNAVAILABLE. Existing Listen waiters stay registered and, after
+    replay, enumerate retained activity against their cursors before
+    continuing live. Responses already sent can be seen again; no retained
+    activity of the new generation is skipped. The index is the only source
+    of unread counts, lists, listens
     and completed sends, and every instance of the service that follows the
     stream holds the same index.
   unread: >-
@@ -350,9 +385,11 @@ proposed-design:
     key, the thread's index entries after the cursor: those with a greater
     sequence when the cursor's epoch is the stream's, and all of them
     otherwise. It counts the ones that are not messages of a type other than
-    0, 19 or 46 (not yet specified: which of them `own` lists, and with what
-    key identity, across a rotation of the calling key; open question Q01 in
-    concepts/deck.yml), and sets horizon_passed when the cursor's
+    0, 19 or 46, and lists in `own` one entry per counted message whose
+    sent_by is the calling key's name, with its id, nonce and original
+    sending fingerprint as sender_key. This includes messages sent before
+    that name's public key rotated; the service never selects own by the
+    caller's current fingerprint. It sets horizon_passed when the cursor's
     epoch is not the stream's or the cursor's sequence is below the stream's
     first sequence minus one. It reads no Discord and no stream message.
     ListUnread takes the same entries in sequence order up to the limit, reads
