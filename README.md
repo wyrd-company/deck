@@ -52,10 +52,83 @@ The design is under [`docs/`](docs/). Start with
 [`docs/AGENTS.md`](docs/AGENTS.md) maps the rest. Run `docs/check.sh` after
 changing anything there.
 
+## Install
+
+- Homebrew: `brew install wyrd-company/tools/deck`.
+- npm (Node.js 22+): `npm install --global @wyrd-company/deck`.
+- APT/RPM: `deck` from [repo.wyrd.foo](https://repo.wyrd.foo); AUR: `deck-bin`.
+- Linux/macOS x86-64 and ARM64 archives and `checksums.txt` from
+  [GitHub releases](https://github.com/wyrd-company/deck/releases).
+- Service image: `ghcr.io/wyrd-company/deck:<version>` (Linux amd64/arm64).
+
+See [installation and service setup](docs/user/install.md) for checksum
+verification, the config file and container mounts. The CLI reads
+`~/.config/deck/config.yml` using the OS user database's home, or `--config PATH`.
+
 ## Development
 
-Install Go (the version in `go.mod`), [Task](https://taskfile.dev/) and
-[intentional](https://intentional.foo/). Run `task check` to format-check, vet,
-build, test, lint workflows and validate release configuration. `task build`
-creates `bin/deck`; pass `VERSION=1.2.3` to inject a release version. Until a
-baseline release tag exists, the intentional check uses `intentional status`.
+Install Go (the version in `go.mod`), [Task](https://taskfile.dev/), Node.js 22+,
+Python 3 and [intentional](https://intentional.foo/). Run `task check` for the
+repository checks, including release configuration and npm installer tests.
+`task build` creates `bin/deck`; pass `VERSION=1.2.3` to inject a release version.
+Until a baseline release tag exists, the intentional check uses `intentional status`.
+
+`task release:snapshot` builds all four OS/CPU archives, DEB/RPM packages and a
+Homebrew formula in `dist/`, without publishing. `task release:compatibility
+PUBLISHER_ROOT=/path/to/repo.wyrd.foo` additionally exercises the pinned
+publisher's validation, immutable queue, package staging and AUR rendering.
+It needs `rpm` and `dpkg-deb`, and a clean publisher checkout at the configured
+`PUBLISHER_COMMIT`. The current pin's product allowlist must admit deck before
+that gate can pass; it is an external release prerequisite.
+
+`task image:build VERSION=dev` builds and loads the service image locally.
+`task image:build:multiarch` writes `dist/deck-image.tar` as a multi-arch OCI
+archive using Docker Buildx. Neither task pushes an image. The image's service
+health command is implemented by the service/gateway work.
+
+CI builds the release snapshot without publishing and runs
+`task config:home:macos:check` on macOS. That probe builds with `CGO_ENABLED=0`,
+sets hostile home/user/config/proxy/Vault variables, and compares actual CLI
+config lookup to the macOS directory service. Linux has `task config:home:check`.
+
+## Releases
+
+[Intentional](https://intentional.foo/) is the version and release mechanism.
+Record a user-visible change with `intentional add --release-unit deck:patch
+--message "Describe the change"`. The operator establishes the initial baseline
+with intentional before planning a release. For a normal release:
+
+```sh
+intentional plan > release-plan.json
+intentional apply
+# Review and commit the applied changelog/intent changes through your git operator.
+intentional tag --plan release-plan.json
+# Push the resulting bare SemVer tag (for example 1.2.3) through your git operator.
+```
+
+Keep the saved plan outside tracked files. Never create release tags by hand.
+A main-branch push publishes nothing. A release-tag push:
+
+1. Validates intentional's changelog notes and proves the pinned repo.wyrd.foo
+   publisher contract before any publishing job can run.
+2. Creates the GitHub release with Linux/macOS archives, DEB/RPM packages,
+   `checksums.txt`, and notes extracted from `CHANGELOG.md`.
+3. Publishes the multi-arch GHCR image (`:<version>` and `:latest`), generated
+   Homebrew formula to `wyrd-company/homebrew-tools`, and version-matched
+   `@wyrd-company/deck` npm wrapper.
+4. Submits the retained immutable manifest to repo.wyrd.foo, which publishes
+   APT/RPM packages and renders/publishes `deck-bin` for AUR.
+
+The publisher is pinned in `Taskfile.yml`, `release.yml`, and `submit-package.yml`.
+Move all three pins together when its approved contract or deck allowlist changes.
+Secrets needed (configure them separately; no release task creates secrets):
+`HOMEBREW_TAP_TOKEN` with contents write access to `homebrew-tools`, `NPM_TOKEN`
+with publish access to `@wyrd-company/deck`, `REPO_WYRD_FOO_PUBLISHER_APP_ID`, and
+`REPO_WYRD_FOO_PUBLISHER_PRIVATE_KEY`. GitHub supplies `GITHUB_TOKEN` for release
+assets and GHCR; npm provenance uses the workflow's OIDC permission.
+
+Recover a failed Release job with GitHub's **Re-run failed jobs** on the original
+tag run. Recover package submission with **Submit package release**, specifying
+the successful Release run ID and tag. It verifies the run, source commit and
+tag, then reuses that run's digest-checked manifest artifact (retained for 90 days).
+A missing retained manifest fails; do not rebuild a handoff from mutable assets.

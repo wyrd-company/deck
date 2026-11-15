@@ -1,0 +1,175 @@
+name: Release
+on:
+  push:
+    tags: ['[0-9]*.[0-9]*.[0-9]*']
+permissions:
+  contents: read
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+env:
+  RELEASE_TAG: ${{ github.ref_name }}
+jobs:
+  compatibility:
+    name: Prove pinned package publisher compatibility
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      # This pin must admit deck in config/products.json. Until the operator
+      # approves that external prerequisite, validate-queue deliberately fails.
+      REPO_WYRD_FOO_PUBLISHER_COMMIT: c973ba1080ab52a86cdd2a3108ad158e0f2386a7
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+      - name: Validate release identity and intentional notes
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_TAG" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          bash scripts/release-notes.sh "$RELEASE_TAG" > /dev/null
+      - name: Check out pinned publisher contract
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          repository: wyrd-company/repo.wyrd.foo
+          ref: ${{ env.REPO_WYRD_FOO_PUBLISHER_COMMIT }}
+          path: .repo-wyrd-foo-contract
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod
+      - name: Install package inspectors
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends rpm
+      - name: Build and exercise the real pinned publisher
+        run: >-
+          go run github.com/go-task/task/v3/cmd/task@v3.52.0 release:compatibility
+          PUBLISHER_ROOT=.repo-wyrd-foo-contract
+          PUBLISHER_COMMIT="$REPO_WYRD_FOO_PUBLISHER_COMMIT"
+          RELEASE_VERSION="$RELEASE_TAG"
+  release:
+    name: Publish GitHub release
+    needs: compatibility
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod
+      - name: Extract intentional changelog notes
+        run: bash scripts/release-notes.sh "$RELEASE_TAG" > "$RUNNER_TEMP/release-notes.md"
+      - uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7
+        with:
+          distribution: goreleaser
+          version: v2.17.0
+          args: release --clean --parallelism 2 --release-notes=${{ runner.temp }}/release-notes.md
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GORELEASER_CURRENT_TAG: ${{ env.RELEASE_TAG }}
+      - name: Generate immutable package handoff and Homebrew formula
+        run: |
+          python3 scripts/create-release-manifest.py --artifacts-dir dist --version "$RELEASE_TAG" --commit "$(git rev-parse HEAD)" --output dist/release-manifest.json
+          python3 scripts/create-homebrew-formula.py --artifacts-dir dist --version "$RELEASE_TAG" --output dist/homebrew/Formula/deck.rb
+      - name: Retain package handoff for the submission workflow
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: package-release-manifest
+          path: dist/release-manifest.json
+          if-no-files-found: error
+          retention-days: 90
+      - name: Retain generated Homebrew formula
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: homebrew-formula
+          path: dist/homebrew/Formula/deck.rb
+          if-no-files-found: error
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+      - name: Pack npm wrapper at the release version
+        run: |
+          npm version "$RELEASE_TAG" --no-git-tag-version --ignore-scripts --prefix npm
+          npm pack --ignore-scripts --pack-destination dist ./npm
+      - name: Retain exact npm package
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: npm-package
+          path: dist/wyrd-company-deck-*.tgz
+          if-no-files-found: error
+  npm:
+    name: Publish npm wrapper
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: npm-package
+          path: dist
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+          registry-url: https://registry.npmjs.org
+      - run: npm publish dist/wyrd-company-deck-*.tgz --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+  homebrew:
+    name: Publish Homebrew formula
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: homebrew-formula
+          path: homebrew
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          repository: wyrd-company/homebrew-tools
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: tap
+      - name: Update formula from exact release artifacts
+        run: |
+          mkdir -p tap/Formula
+          cp homebrew/deck.rb tap/Formula/deck.rb
+          cd tap
+          if ! git diff --quiet -- Formula/deck.rb || [[ -n "$(git ls-files --others -- Formula/deck.rb)" ]]; then
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git add -- Formula/deck.rb
+            git commit -m "chore: release deck $RELEASE_TAG"
+            git push
+          fi
+  image:
+    name: Publish multi-arch service image
+    needs: release
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ghcr.io/wyrd-company/deck:${{ env.RELEASE_TAG }}
+            ghcr.io/wyrd-company/deck:latest
+          build-args: VERSION=${{ env.RELEASE_TAG }}
