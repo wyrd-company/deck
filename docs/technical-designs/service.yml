@@ -218,16 +218,18 @@ proposed-design:
     from the index and the stream.
   startup-and-shutdown: >-
     Start: load and validate the configuration; open the OpenBao or Vault
-    client and read the host key, the NATS credentials and every bot token;
-    connect to NATS; create or check the stream and the bucket as `manage`
-    says; load the registry and start watching it; start the index's replay;
-    open every bot's gateway session; open the SSH listener and the health
-    listener. A failure before the listeners open exits with status 1 and a
+    client and read the NATS credentials; connect to NATS; create or check the
+    stream and the bucket as `manage` says; load the registry and start
+    watching it; read every bot token and prepare its client; start the index's
+    replay;
+    open every bot's gateway session; read the host key once through the same
+    Vault client, keeping startup secret reads serial; open the SSH listener
+    and the health listener. A failure before the listeners open exits with status 1 and a
     log line naming the step and the configuration path involved. API calls
     that read the index wait for its replay to reach the stream's last
     sequence at start, up to the call's deadline. SIGTERM or SIGINT closes the
-    SSH listener, ends open calls, closes the gateway sessions, drains NATS
-    and exits 0, within 10 seconds.
+    SSH listener, cancels and joins open calls before closing the runtime,
+    closes the gateway sessions, drains NATS and exits 0, within 10 seconds.
   bots: >-
     Each bot is a `bot.Client` from `disgo.New` with gateway intents guilds,
     guild messages, message content and guild message polls, and caches for

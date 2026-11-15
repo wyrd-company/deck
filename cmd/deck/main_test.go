@@ -25,7 +25,7 @@ func TestRun(t *testing.T) {
 		{name: "version", args: []string{"--version"}, code: 0, stdout: "1.2.3\n"},
 		{name: "version JSON", args: []string{"--version", "--json"}, code: 0, stdout: "{\"version\":\"1.2.3\"}\n"},
 		{name: "JSON version", args: []string{"--json", "--version"}, code: 0, stdout: "{\"version\":\"1.2.3\"}\n"},
-		{name: "service start help", args: []string{"service", "start", "--help"}, code: 1, stderr: "deck service start: not implemented\n"},
+		{name: "service start help", args: []string{"service", "start", "--help"}, code: 0, stdout: "usage: deck service start [--config PATH]\nRun the configured service until SIGINT or SIGTERM.\nExample: deck service start --config /etc/deck/config.yml\n"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

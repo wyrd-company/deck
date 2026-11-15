@@ -98,6 +98,12 @@ func (f *fakeDiscord) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			respond(map[string]any{"id": "10", "guild_id": "1", "type": 15, "name": "forum", "available_tags": []any{map[string]any{"id": "5", "name": "tag"}}})
 		case "/channels/20":
 			respond(map[string]any{"id": "20", "guild_id": "1", "type": 0, "name": "text"})
+		case "/channels/201":
+			respond(threadJSON("201", "20"))
+		case "/channels/300":
+			thread := threadJSON("300", "30")
+			thread["guild_id"] = "2"
+			respond(thread)
 		case "/channels/50":
 			respond(map[string]any{"id": "50", "type": 1, "recipients": []any{}})
 		case "/channels/30":

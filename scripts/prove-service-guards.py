@@ -197,4 +197,20 @@ probe('position lookup failure finishes the pending reply attempt', 'send.go',
 probe('metadata HTTP refusals take precedence over Discord error codes', 'discord/errors.go',
       'errors.As(err, &r) && r.Response != nil && (r.Response.StatusCode == 403 || r.Response.StatusCode == 404)',
       'errors.As(err, &r) && false', './internal/service', 'TestMetadataReadErrors')
+probe('real SSH handler enforces explicit channel grants', 'handler.go',
+      'ch == "*" || ch == strconv.FormatUint(e.ChannelID, 10)', 'ch == "*" || true',
+      './internal/service', 'TestSSHHandlerGrants')
+probe('service handles native SIGTERM', 'startup.go',
+      'signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)',
+      'signal.NotifyContext(ctx, os.Interrupt, syscall.SIGINT)',
+      './internal/service', 'TestServiceSIGTERM')
+probe('transport joins handlers before runtime cancellation', 'startup.go',
+      'context.WithCancel(context.WithoutCancel(ctx))', 'context.WithCancel(ctx)',
+      './internal/service', 'TestServiceSIGTERM')
+probe('adapter closes runtime after transport stops', 'startup.go',
+      'defer r.Close()', '_ = r', './internal/service', 'TestServiceSIGTERM')
+probe('startup secret reads observe cancellation', 'startup.go',
+      'stopStartup := context.AfterFunc(ctx, cancel)',
+      'stopStartup := context.AfterFunc(context.Background(), cancel)',
+      './internal/service', 'TestServiceStartupCancellation')
 print(f'PASS all {completed} targeted service mutation probes completed', flush=True)
