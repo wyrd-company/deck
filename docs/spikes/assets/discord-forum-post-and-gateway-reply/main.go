@@ -89,6 +89,9 @@ type observed struct {
 	webhook    bool
 	hasContent bool
 	nonce      string
+	msgType    int
+	authorID   snowflake.ID
+	reference  snowflake.ID
 	at         time.Time
 }
 
@@ -124,7 +127,12 @@ func (r *recorder) onMessage(event *events.GuildMessageCreate) {
 		webhook:    event.Message.WebhookID != nil,
 		hasContent: event.Message.Content != "",
 		nonce:      string(event.Message.Nonce),
+		msgType:    int(event.Message.Type),
+		authorID:   event.Message.Author.ID,
 		at:         time.Now(),
+	}
+	if event.Message.MessageReference != nil && event.Message.MessageReference.MessageID != nil {
+		item.reference = *event.Message.MessageReference.MessageID
 	}
 	r.mu.Lock()
 	r.seen = append(r.seen, item)
@@ -304,10 +312,11 @@ func main() {
 	thread := post.ID()
 	rec.track(thread, "forum-post")
 	emit("forum-post", "pass", map[string]any{
-		"poll_in_starter":        pollInStarter,
-		"starter_id_is_thread":   post.Message.ID == thread,
-		"thread_parent_is_forum": post.ParentID() != nil && *post.ParentID() == forumID,
-		"rest_ms":                time.Since(sent).Milliseconds(),
+		"request_with_poll_accepted": pollInStarter,
+		"starter_has_poll":           post.Message.Poll != nil,
+		"starter_id_is_thread":       post.Message.ID == thread,
+		"thread_parent_is_forum":     post.ParentID() != nil && *post.ParentID() == forumID,
+		"rest_ms":                    time.Since(sent).Milliseconds(),
 	})
 	if item, latency, ok := rec.await(post.Message.ID, sent, 15*time.Second); ok {
 		emit("gateway-starter-message", "pass", map[string]any{"latency_ms": latency.Milliseconds(), "before_rest_returned": item.at.Before(returned), "author_bot": item.authorBot, "has_content": item.hasContent, "nonce_echoed": pollInStarter && item.nonce == "deckspikepost"+stamp[17:19], "rest_nonce_echoed": string(post.Message.Nonce) == "deckspikepost"+stamp[17:19]})
@@ -317,15 +326,20 @@ func main() {
 
 	// Step 4: when the starter cannot carry the poll, the poll is a second
 	// message in the thread.
-	if !pollInStarter {
+	pollMessageID := post.Message.ID
+	if post.Message.Poll == nil {
 		sent = time.Now()
 		message, err := client.Rest.CreateMessage(thread, discord.MessageCreate{Content: "deck spike: poll as the thread's second message", Poll: poll, AllowedMentions: noMentions})
 		if err != nil {
 			emit("poll-in-thread", "fail", discordError(err))
-		} else if _, latency, ok := rec.await(message.ID, sent, 15*time.Second); ok {
-			emit("poll-in-thread", "pass", map[string]any{"latency_ms": latency.Milliseconds()})
+			pollMessageID = 0
 		} else {
-			emit("poll-in-thread", "fail", map[string]any{"error": "gateway did not deliver within 15s"})
+			pollMessageID = message.ID
+			if _, latency, ok := rec.await(message.ID, sent, 15*time.Second); ok {
+				emit("poll-in-thread", "pass", map[string]any{"latency_ms": latency.Milliseconds(), "message_has_poll": message.Poll != nil})
+			} else {
+				emit("poll-in-thread", "fail", map[string]any{"error": "gateway did not deliver within 15s"})
+			}
 		}
 	}
 
@@ -420,6 +434,37 @@ func main() {
 		})
 	}
 
+	// Step 8b: end the starter's poll early. Discord posts a poll result
+	// message (type 46); who authors it decides whether a rule that drops the
+	// bot's own messages from the gateway also drops poll results.
+	if pollMessageID != 0 {
+		sent = time.Now()
+		if _, err := client.Rest.ExpirePoll(thread, pollMessageID); err != nil {
+			emit("poll-result", "fail", discordError(err))
+		} else {
+			deadline := time.Now().Add(15 * time.Second)
+			var found *observed
+			for found == nil && time.Now().Before(deadline) {
+				rec.mu.Lock()
+				for i := range rec.seen {
+					if rec.seen[i].msgType == int(discord.MessageTypePollResult) {
+						item := rec.seen[i]
+						found = &item
+					}
+				}
+				rec.mu.Unlock()
+				if found == nil {
+					time.Sleep(200 * time.Millisecond)
+				}
+			}
+			if found == nil {
+				emit("poll-result", "fail", map[string]any{"error": "no type 46 message in the thread within 15s"})
+			} else {
+				emit("poll-result", "pass", map[string]any{"type": found.msgType, "in_thread": found.threadID == thread, "author_is_this_bot": found.authorID == client.ID(), "author_bot": found.authorBot, "references_poll_message": found.reference == pollMessageID, "latency_ms": found.at.Sub(sent).Milliseconds()})
+			}
+		}
+	}
+
 	// Step 9: a text channel has no posts; a message there becomes a thread's
 	// starter when a thread is started from it.
 	sent = time.Now()
@@ -478,6 +523,22 @@ func main() {
 			emit("archive", "fail", discordError(err))
 		} else {
 			emit("archive", "pass", nil)
+			// An archived thread still reports its newest message, which
+			// recovery compares with its boundary.
+			var newest snowflake.ID
+			rec.mu.Lock()
+			for _, item := range rec.seen {
+				if item.threadID == thread && item.messageID > newest {
+					newest = item.messageID
+				}
+			}
+			rec.mu.Unlock()
+			if refreshed, err := client.Rest.GetChannel(thread); err != nil {
+				emit("archived-thread-metadata", "fail", discordError(err))
+			} else if guildThread, ok := refreshed.(discord.GuildThread); ok {
+				last := guildThread.LastMessageID()
+				emit("archived-thread-metadata", "pass", map[string]any{"archived": guildThread.ThreadMetadata.Archived, "last_message_id_is_newest_seen": last != nil && *last == newest})
+			}
 		}
 	}
 	emit("done", "pass", nil)

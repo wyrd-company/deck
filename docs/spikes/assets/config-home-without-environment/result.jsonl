@@ -1,0 +1,2 @@
+{"case":"no-passwd-entry","result":{"lookupid_home":"/tmp/fake-home","passwd_error":"no passwd entry for user ID 1000","passwd_home":null,"uid":1000}}
+{"case":"passwd-entry","result":{"lookupid_home":"/home/probe-from-passwd","passwd_home":"/home/probe-from-passwd","uid":1000}}

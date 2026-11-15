@@ -1,0 +1,26 @@
+$schema: https://refinery.systems/ontology/assumption
+relationships:
+  shaped-by:
+    - discord-forum-post-and-gateway-reply
+description: >-
+  When a person votes in, or removes a vote from, a poll on a message a deck
+  bot sent, Discord delivers MESSAGE_POLL_VOTE_ADD or MESSAGE_POLL_VOTE_REMOVE
+  to that bot's gateway session, which holds the guild message polls intent,
+  with the voter's user ID, the channel, the poll message's ID and the answer
+  ID. For a poll in a forum post (the thread's second message) the channel is
+  the thread. For a poll in a text channel post's message, which lives in the
+  parent channel, the channel is the parent and the message ID is the thread's
+  ID, which is how deck routes the vote to the thread. Proven when a person
+  votes and removes a vote on both kinds of post on the test server and each
+  vote appears once on the thread's subject with the answer it named, as the
+  acceptance task's run does.
+end-descendant-type: spike
+evidence:
+  - Discord documents the poll vote events, their fields and the guild message
+    polls intent; disgo v0.20.0 exposes them as MessagePollVoteAdd and
+    MessagePollVoteRemove.
+  - The gateway accepted a session with the guild message polls intent, and a
+    poll sent as a thread's second message was a poll whose early end brought
+    a type 46 poll result into the thread (discord-forum-post-and-gateway-reply).
+  - Not measured. A bot cannot vote in its own poll, and the spike had no
+    person present.

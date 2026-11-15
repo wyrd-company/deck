@@ -1,0 +1,19 @@
+$schema: https://refinery.systems/ontology/assumption
+relationships:
+  shaped-by:
+    - discord-forum-post-and-gateway-reply
+description: >-
+  A message created with a nonce and enforce_nonce, then created again by the
+  same bot with the same nonce within a few minutes, returns the first message
+  and creates nothing; after that window, a repeat creates a new message.
+  deck relies on this only to narrow a duplicate a client's repeat could
+  cause when the service lost a reply's or text channel post's outcome; the
+  idempotency deck promises comes from its own activity index. Proven by
+  repeating a nonce after increasing delays and recording when Discord stops
+  returning the first message.
+end-descendant-type: spike
+evidence:
+  - An immediate repeat of a reply's nonce and of a text channel message's
+    nonce returned the first message (discord-forum-post-and-gateway-reply).
+  - Discord documents that enforce_nonce checks messages created by the same
+    author with the same nonce "in the past few minutes".

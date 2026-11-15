@@ -1,17 +1,20 @@
 {"step":"application","result":"pass","detail":{"bot_public":true,"message_content_intent":false,"message_content_intent_limited":true}}
-{"step":"gateway-open","result":"pass","detail":{"guilds_ready_after_ms":1373,"intents":16810497,"message_content_requested":true}}
+{"step":"gateway-open","result":"pass","detail":{"guilds_ready_after_ms":1350,"intents":16810497,"message_content_requested":true}}
 {"step":"forum-channel","result":"pass","detail":{"available_tags":0,"require_tag":false,"type":15}}
-{"step":"forum-post","result":"pass","detail":{"poll_in_starter":true,"rest_ms":203,"starter_id_is_thread":true,"thread_parent_is_forum":true}}
-{"step":"gateway-starter-message","result":"pass","detail":{"author_bot":true,"before_rest_returned":true,"has_content":true,"latency_ms":173,"nonce_echoed":false,"rest_nonce_echoed":false}}
-{"step":"bot-reply","result":"pass","detail":{"author_bot":true,"has_content":true,"latency_ms":211,"n":1,"nonce_echoed":true,"rest_nonce_echoed":true}}
-{"step":"bot-reply","result":"pass","detail":{"author_bot":true,"has_content":true,"latency_ms":150,"n":2,"nonce_echoed":true,"rest_nonce_echoed":true}}
-{"step":"bot-reply","result":"pass","detail":{"author_bot":true,"has_content":true,"latency_ms":243,"n":3,"nonce_echoed":true,"rest_nonce_echoed":true}}
+{"step":"forum-post","result":"pass","detail":{"request_with_poll_accepted":true,"rest_ms":341,"starter_has_poll":false,"starter_id_is_thread":true,"thread_parent_is_forum":true}}
+{"step":"gateway-starter-message","result":"pass","detail":{"author_bot":true,"before_rest_returned":true,"has_content":true,"latency_ms":257,"nonce_echoed":false,"rest_nonce_echoed":false}}
+{"step":"poll-in-thread","result":"pass","detail":{"latency_ms":190,"message_has_poll":true}}
+{"step":"bot-reply","result":"pass","detail":{"author_bot":true,"has_content":true,"latency_ms":221,"n":1,"nonce_echoed":true,"rest_nonce_echoed":true}}
+{"step":"bot-reply","result":"pass","detail":{"author_bot":true,"has_content":true,"latency_ms":205,"n":2,"nonce_echoed":true,"rest_nonce_echoed":true}}
+{"step":"bot-reply","result":"pass","detail":{"author_bot":true,"has_content":true,"latency_ms":902,"n":3,"nonce_echoed":true,"rest_nonce_echoed":true}}
 {"step":"enforce-nonce-repeat","result":"pass","detail":{"same_message":true}}
 {"step":"webhook-reply","result":"fail","detail":{"code":50013,"message":"Missing Permissions","status":403}}
-{"step":"history-after-cursor","result":"pass","detail":{"count":3,"from_webhook":0,"newest_first":true,"oldest_first":false,"with_content":3}}
-{"step":"thread-metadata","result":"pass","detail":{"last_message_id_is_latest":true,"message_count":3,"total_message_sent":3}}
+{"step":"history-after-cursor","result":"pass","detail":{"count":4,"from_webhook":0,"newest_first":true,"oldest_first":false,"with_content":4}}
+{"step":"thread-metadata","result":"pass","detail":{"last_message_id_is_latest":true,"message_count":4,"total_message_sent":4}}
+{"step":"poll-result","result":"pass","detail":{"author_bot":true,"author_is_this_bot":true,"in_thread":true,"latency_ms":413,"references_poll_message":true,"type":46}}
 {"step":"text-channel-starter-nonce","result":"pass","detail":{"nonce_echoed":true,"rest_nonce_echoed":true}}
 {"step":"text-channel-repeat","result":"pass","detail":{"same_message":true,"second_thread":{"code":160004,"message":"A thread has already been created for this message","status":400}}}
-{"step":"text-channel-thread","result":"pass","detail":{"latency_ms":253,"thread_id_is_starter_id":true}}
+{"step":"text-channel-thread","result":"pass","detail":{"latency_ms":252,"thread_id_is_starter_id":true}}
 {"step":"archive","result":"pass"}
+{"step":"archived-thread-metadata","result":"pass","detail":{"archived":true,"last_message_id_is_newest_seen":true}}
 {"step":"done","result":"pass"}
