@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"unicode"
 
 	pb "github.com/wyrd-company/deck/internal/api/deckv1"
 	"github.com/wyrd-company/deck/internal/client"
@@ -183,8 +184,7 @@ func (i *invocation) send(ctx context.Context) error {
 		}
 		recordErr := i.client.Store.SendState(i.client.Fingerprint, nonce, state)
 		if state == "unknown" {
-			repeat := repeatCommand(i.flags, nonce)
-			msg := fmt.Sprintf("outcome unknown; inspect Discord before repeating: %s", repeat)
+			msg := "outcome unknown" + repeatHint(i.flags, nonce)
 			if recordErr != nil {
 				msg += "; could not record send outcome: " + recordErr.Error()
 			}
@@ -197,7 +197,7 @@ func (i *invocation) send(ctx context.Context) error {
 	}
 	if t == nil || message == nil || position == nil {
 		recordErr := i.client.Store.SendState(i.client.Fingerprint, nonce, "unknown")
-		msg := "outcome unknown: incomplete service result; inspect Discord before repeating: " + repeatCommand(i.flags, nonce)
+		msg := "outcome unknown: incomplete service result" + repeatHint(i.flags, nonce)
 		if recordErr != nil {
 			msg += "; could not record send outcome: " + recordErr.Error()
 		}
@@ -231,9 +231,24 @@ func threadURL(t *pb.Thread) string {
 	return fmt.Sprintf("https://discord.com/channels/%d/%d", t.ServerId, t.ThreadId)
 }
 func repeatCommand(f flags, nonce string) string {
+	setup := []string{}
+	quote := func(value string) string {
+		if !strings.ContainsFunc(value, func(r rune) bool { return unicode.IsControl(r) || unicode.Is(unicode.Cf, r) }) {
+			return shellQuote(value)
+		}
+		// Octal bytes keep the diagnostic one printable line. A sentinel keeps
+		// command substitution from dropping trailing newlines in the value.
+		var encoded strings.Builder
+		for _, b := range []byte(value) {
+			fmt.Fprintf(&encoded, `\0%03o`, b)
+		}
+		name := fmt.Sprintf("deck_repeat_arg_%d", len(setup))
+		setup = append(setup, name+"=$(printf '%b' '"+encoded.String()+"x')")
+		return `"${` + name + `%x}"`
+	}
 	parts := []string{"deck", f.command}
 	for _, arg := range f.args {
-		parts = append(parts, shellQuote(arg))
+		parts = append(parts, quote(arg))
 	}
 	keys := []string{}
 	for key := range f.values {
@@ -244,14 +259,26 @@ func repeatCommand(f flags, nonce string) string {
 	slices.Sort(keys)
 	for _, key := range keys {
 		for _, value := range f.values[key] {
-			parts = append(parts, "--"+key)
-			if !bools[key] {
-				parts = append(parts, shellQuote(value))
+			if bools[key] {
+				parts = append(parts, "--"+key)
+			} else {
+				parts = append(parts, "--"+key+"="+quote(value))
 			}
 		}
 	}
 	parts = append(parts, "--nonce", nonce)
-	return strings.Join(parts, " ")
+	setup = append(setup, strings.Join(parts, " "))
+	return strings.Join(setup, "; ")
+}
+func repeatHint(f flags, nonce string) string {
+	note := ""
+	for _, key := range []string{"text-file", "file", "embed", "components"} {
+		if slices.Contains(f.values[key], "-") {
+			note = "; supply the same input on stdin when repeating"
+			break
+		}
+	}
+	return note + "; inspect Discord before repeating: " + repeatCommand(f, nonce)
 }
 func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'" }
 func (i *invocation) inbox(ctx context.Context) error {

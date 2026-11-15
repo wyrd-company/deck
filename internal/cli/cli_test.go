@@ -325,9 +325,9 @@ func TestUnknownSendNoRetryAndExplicitNonce(t *testing.T) {
 					if !ok {
 						t.Fatal("missing deck repeat", errout)
 					}
-					want := fmt.Sprintf("post --config '%s' --text 'hello' --title 'Question' --nonce %s", f.path, nonce)
+					want := fmt.Sprintf("post --config='%s' --text='hello' --title='Question' --nonce %s", f.path, nonce)
 					if kind == "reply" {
-						want = fmt.Sprintf("reply '10' --config '%s' --text 'hello' --nonce %s", f.path, nonce)
+						want = fmt.Sprintf("reply '10' --config='%s' --text='hello' --nonce %s", f.path, nonce)
 					}
 					if repeat != want {
 						t.Fatalf("repeat command %q want %q", repeat, want)
@@ -1236,7 +1236,7 @@ func TestSessionConfigurationErrorsNameFileAndFix(t *testing.T) {
 // arguments through the application rather than reconstructing a repeat ourselves.
 func runPrintedRepeat(t *testing.T, f *fixture, command string) {
 	t.Helper()
-	raw, err := exec.Command("sh", "-c", "set -- "+command+`; printf '%s\0' "$@"`).Output()
+	raw, err := exec.Command("sh", "-c", `deck() { printf '%s\0' deck "$@"; }; `+command).Output()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1513,6 +1513,102 @@ func TestIncompleteResultReportsOutcomeWriteFailure(t *testing.T) {
 			if err != nil || record.State != "pending" {
 				t.Fatalf("failed state update: %v %v", record, err)
 			}
+		})
+	}
+}
+
+func TestTextRepeatPreservesControlsAndOptionValues(t *testing.T) {
+	for _, kind := range []string{"post", "reply"} {
+		for _, value := range []string{"line one\nline two\tcol\n\n", "-- signed off", "quotes ' $(printf bad) `echo bad`\r\x1b\u202e"} {
+			t.Run(kind+"/"+fmt.Sprintf("%q", value), func(t *testing.T) {
+				f := setup(t)
+				if kind == "reply" {
+					f.seed()
+				}
+				var original *pb.Content
+				remember := func(c *pb.Content) { original = proto.Clone(c).(*pb.Content) }
+				f.fake.post = func(_ context.Context, r *pb.PostRequest) (*pb.PostResponse, error) {
+					remember(r.Content)
+					return nil, status.Error(codes.Unavailable, "lost")
+				}
+				f.fake.reply = func(_ context.Context, r *pb.ReplyRequest) (*pb.ReplyResponse, error) {
+					remember(r.Content)
+					return nil, status.Error(codes.Unavailable, "lost")
+				}
+				args := []string{kind}
+				if kind == "post" {
+					args = append(args, "team", "--title=--title")
+				} else {
+					args = append(args, "10")
+				}
+				args = append(args, "--text="+value, "--nonce=fixedNonce")
+				code, _, stderr := f.run(args...)
+				if code != 4 {
+					t.Fatal(code, stderr)
+				}
+				_, repeat, ok := strings.Cut(stderr, "before repeating: ")
+				if !ok {
+					t.Fatal(stderr)
+				}
+				repeat = strings.TrimSuffix(repeat, "\n")
+				if strings.ContainsAny(repeat, "\n\t\r\x1b\u202e") {
+					t.Fatalf("repeat not printable single line: %q", repeat)
+				}
+				check := func(c *pb.Content, nonce string) {
+					if !proto.Equal(c, original) || nonce != "fixedNonce" {
+						t.Errorf("repeat changed content/nonce: %v %s", c, nonce)
+					}
+				}
+				f.fake.post = func(_ context.Context, r *pb.PostRequest) (*pb.PostResponse, error) {
+					check(r.Content, r.Nonce)
+					if r.Title != "--title" || r.Channel.ChannelId != 2 {
+						t.Errorf("post target/title changed: %v", r)
+					}
+					return &pb.PostResponse{Thread: baseThread, Message: person(11, 7, "sent"), Position: &pb.StreamPosition{Epoch: 100, Sequence: 5}}, nil
+				}
+				f.fake.reply = func(_ context.Context, r *pb.ReplyRequest) (*pb.ReplyResponse, error) {
+					check(r.Content, r.Nonce)
+					if r.Thread.ThreadId != 10 {
+						t.Errorf("reply target changed: %v", r)
+					}
+					return &pb.ReplyResponse{Thread: baseThread, Message: person(11, 7, "sent"), Position: &pb.StreamPosition{Epoch: 100, Sequence: 5}}, nil
+				}
+				runPrintedRepeat(t, f, repeat)
+			})
+		}
+	}
+}
+
+func TestRepeatStdinReminder(t *testing.T) {
+	for _, flag := range []string{"text-file", "file", "embed", "components"} {
+		t.Run(flag, func(t *testing.T) {
+			f := setup(t)
+			f.input = "original stdin\n"
+			if flag == "embed" {
+				f.input = `{"title":"original"}`
+			} else if flag == "components" {
+				f.input = `[{"type":1}]`
+			}
+			var original *pb.Content
+			f.fake.post = func(_ context.Context, r *pb.PostRequest) (*pb.PostResponse, error) {
+				original = proto.Clone(r.Content).(*pb.Content)
+				return nil, status.Error(codes.Unavailable, "lost")
+			}
+			code, _, stderr := f.run("post", "team", "--title", "Q", "--"+flag, "-", "--nonce", "stdinNonce")
+			if code != 4 || !strings.Contains(stderr, "supply the same input on stdin") {
+				t.Fatal(code, stderr)
+			}
+			_, repeat, ok := strings.Cut(stderr, "before repeating: ")
+			if !ok {
+				t.Fatal(stderr)
+			}
+			f.fake.post = func(_ context.Context, r *pb.PostRequest) (*pb.PostResponse, error) {
+				if !proto.Equal(r.Content, original) || r.Nonce != "stdinNonce" {
+					t.Errorf("stdin repeat changed: %v", r)
+				}
+				return &pb.PostResponse{Thread: baseThread, Message: person(11, 7, "sent"), Position: &pb.StreamPosition{Epoch: 100, Sequence: 5}}, nil
+			}
+			runPrintedRepeat(t, f, strings.TrimSuffix(repeat, "\n"))
 		})
 	}
 }
