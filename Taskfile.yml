@@ -82,6 +82,14 @@ tasks:
     desc: Prove transport authentication and carried Vault guards
     cmds:
       - python3 scripts/prove-transport-guards.py
+  service:guards:check:
+    desc: Prove service routing, send-outcome and publication guards with restored mutations
+    cmds:
+      - python3 scripts/prove-service-guards.py
+  test:discord:live:
+    desc: Run opt-in API tests against the configured test Discord server
+    cmds:
+      - go test -count=1 -tags discordlive -run '^TestDiscordLive$' -v ./internal/service
   config:home:check:
     desc: Prove passwd-home lookup with the real CLI in bubblewrap (Linux)
     cmds:

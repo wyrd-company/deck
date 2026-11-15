@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
+	"net"
 	"sort"
 	"strconv"
 	"strings"
@@ -76,7 +78,17 @@ func Error(err error) error {
 			sort.Strings(paths)
 			return status.Error(codes.InvalidArgument, "Discord validation failed: "+strings.Join(paths, ", "))
 		case 50013:
-			return status.Error(codes.FailedPrecondition, "Discord permission missing for this operation")
+			names := []string{}
+			for _, name := range []string{"View Channel", "Send Messages in Threads", "Send Messages", "Create Public Threads", "Create Private Threads", "Attach Files", "Embed Links", "Send Polls", "Read Message History"} {
+				if strings.Contains(r.Message, name) {
+					names = append(names, name)
+				}
+			}
+			detail := "Discord permission missing for this operation"
+			if len(names) > 0 {
+				detail = "Discord permission missing: " + strings.Join(names, ", ")
+			}
+			return status.Error(codes.FailedPrecondition, detail)
 		case 10008:
 			return status.Error(codes.NotFound, "message not found")
 		case 40005:
@@ -94,8 +106,17 @@ func Error(err error) error {
 			}
 		}
 	}
+	if r != nil {
+		return status.Error(codes.Internal, "Discord operation failed")
+	}
 	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
 		return status.Error(codes.Unavailable, "Discord unavailable; send outcome may be unknown")
 	}
-	return status.Error(codes.Unavailable, "Discord unavailable; send outcome may be unknown")
+	var network net.Error
+	var syntax *json.SyntaxError
+	var decode *json.UnmarshalTypeError
+	if errors.As(err, &network) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.As(err, &syntax) || errors.As(err, &decode) {
+		return status.Error(codes.Unavailable, "Discord unavailable; send outcome may be unknown")
+	}
+	return status.Error(codes.Internal, "Discord operation failed")
 }

@@ -172,6 +172,7 @@ func key(id uint64) string { return "threads." + strconv.FormatUint(id, 10) }
 
 // writeLocked merges using the bucket revision; it never overwrites another bot.
 func (r *Registry) writeLocked(ctx context.Context, id uint64, e Entry) error {
+	e = clone(e)
 	for {
 		old, err := r.KV.Get(ctx, key(id))
 		var rev uint64
@@ -242,7 +243,9 @@ func (r *Registry) RegisterPost(id uint64, e Entry, keyName string) error {
 		if old.Bot != e.Bot {
 			return ErrBotConflict
 		}
-		e = old
+		created := e.CreatedByDeck
+		e = clone(old)
+		e.CreatedByDeck = e.CreatedByDeck || created
 	}
 	if e.Keys == nil {
 		e.Keys = map[string]Touch{}
@@ -265,7 +268,7 @@ func (r *Registry) BeginReply(ctx context.Context, id uint64, e Entry, name stri
 		if old.Bot != e.Bot {
 			return ErrBotConflict
 		}
-		e = old
+		e = clone(old)
 	}
 	if e.Keys == nil {
 		e.Keys = map[string]Touch{}
