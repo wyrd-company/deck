@@ -1,0 +1,8 @@
+# An OpenBao or Vault address never carries credentials.
+service:
+  address: deck.example.internal:2222
+  host_key: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOpOs2okPTF0d06WZveRMcp0ceUWeO2jllkuCtP2YhX6
+vault:
+  address: https://demo:dummy-pass@openbao.example.internal:8200
+key:
+  name: deck-agents-laptop

@@ -56,7 +56,8 @@
           "minItems": 1,
           "items": {
             "type": "string",
-            "pattern": "^(nats|tls|ws|wss)://"
+            "pattern": "^(nats|tls|ws|wss)://[^/@\\s]+(/[^@\\s]*)?$",
+            "description": "A NATS server URL with no user information; credentials come from nats.creds."
           }
         },
         "name": {
@@ -120,7 +121,7 @@
             },
             "max_age": {
               "$ref": "#/$defs/duration",
-              "description": "When set, a thread with no touch for this long leaves the registry. Default unset: entries stay."
+              "description": "When set, the service's hourly sweep deletes a thread entry whose latest touch or publish is older than this. Default unset: entries stay."
             },
             "replicas": {
               "type": "integer",
@@ -276,8 +277,8 @@
       "properties": {
         "address": {
           "type": "string",
-          "pattern": "^(unix:///.+|https://[^/]+/?|http://(127\\.[0-9]+\\.[0-9]+\\.[0-9]+|localhost|\\[::1\\])(:[0-9]+)?/?)$",
-          "description": "unix:///path for a local socket, https://host:port, or http:// on a loopback host only."
+          "pattern": "^(unix:///.+|https://[^/@\\s]+/?|http://(127\\.[0-9]+\\.[0-9]+\\.[0-9]+|localhost|\\[::1\\])(:[0-9]+)?/?)$",
+          "description": "unix:///path for a local socket, https://host:port, or http:// on a loopback host only; never with user information."
         },
         "namespace": {
           "type": "string",

@@ -227,8 +227,8 @@
       "properties": {
         "address": {
           "type": "string",
-          "pattern": "^(unix:///.+|https://[^/]+/?|http://(127\\.[0-9]+\\.[0-9]+\\.[0-9]+|localhost|\\[::1\\])(:[0-9]+)?/?)$",
-          "description": "unix:///path for a local socket, https://host:port, or http:// on a loopback host only."
+          "pattern": "^(unix:///.+|https://[^/@\\s]+/?|http://(127\\.[0-9]+\\.[0-9]+\\.[0-9]+|localhost|\\[::1\\])(:[0-9]+)?/?)$",
+          "description": "unix:///path for a local socket, https://host:port, or http:// on a loopback host only; never with user information."
         },
         "namespace": {
           "type": "string",
