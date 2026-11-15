@@ -153,16 +153,17 @@ design-challenges:
     the service takes that thread; it deletes the message only when the thread
     fails for another reason. When Discord's answer to a forum post is lost,
     the service looks for the post among the server's active threads: a thread
-    whose parent is the forum, whose owner is the bot, whose name is the title
-    and whose snowflake is later than the send's start is the post; with none,
-    the send failed. After a service restart, a repeat whose client nonce the
-    activity index holds for that key returns that message and its thread; a
-    forum post that Discord created and whose service died before publishing
-    it can be created again, as the risk send-outcome-lost-in-a-service-crash
-    records. Post reads the registry bucket's status before it calls Discord
-    and returns UNAVAILABLE without posting when the bucket cannot be reached;
-    once Discord answers, it registers the thread in memory at once and writes
-    the entry within the call's deadline, and the call succeeds whether or not
+    whose parent is the forum, whose owner is the bot, whose name is the
+    title, whose snowflake is later than the send's start and that no other
+    send of the service has taken is the post; with none, the send failed.
+    After a service restart, a repeat whose client nonce the activity index
+    holds for that key returns that message and its thread; a forum post that
+    Discord created and whose service died before publishing it can be created
+    again, as the risk send-outcome-lost-in-a-service-crash records. Post
+    reads the registry bucket's status before it calls Discord and returns
+    UNAVAILABLE without posting when the bucket cannot be reached; once
+    Discord answers, it registers the thread in memory at once and writes the
+    entry within the call's deadline, and the call succeeds whether or not
     that write has landed: the service keeps retrying it in the background and
     logs a registration still unwritten when the service stops as lost. Reply
     writes the key into the entry before it sends, and returns UNAVAILABLE
