@@ -2,9 +2,10 @@ $schema: https://refinery.systems/ontology/assumption
 relationships: {}
 description: >-
   One instance of the service runs for a configuration at a time. The
-  service keeps sends in flight, recent nonces, the settling buffer and the
-  count of sends in flight per key and thread in memory, and opens one
-  gateway session per bot, so a second instance with the same bots would
+  service keeps sends in flight, the settling buffer, publishes still
+  waiting for JetStream's acknowledgement and the count of sends in flight
+  per key and thread in memory, and opens one gateway session per bot, so a
+  second instance with the same bots would
   open second sessions, acknowledge interactions twice and could remove a
   pending key that the other instance's send relies on. The thread registry,
   the activity index and JetStream's deduplication are shared and stay
@@ -15,5 +16,5 @@ description: >-
 end-descendant-type: technical-design
 evidence:
   - The operator's notes run the service as one docker container.
-  - A design for several instances would move the nonce and in-flight state
-    into the bucket and give each bot one session holder.
+  - A design for several instances would move the in-flight state into the
+    bucket and give each bot one session holder.

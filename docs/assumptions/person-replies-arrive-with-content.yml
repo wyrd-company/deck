@@ -16,7 +16,8 @@ evidence:
   - The test application's flags hold GATEWAY_MESSAGE_CONTENT_LIMITED, and the
     gateway accepted a session that requested the message content intent
     (discord-forum-post-and-gateway-reply).
-  - The bot's own replies arrived from the gateway with their content in
-    170 to 302 ms (discord-forum-post-and-gateway-reply).
+  - The bot's own replies arrived from the gateway with their content in 205
+    to 902 ms in the spike's committed run
+    (discord-forum-post-and-gateway-reply, result.jsonl).
   - Discord documents that without the intent, content, embeds, attachments
     and components are empty for messages that do not mention the bot.
