@@ -1612,3 +1612,175 @@ func TestRepeatStdinReminder(t *testing.T) {
 		})
 	}
 }
+
+func TestBareReadListenFilterChannels(t *testing.T) {
+	for _, command := range []string{"read", "listen"} {
+		for _, jsonMode := range []bool{false, true} {
+			for _, none := range []bool{false, true} {
+				t.Run(fmt.Sprintf("%s/json=%v/none=%v", command, jsonMode, none), func(t *testing.T) {
+					f := setup(t)
+					s := f.open()
+					for n, id := range []uint64{10, 20, 30} {
+						th := proto.Clone(baseThread).(*pb.Thread)
+						th.ThreadId = id
+						th.ChannelId = uint64(n + 2)
+						nonce := fmt.Sprintf("seed%d", id)
+						if err := s.Pending(ss(), keyA, nonce, "post", 0); err != nil {
+							t.Fatal(err)
+						}
+						if err := s.Sent(ss(), keyA, nonce, "created", th, id+1, &pb.StreamPosition{Epoch: 100, Sequence: 5}); err != nil {
+							t.Fatal(err)
+						}
+					}
+					allow := []string{"2", "3"}
+					if none {
+						allow = []string{}
+					}
+					f.doc["channels"] = map[string]any{"allow": allow, "deny": []string{"3"}}
+					f.save()
+					check := func(c []*pb.Cursor) {
+						if len(c) != 1 || c[0].ThreadId != 10 {
+							t.Errorf("unfiltered cursors: %v", c)
+						}
+					}
+					activity := []*pb.Activity{person(12, 9, "allowed content"), person(22, 9, "DENIED content"), person(32, 9, "EXCLUDED content")}
+					activity[1].ThreadId = 20
+					activity[2].ThreadId = 30
+					states := []*pb.ThreadCount{touched(1), {ThreadId: 20, State: pb.ThreadState_THREAD_STATE_TOUCHED}, {ThreadId: 30, State: pb.ThreadState_THREAD_STATE_TOUCHED}}
+					f.fake.list = func(_ context.Context, r *pb.ListUnreadRequest) (*pb.ListUnreadResponse, error) {
+						check(r.Cursors)
+						return &pb.ListUnreadResponse{Activity: activity, Threads: states, Through: &pb.StreamPosition{Epoch: 100, Sequence: 9}}, nil
+					}
+					f.fake.listen = func(r *pb.ListenRequest, stream grpc.ServerStreamingServer[pb.ListenResponse]) error {
+						check(r.Cursors)
+						return stream.Send(&pb.ListenResponse{Activity: activity, Threads: states, Through: &pb.StreamPosition{Epoch: 100, Sequence: 9}})
+					}
+					f.fake.count = func(_ context.Context, r *pb.CountUnreadRequest) (*pb.CountUnreadResponse, error) {
+						check(r.Cursors)
+						return &pb.CountUnreadResponse{Threads: []*pb.ThreadCount{touched(0)}}, nil
+					}
+					args := []string{command}
+					if jsonMode {
+						args = append(args, "--json")
+					}
+					code, out, stderr := f.run(args...)
+					if code != 0 || strings.Contains(out, "DENIED") || strings.Contains(out, "EXCLUDED") || (!none && !strings.Contains(out, "allowed content")) {
+						t.Fatal(code, out, stderr)
+					}
+					if none && f.dialN != 0 {
+						t.Fatal("all filtered command dialed", f.dialN)
+					}
+					ts, err := s.Threads(ss())
+					if err != nil {
+						t.Fatal(err)
+					}
+					for _, th := range ts {
+						want := uint64(5)
+						if !none && th.Info.ThreadId == 10 {
+							want = 9
+						}
+						if th.After.Sequence != want {
+							t.Fatalf("filtered cursor moved: %v", th)
+						}
+					}
+				})
+			}
+		}
+	}
+}
+
+func TestInboxAllAndMostRecentSendOrder(t *testing.T) {
+	f := setup(t)
+	s := f.open()
+	for _, id := range []uint64{10, 20, 30} {
+		th := proto.Clone(baseThread).(*pb.Thread)
+		th.ThreadId = id
+		nonce := fmt.Sprintf("seed%d", id)
+		if err := s.Pending(ss(), keyA, nonce, "post", 0); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.Sent(ss(), keyA, nonce, "created", th, id+1, &pb.StreamPosition{Epoch: 100, Sequence: 5}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	f.fake.count = func(context.Context, *pb.CountUnreadRequest) (*pb.CountUnreadResponse, error) {
+		return &pb.CountUnreadResponse{Threads: []*pb.ThreadCount{touched(1), {ThreadId: 20, State: pb.ThreadState_THREAD_STATE_TOUCHED, Count: 2}, {ThreadId: 30, State: pb.ThreadState_THREAD_STATE_TOUCHED}}}, nil
+	}
+	for _, all := range []bool{false, true} {
+		args := []string{"inbox"}
+		want := []string{"20", "10"}
+		if all {
+			args = append(args, "--all")
+			want = []string{"30", "20", "10"}
+		}
+		result := f.result(args...)
+		got := []string{}
+		for _, row := range result["threads"].([]any) {
+			got = append(got, row.(map[string]any)["thread_id"].(string))
+		}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("all=%v threads=%v want=%v", all, got, want)
+		}
+		assertUnread(t, result, 3)
+		code, out, stderr := f.run(args...)
+		if code != 0 {
+			t.Fatal(code, out, stderr)
+		}
+		got = []string{}
+		for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+			fields := strings.Fields(line)
+			if len(fields) < 2 {
+				t.Fatal(out)
+			}
+			got = append(got, fields[1])
+		}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("text all=%v threads=%v want=%v", all, got, want)
+		}
+	}
+}
+
+func TestNoPersonaOverridesDefault(t *testing.T) {
+	for _, kind := range []string{"post", "reply"} {
+		for _, choice := range []string{"default", "none", "explicit"} {
+			t.Run(kind+"/"+choice, func(t *testing.T) {
+				f := setup(t)
+				f.doc["personas"] = map[string]any{"default": map[string]string{"name": "Default agent", "icon_url": "https://example.com/default.png"}, "alternate": map[string]string{"name": "Other agent", "icon_url": "https://example.com/other.png"}}
+				f.doc["default_persona"] = "default"
+				f.save()
+				want := &pb.Persona{Name: "Default agent", IconUrl: "https://example.com/default.png"}
+				if choice == "none" {
+					want = nil
+				} else if choice == "explicit" {
+					want = &pb.Persona{Name: "Other agent", IconUrl: "https://example.com/other.png"}
+				}
+				check := func(c *pb.Content) {
+					if !proto.Equal(c.Persona, want) {
+						t.Errorf("persona=%v want=%v", c.Persona, want)
+					}
+				}
+				f.fake.post = func(_ context.Context, r *pb.PostRequest) (*pb.PostResponse, error) {
+					check(r.Content)
+					return &pb.PostResponse{Thread: baseThread, Message: person(11, 7, "sent"), Position: &pb.StreamPosition{Epoch: 100, Sequence: 5}}, nil
+				}
+				f.fake.reply = func(_ context.Context, r *pb.ReplyRequest) (*pb.ReplyResponse, error) {
+					check(r.Content)
+					return &pb.ReplyResponse{Thread: baseThread, Message: person(11, 7, "sent"), Position: &pb.StreamPosition{Epoch: 100, Sequence: 5}}, nil
+				}
+				args := []string{kind}
+				if kind == "post" {
+					args = append(args, "--title", "Q")
+				} else {
+					args = append(args, "10")
+				}
+				args = append(args, "--text", "hello")
+				if choice == "none" {
+					args = append(args, "--no-persona")
+				} else if choice == "explicit" {
+					args = append(args, "--persona", "alternate")
+				}
+				f.result(args...)
+			})
+		}
+	}
+}
