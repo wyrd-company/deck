@@ -24,9 +24,20 @@ func TestCallingKey(t *testing.T) {
 	if KeyName(WithKeyName(ctx, "test-key")) != "test-key" {
 		t.Fatal("test identity missing")
 	}
-	if KeyName(WithKeyName(authenticated, "")) != "" {
-		t.Fatal("empty interceptor identity fell back to peer")
+	for _, override := range []string{"", "attacker"} {
+		if KeyName(WithKeyName(authenticated, override)) != "agents" {
+			t.Fatal("context value overrode authenticated peer")
+		}
 	}
+	pointerPeer := peer.NewContext(ctx, &peer.Peer{AuthInfo: &KeyAuthInfo{Name: "pointer-peer"}})
+	if KeyName(WithKeyName(pointerPeer, "attacker")) != "pointer-peer" {
+		t.Fatal("context value overrode pointer peer")
+	}
+	emptyPeer := peer.NewContext(ctx, &peer.Peer{AuthInfo: KeyAuthInfo{}})
+	if KeyName(WithKeyName(emptyPeer, "attacker")) != "" {
+		t.Fatal("empty authenticated peer fell back to context")
+	}
+
 	if KeyName(ctx) != "" {
 		t.Fatal("identity leaked across contexts")
 	}

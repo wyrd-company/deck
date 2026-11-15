@@ -20,8 +20,8 @@ type KeyAuthInfo struct {
 
 func (KeyAuthInfo) AuthType() string { return "ssh" }
 
-// WithKeyName installs a calling key for interceptors and handler tests. The
-// transport must call it only after SSH authentication has resolved the name.
+// WithKeyName supplies a calling key for handler tests without a transport peer.
+// A real authenticated peer always takes precedence over this fallback.
 func WithKeyName(ctx context.Context, name string) context.Context {
 	return context.WithValue(ctx, keyContext{}, name)
 }
@@ -29,9 +29,6 @@ func WithKeyName(ctx context.Context, name string) context.Context {
 // KeyName returns the calling key's configured name, or empty when no
 // authenticated identity is present. Handlers must refuse an empty name.
 func KeyName(ctx context.Context) string {
-	if name, ok := ctx.Value(keyContext{}).(string); ok {
-		return name
-	}
 	if p, ok := peer.FromContext(ctx); ok {
 		switch info := p.AuthInfo.(type) {
 		case KeyAuthInfo:
@@ -41,6 +38,9 @@ func KeyName(ctx context.Context) string {
 				return info.Name
 			}
 		}
+	}
+	if name, ok := ctx.Value(keyContext{}).(string); ok {
+		return name
 	}
 	return ""
 }
