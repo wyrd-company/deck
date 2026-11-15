@@ -17,6 +17,8 @@ objective:
     concurrent calls?
   - Can a gRPC handler learn which SSH key the call came in on?
   - How many Transit signatures does one connection cost?
+  - Does a gRPC stream that carries no messages, as deck listen's does while
+    it waits, outlive Wish's idle timeout?
 
 background:
   current-design: >-
@@ -53,7 +55,8 @@ environment:
     module `docs/spikes/assets` (not part of deck's build). `run.sh` starts an
     OpenBao dev server listening on a unix socket in a temporary directory,
     enables Transit, creates the ed25519 keys `deck-client` and `deck-stranger`,
-    runs `main.go` against the socket, and stops the server. The gRPC service
+    runs `main.go` against the socket with `-idle 15s`, and stops the server.
+    The gRPC service
     is the standard health service, so no generated code is needed. The run
     below is `result.jsonl` beside the program.
   tools:
@@ -100,6 +103,19 @@ findings:
       Measured: unary and stream interceptors read the fingerprint from
       peer.AuthInfo and it equals the Transit key's SHA256 fingerprint.
 
+  keepalive-holds-a-quiet-stream:
+    verdict: confirmed working
+    measurements:
+      idle-timeout: 15s
+      quiet-for: 30s
+    notes: >-
+      Measured: behind a Wish idle timeout of 15 s, a Watch stream whose
+      client sends gRPC keepalive pings every 10 s delivers its update after 30
+      s of silence. The same stream from a client without keepalive ends after
+      15 s with Unavailable (EOF), which shows the idle timeout is real and
+      that the pings, as traffic on the SSH channel, are what hold the stream
+      open.
+
   openbao-over-a-unix-socket:
     verdict: confirmed working
     notes: >-
@@ -113,7 +129,8 @@ conclusion: >-
   service carries one HTTP/2 connection per SSH session channel on a `deck`
   subsystem, and lifts the SSH key's fingerprint into gRPC AuthInfo, where
   each call resolves its grants. A client pays one Transit signature per
-  connection.
+  connection, and gRPC keepalive pings hold a waiting listen open past the
+  SSH idle timeout.
 
 next-steps:
   - The transport technical design specifies the subsystem, the signer, the

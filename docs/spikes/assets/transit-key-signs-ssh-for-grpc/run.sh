@@ -36,4 +36,4 @@ bao_dev write -f transit/keys/deck-client type=ed25519 >/dev/null
 bao_dev write -f transit/keys/deck-stranger type=ed25519 >/dev/null
 
 cd "$here/.."
-go run ./transit-key-signs-ssh-for-grpc -address "unix://$work/bao.sock" -token-file "$work/token"
+go run ./transit-key-signs-ssh-for-grpc -address "unix://$work/bao.sock" -token-file "$work/token" -idle 15s

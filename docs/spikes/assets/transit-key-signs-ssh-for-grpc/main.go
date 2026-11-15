@@ -30,6 +30,7 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/health"
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
+	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/peer"
 )
 
@@ -196,6 +197,7 @@ func main() {
 	mount := flag.String("mount", "transit", "Transit mount")
 	allowedName := flag.String("key", "deck-client", "Transit key the service accepts")
 	strangerName := flag.String("unknown-key", "deck-stranger", "Transit key the service does not know")
+	idle := flag.Duration("idle", 0, "when set, also check that gRPC keepalive holds a quiet stream open past a Wish idle timeout of this length")
 	flag.Parse()
 
 	config := api.DefaultConfig()
@@ -404,9 +406,142 @@ func main() {
 		emit("grpc-concurrent", "fail", map[string]any{"failures": concurrentFailures.Load()})
 	}
 
+	if *idle > 0 {
+		idleTest(allowed, *idle)
+	}
+
 	if failed.Load() {
 		emit("done", "fail", nil)
 		os.Exit(1)
 	}
 	emit("done", "pass", nil)
+}
+
+// idleTest serves the health service behind a Wish idle timeout and holds
+// two quiet Watch streams open for twice that long: one whose client sends
+// gRPC keepalive pings and one whose client does not. Only the first should
+// still deliver an update at the end.
+func idleTest(signer gossh.Signer, idle time.Duration) {
+	allowedFingerprint := gossh.FingerprintSHA256(signer.PublicKey())
+	_, hostPrivate, _ := ed25519.GenerateKey(rand.Reader)
+	hostSigner, _ := gossh.NewSignerFromKey(hostPrivate)
+	tcp, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		emit("idle-listen", "fail", map[string]any{"error": err.Error()})
+		return
+	}
+	listener := &channelListener{conns: make(chan net.Conn), closed: make(chan struct{}), addr: tcp.Addr()}
+	server, err := wish.NewServer(
+		wish.WithIdleTimeout(idle),
+		wish.WithPublicKeyAuth(func(ctx ssh.Context, key ssh.PublicKey) bool {
+			if gossh.FingerprintSHA256(key) != allowedFingerprint {
+				return false
+			}
+			ctx.SetValue(fingerprintKey{}, allowedFingerprint)
+			return true
+		}),
+		wish.WithSubsystem(subsystem, func(session ssh.Session) {
+			conn := &channelConn{ReadWriteCloser: session, local: session.LocalAddr(), remote: session.RemoteAddr(), fingerprint: allowedFingerprint, done: make(chan struct{})}
+			select {
+			case listener.conns <- conn:
+			case <-listener.closed:
+				return
+			}
+			select {
+			case <-conn.done:
+			case <-session.Context().Done():
+			}
+		}),
+		func(server *ssh.Server) error {
+			server.AddHostKey(hostSigner)
+			server.Handler = func(session ssh.Session) { _ = session.Exit(1) }
+			return nil
+		},
+	)
+	if err != nil {
+		emit("idle-server", "fail", map[string]any{"error": err.Error()})
+		return
+	}
+	go func() { _ = server.Serve(tcp) }()
+	defer server.Close()
+	healthServer := health.NewServer()
+	grpcServer := grpc.NewServer(
+		grpc.Creds(sshCredentials{}),
+		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{MinTime: 5 * time.Second, PermitWithoutStream: true}),
+	)
+	healthpb.RegisterHealthServer(grpcServer, healthServer)
+	go func() { _ = grpcServer.Serve(listener) }()
+	defer grpcServer.Stop()
+
+	wait := 2 * idle
+	run := func(name string, options ...grpc.DialOption) (bool, string) {
+		healthServer.SetServingStatus(name, healthpb.HealthCheckResponse_SERVING)
+		sshClient, err := gossh.Dial("tcp", tcp.Addr().String(), &gossh.ClientConfig{
+			User: "deck", Auth: []gossh.AuthMethod{gossh.PublicKeys(signer)},
+			HostKeyCallback: gossh.FixedHostKey(hostSigner.PublicKey()), Timeout: 10 * time.Second,
+		})
+		if err != nil {
+			return false, err.Error()
+		}
+		defer sshClient.Close()
+		options = append(options,
+			grpc.WithTransportCredentials(sshCredentials{}),
+			grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
+				channel, requests, err := sshClient.OpenChannel("session", nil)
+				if err != nil {
+					return nil, err
+				}
+				go gossh.DiscardRequests(requests)
+				if ok, err := channel.SendRequest("subsystem", true, gossh.Marshal(struct{ Name string }{subsystem})); err != nil || !ok {
+					channel.Close()
+					return nil, fmt.Errorf("subsystem %s refused", subsystem)
+				}
+				return &channelConn{ReadWriteCloser: channel, local: sshClient.LocalAddr(), remote: sshClient.RemoteAddr(), done: make(chan struct{})}, nil
+			}))
+		client, err := grpc.NewClient("passthrough:///deck", options...)
+		if err != nil {
+			return false, err.Error()
+		}
+		defer client.Close()
+		ctx, cancel := context.WithTimeout(context.Background(), wait+15*time.Second)
+		defer cancel()
+		watch, err := healthpb.NewHealthClient(client).Watch(ctx, &healthpb.HealthCheckRequest{Service: name})
+		if err != nil {
+			return false, err.Error()
+		}
+		if _, err := watch.Recv(); err != nil {
+			return false, err.Error()
+		}
+		go func() {
+			time.Sleep(wait)
+			healthServer.SetServingStatus(name, healthpb.HealthCheckResponse_NOT_SERVING)
+		}()
+		started := time.Now()
+		update, err := watch.Recv()
+		if err != nil {
+			return false, fmt.Sprintf("stream ended after %s: %v", time.Since(started).Round(time.Second), err)
+		}
+		return update.Status == healthpb.HealthCheckResponse_NOT_SERVING, fmt.Sprintf("update after %s", time.Since(started).Round(time.Second))
+	}
+
+	type outcome struct {
+		survived bool
+		detail   string
+	}
+	withPings, withoutPings := make(chan outcome, 1), make(chan outcome, 1)
+	go func() {
+		survived, detail := run("keepalive", grpc.WithKeepaliveParams(keepalive.ClientParameters{Time: 10 * time.Second, Timeout: 5 * time.Second}))
+		withPings <- outcome{survived, detail}
+	}()
+	go func() {
+		survived, detail := run("no-keepalive")
+		withoutPings <- outcome{survived, detail}
+	}()
+	pinged, quiet := <-withPings, <-withoutPings
+	detail := map[string]any{"idle_timeout": idle.String(), "quiet_for": wait.String(), "with_keepalive": pinged.detail, "without_keepalive": quiet.detail}
+	if pinged.survived && !quiet.survived {
+		emit("keepalive-holds-stream-past-idle-timeout", "pass", detail)
+	} else {
+		emit("keepalive-holds-stream-past-idle-timeout", "fail", detail)
+	}
 }
