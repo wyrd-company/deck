@@ -40,23 +40,34 @@ description: >-
 
 
   Activity is the one shape for everything new in a thread. Post and Reply
-  return the message they created as an Activity; ListHistory, ListUnread and
-  Listen return Activity lists, oldest first; the event stream carries one
-  Activity per event in its protojson form. An Activity's attachment URLs from
-  the API are current: when the service returns a message with attachments, it
-  reads the message from Discord for its URLs, and when Discord no longer has
-  the message it returns the URLs it published.
+  return the message they created as an Activity, with the stream sequence
+  JetStream acknowledged for it, or zero when NATS could not take it within the
+  call's deadline. ListHistory returns messages in snowflake order, oldest
+  first; ListUnread and Listen return activity in stream order, the order the
+  service published it, with each activity's sequence; the event stream
+  carries one Activity per event in its protojson form, without the sequence.
+  An Activity's attachment URLs from the API are current: for unread messages
+  with attachments the service reads the thread's messages from Discord, 100
+  per request, and takes their URLs; when Discord no longer has a message, or
+  cannot be read within the deadline, it returns the URLs it published.
 
 
-  Unread is computed from cursors the client sends. Each Cursor names a
-  thread, the snowflake after which activity is unread, and the messages
-  after it that the session sent itself, which are never counted. Messages
-  whose type is not 0, 19 or 46 are never counted. A thread that the calling
-  key did not touch answers with the state NOT_TOUCHED and no count, and one
-  whose parent is outside the grants with NOT_GRANTED; neither fails the call.
-  ListUnread returns at most its limit, the oldest first across all threads,
-  and sets `more` when activity remains; a client that marks read moves each
-  cursor only to the newest activity it received for that thread.
+  Unread is computed from cursors the client sends. A Cursor names a thread,
+  the newest activity the session was shown there by its stream sequence and
+  its snowflake, and the messages the session sent itself since, which are
+  never counted. Activity is after the cursor when its sequence is greater
+  than `after_sequence`, so activity published late, such as a held message
+  or a poll vote stamped by the service's clock, is still unread. A cursor
+  with no sequence compares by snowflake, and so does one whose sequence is
+  beyond the stream's last, which only a recreated stream causes. When the
+  stream no longer holds the cursor's activity, the Discord messages after
+  `after_id` that the stream does not hold count too. Messages whose type is
+  not 0, 19 or 46 are never counted. A thread that the calling key did not
+  touch answers with the state NOT_TOUCHED and no count, and one whose parent
+  is outside the grants with NOT_GRANTED; neither fails the call. ListUnread
+  returns at most its limit in stream order and sets `more` when activity
+  remains; a client that marks read moves each cursor only to the last
+  activity it received for that thread, sequence and snowflake together.
 
 
   Listen answers at once with each thread's state and any unread activity,
@@ -66,17 +77,20 @@ description: >-
 
 
   Errors are gRPC status codes. INVALID_ARGUMENT: a malformed request, an
-  ambiguous bot, content beyond a limit, or Discord's validation error.
-  PERMISSION_DENIED: the channel, or the thread's parent channel, is outside
-  the calling key's grants. NOT_FOUND: the bot cannot see the channel, thread
-  or message (Discord codes 10003, 10008 and 50001). FAILED_PRECONDITION: the
-  channel's type does not take posts, the forum needs a tag and none was
-  given, or the thread is locked. RESOURCE_EXHAUSTED: Discord's rate limit
-  would hold the call past its deadline. UNAVAILABLE: the bot's gateway
-  session, Discord's REST API, or NATS cannot be reached for this call.
-  INTERNAL: anything else, with no upstream text. No status message carries a
-  token, a request URL or a Discord response body other than Discord's
-  validation field paths.
+  ambiguous bot, content beyond a limit, a forum post without the tag its
+  forum requires, or Discord's validation error. PERMISSION_DENIED: the
+  channel, or the thread's parent channel, is outside the calling key's
+  grants. NOT_FOUND: the bot cannot see the channel, thread or message
+  (Discord codes 10003, 10008 and 50001). FAILED_PRECONDITION: the channel's
+  type does not take posts, the thread is locked, or the bot lacks a Discord
+  permission the call needs (Discord code 50013), with the permission named
+  when Discord names it. RESOURCE_EXHAUSTED: Discord's rate limit would hold
+  the call past its deadline. UNAVAILABLE: the bot's gateway session,
+  Discord's REST API, or NATS cannot be reached for this call. UNAUTHENTICATED:
+  a call with no key on its connection, which the SSH listener never lets
+  through. INTERNAL: anything else, with no upstream text. No status message
+  carries a token, a request URL or a Discord response body other than
+  Discord's validation field paths and the name of a missing permission.
 validation-criteria: >-
   `buf build` and `buf lint` (the STANDARD rules) pass on
   `assets/grpc-api`, and the generated Go code in the repository matches what

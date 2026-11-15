@@ -3,7 +3,8 @@ syntax = "proto3";
 // Package deck.v1 is the API the deck service serves on its `deck` SSH
 // subsystem. Every call acts with the grants of the client key that signed
 // the SSH connection. Snowflakes are Discord identifiers carried as uint64;
-// zero means absent. Lists of activity are oldest first.
+// zero means absent. History lists are in snowflake order and unread lists in
+// stream order, oldest first.
 package deck.v1;
 
 import "google/protobuf/struct.proto";
@@ -39,7 +40,7 @@ service DeckService {
   // cursor that is not excluded and is not a system message.
   rpc CountUnread(CountUnreadRequest) returns (CountUnreadResponse);
 
-  // ListUnread returns the activity CountUnread counts.
+  // ListUnread returns the activity CountUnread counts, in stream order.
   rpc ListUnread(ListUnreadRequest) returns (ListUnreadResponse);
 
   // Listen sends one response at once with every thread's state and any
@@ -210,13 +211,21 @@ message ListHistoryResponse {
   bool more = 2;
 }
 
-// Cursor is a session's read position in one thread.
+// Cursor is a session's read position in one thread: the newest activity
+// the session has been shown there. Activity published to the stream after
+// that activity is after the cursor.
 message Cursor {
   uint64 thread_id = 1;
-  // Activity with a snowflake greater than this is after the cursor.
+  // The snowflake of the newest activity shown. With no sequence, activity
+  // with a greater snowflake is after the cursor; it also bounds the Discord
+  // messages counted when the stream no longer holds the cursor's activity.
   uint64 after_id = 2;
   // Messages after the cursor that the session sent itself.
   repeated uint64 exclude_ids = 3;
+  // The stream sequence of the newest activity shown. Activity with a
+  // greater sequence is after the cursor. Zero when the session has not yet
+  // been shown activity with a sequence.
+  uint64 after_sequence = 4;
 }
 
 enum ThreadState {
@@ -246,7 +255,7 @@ message CountUnreadResponse {
 
 message ListUnreadRequest {
   repeated Cursor cursors = 1;
-  // At most this many activities across all threads, the oldest first; zero
+  // At most this many activities across all threads, in stream order; zero
   // means 500.
   uint32 limit = 2;
 }
@@ -291,6 +300,10 @@ message Activity {
     ComponentUse component = 11;
     PollVote poll_vote = 12;
   }
+  // The activity's sequence in the event stream, set in API responses for
+  // activity the stream holds. Zero, and so absent, in event payloads, where
+  // the stream's own metadata carries it.
+  uint64 sequence = 13;
 }
 
 message User {

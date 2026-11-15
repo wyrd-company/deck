@@ -21,9 +21,8 @@ description: >-
   registry and the activity in touched threads. The client owns sessions and
   their read state. Every identifier is a Discord snowflake: a 64-bit integer
   whose high 42 bits are milliseconds since 2015-01-01T00:00:00Z, so
-  identifiers sort in creation order and a cursor is one identifier. Every
-  conversation is a thread, and a thread's identifier is its starter message's
-  identifier.
+  identifiers sort in creation order. Every conversation is a thread, and a
+  thread's identifier is its starter message's identifier.
 aggregates:
   bot:
     description: >-
@@ -110,7 +109,10 @@ aggregates:
       Each activity has a snowflake: the message's or the interaction's own,
       or, for a poll vote, one the service makes from the moment it received
       the vote. Each is published once to the event stream, which holds it for
-      the stream's maximum age.
+      the stream's maximum age and gives it a sequence in publication order.
+      Publication order can differ from snowflake order: a held message, a
+      backfilled message and a vote stamped by the service's clock can reach
+      the stream after activity with a greater snowflake.
     identity: The activity's snowflake.
     commands:
       acknowledge: >-
@@ -132,16 +134,18 @@ aggregates:
     description: >-
       One session's relation to one thread, in the client's local store: the
       session's identifiers, the thread, its bot, server and channel, the
-      cursor, and the snowflakes of the messages the session sent there. The
-      session's unread activity in the thread is every activity after the
-      cursor except the messages the session sent and system messages.
+      cursor (the stream sequence and snowflake of the newest activity the
+      session was shown), the time the session last sent a message there, and
+      the snowflakes of the messages it sent. The session's unread activity in
+      the thread is every activity published after the cursor's activity,
+      except the messages the session sent and system messages.
     identity: The session's primary identifier (the first configured variable
       that is set) and the thread's snowflake.
     commands:
       record: >-
         On a post or the session's first reply in a thread, records the thread
         with the cursor at the session's own message; on every message it
-        sends, records the message's snowflake.
+        sends, records the message's snowflake and the time.
       mark-read: >-
         Moves the cursor to the newest activity the session was shown.
       resolve: >-

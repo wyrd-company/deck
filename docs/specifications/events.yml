@@ -31,7 +31,8 @@ description: >-
   values such as snowflakes and sizes as decimal strings, writes timestamps as
   RFC 3339 in UTC, and varies insignificant whitespace between runs, so a
   consumer parses the JSON and never compares bytes. A message deck sent
-  carries `sent_by`, the name of the client key that sent it. Attachment URLs
+  carries `sent_by`, the name of the client key that sent it. The payload
+  never carries `sequence`; the stream's message metadata holds it. Attachment URLs
   are the ones Discord gave when the message arrived, and Discord's CDN
   expires them; the API returns current ones.
 

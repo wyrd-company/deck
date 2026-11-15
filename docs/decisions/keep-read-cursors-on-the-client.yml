@@ -26,6 +26,14 @@ decision-outcome:
     session's read hide activity from another session on the same machine.
     Option 1 costs a few snowflakes per thread in each request and keeps the
     service free of per-session state.
+  decisions:
+    cursor-position: >-
+      A cursor is the stream sequence and the snowflake of the newest
+      activity shown, and activity is after it by sequence. A snowflake alone
+      would skip activity the stream receives late: a message held in the
+      settling buffer, a backfilled message, or a poll vote stamped by the
+      service's clock. The snowflake stays for cursors the stream no longer
+      holds, where Discord's history is read after it.
 expected-outcomes:
   positive:
     - The service holds no session state of any kind.
