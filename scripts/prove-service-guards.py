@@ -119,4 +119,26 @@ probe('text-channel nonce enforcement cannot be omitted', 'send.go',
 probe('forum poll nonce enforcement cannot be omitted', 'send.go',
       'r.Nonce+":poll"), EnforceNonce: true', 'r.Nonce+":poll"), EnforceNonce: false',
       './internal/service', 'TestForumPollAndHeaders')
+probe('target REST client belongs to the chosen bot', 'handler.go',
+      'client := h.bots[bot]\n\tch, err := client.Channel(ctx, id)',
+      'client := h.bots["a"]\n\tch, err := client.Channel(ctx, id)',
+      './internal/service', 'TestRequestsUseGrantedBotClient')
+probe('channel listing REST client belongs to the granted bot', 'handler.go',
+      'client := h.bots[grant.Bot]', 'client := h.bots["a"]',
+      './internal/service', 'TestRequestsUseGrantedBotClient')
+probe('GetThread returns the complete current thread answer', 'handler.go',
+      'return &pb.GetThreadResponse{Thread: threadValue(ch, e, k.Name)}, nil',
+      '_ = e; return &pb.GetThreadResponse{Thread: &pb.Thread{ThreadId:uint64(ch.ID())}},nil',
+      './internal/service', 'TestGetThreadAnswer')
+probe('ListChannels excludes channels that cannot take posts', 'handler.go',
+      'if ch.Type() != 0 && ch.Type() != 5 && ch.Type() != 15 && ch.Type() != 16 {',
+      'if false {', './internal/service', 'TestListChannelsAnswer')
+probe('ListChannels returns channel type', 'handler.go',
+      'Type: uint32(ch.Type())', 'Type: 0', './internal/service', 'TestListChannelsAnswer')
+probe('ListChannels returns forum tags', 'handler.go',
+      'c.Tags = append(c.Tags, &pb.ForumTag{Id: uint64(tag.ID), Name: tag.Name})',
+      '_ = tag', './internal/service', 'TestListChannelsAnswer')
+probe('ListChannels returns required-tag flag', 'handler.go',
+      'c.RequiresTag = requires', 'c.RequiresTag = requires && false',
+      './internal/service', 'TestListChannelsAnswer')
 print(f'PASS all {completed} service guard probes completed', flush=True)

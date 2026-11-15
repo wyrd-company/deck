@@ -40,15 +40,16 @@ type request struct {
 	body         map[string]any
 }
 type fakeDiscord struct {
-	mu       sync.Mutex
-	requests []request
-	reject   int
-	lose     bool
-	pollFail bool
-	already  bool
-	block    <-chan struct{}
-	entered  chan struct{}
-	onSend   func()
+	mu               sync.Mutex
+	requests         []request
+	reject           int
+	lose             bool
+	pollFail         bool
+	already          bool
+	block            <-chan struct{}
+	entered          chan struct{}
+	archived, locked bool
+	onSend           func()
 }
 
 func threadJSON(id, parent string) map[string]any {
@@ -71,6 +72,7 @@ func (f *fakeDiscord) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
 	f.requests = append(f.requests, request{r.Method, r.URL.RequestURI(), body})
 	reject, lose, pollFail, already, block, entered, onSend := f.reject, f.lose, f.pollFail, f.already, f.block, f.entered, f.onSend
+	archived, locked := f.archived, f.locked
 	f.mu.Unlock()
 	w.Header().Set("Content-Type", "application/json")
 	respond := func(v any) { _ = json.NewEncoder(w).Encode(v) }
@@ -86,7 +88,7 @@ func (f *fakeDiscord) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		case "/guilds/1":
 			respond(map[string]any{"id": "1", "name": "Test server"})
 		case "/guilds/1/channels":
-			respond([]any{map[string]any{"id": "10", "guild_id": "1", "type": 15, "name": "forum"}, map[string]any{"id": "20", "guild_id": "1", "type": 0, "name": "text"}, map[string]any{"id": "30", "guild_id": "2", "type": 0, "name": "outside"}})
+			respond([]any{map[string]any{"id": "10", "guild_id": "1", "type": 15, "name": "forum", "flags": 16, "available_tags": []any{map[string]any{"id": "5", "name": "tag"}}}, map[string]any{"id": "20", "guild_id": "1", "type": 0, "name": "text"}, map[string]any{"id": "30", "guild_id": "2", "type": 0, "name": "outside"}, map[string]any{"id": "40", "guild_id": "1", "type": 2, "name": "voice"}})
 		default:
 			if strings.HasSuffix(path, "/messages") {
 				if r.URL.Query().Get("limit") == "1" {
@@ -101,7 +103,9 @@ func (f *fakeDiscord) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if id == "200" {
 				parent = "20"
 			}
-			respond(threadJSON(id, parent))
+			value := threadJSON(id, parent)
+			value["thread_metadata"] = map[string]any{"archived": archived, "locked": locked}
+			respond(value)
 		}
 		return
 	}
@@ -176,6 +180,7 @@ type harness struct {
 	ctx    context.Context
 	cfg    *config.Service
 	fake   *fakeDiscord
+	fakes  map[string]*fakeDiscord
 	js     jetstream.JetStream
 	reg    *registry.Registry
 	client pb.DeckServiceClient
@@ -201,21 +206,28 @@ func setup(t *testing.T) *harness {
 	t.Cleanup(reg.Close)
 	publisher := activity.New(ctx, js, "deck")
 	t.Cleanup(publisher.Close)
-	pub, _, _ := ed25519.GenerateKey(rand.Reader)
-	key, _ := ssh.NewPublicKey(pub)
-	cfg.Keys = []config.Key{{Name: "key", PublicKey: string(ssh.MarshalAuthorizedKey(key)), Grants: []config.Grant{{Bot: "a", Server: "1", Channels: []string{"*"}}, {Bot: "b", Server: "1", Channels: []string{"20"}}}}, {Name: "other", PublicKey: string(ssh.MarshalAuthorizedKey(key)), Grants: []config.Grant{{Bot: "b", Server: "1", Channels: []string{"*"}}}}}
-	fake := &fakeDiscord{}
-	server := httptest.NewServer(fake)
-	t.Cleanup(server.Close)
-	client, err := discord.New("MTIz.fake-bot-token.signature", bot.WithRestClientConfigOpts(rest.WithURL(server.URL)))
-	if err != nil {
-		t.Fatal(err)
+	newPublicKey := func() string {
+		pub, _, _ := ed25519.GenerateKey(rand.Reader)
+		key, _ := ssh.NewPublicKey(pub)
+		return string(ssh.MarshalAuthorizedKey(key))
 	}
-	t.Cleanup(func() { client.Bot.Close(context.Background()) })
-	fake.mu.Lock()
-	fake.requests = nil
-	fake.mu.Unlock()
-	h, err := NewHandler(cfg, Dependencies{Context: ctx, Bots: map[string]discord.API{"a": client, "b": client}, Registry: reg, Publisher: publisher, Index: fixedIndex{}})
+	cfg.Keys = []config.Key{{Name: "key", PublicKey: newPublicKey(), Grants: []config.Grant{{Bot: "a", Server: "1", Channels: []string{"*"}}, {Bot: "b", Server: "1", Channels: []string{"20"}}}}, {Name: "other", PublicKey: newPublicKey(), Grants: []config.Grant{{Bot: "b", Server: "1", Channels: []string{"*"}}}}}
+	fakes := map[string]*fakeDiscord{"a": {}, "b": {}}
+	clients := map[string]discord.API{}
+	for name, fake := range fakes {
+		server := httptest.NewServer(fake)
+		t.Cleanup(server.Close)
+		client, err := discord.New("MTIz.fake-bot-token.signature", bot.WithRestClientConfigOpts(rest.WithURL(server.URL)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { client.Bot.Close(context.Background()) })
+		fake.mu.Lock()
+		fake.requests = nil
+		fake.mu.Unlock()
+		clients[name] = client
+	}
+	h, err := NewHandler(cfg, Dependencies{Context: ctx, Bots: clients, Registry: reg, Publisher: publisher, Index: fixedIndex{}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -232,7 +244,7 @@ func setup(t *testing.T) *harness {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = conn.Close() })
-	return &harness{h, transport.WithKeyName(ctx, "key"), cfg, fake, js, reg, pb.NewDeckServiceClient(conn)}
+	return &harness{h: h, ctx: transport.WithKeyName(ctx, "key"), cfg: cfg, fake: fakes["a"], fakes: fakes, js: js, reg: reg, client: pb.NewDeckServiceClient(conn)}
 }
 func content() *pb.Content { return &pb.Content{Text: "hello"} }
 func TestForumPollAndHeaders(t *testing.T) {
@@ -610,5 +622,85 @@ func TestReplyBotOwnershipRace(t *testing.T) {
 				t.Fatal("losing reply sent")
 			}
 		})
+	}
+}
+
+func TestRequestsUseGrantedBotClient(t *testing.T) {
+	for _, op := range []string{"Post", "Reply", "GetThread", "ListHistory", "ListChannels"} {
+		t.Run(op, func(t *testing.T) {
+			s := setup(t)
+			ctx := transport.WithKeyName(s.ctx, "other")
+			var err error
+			switch op {
+			case "Post":
+				_, err = s.h.Post(ctx, &pb.PostRequest{Channel: &pb.ChannelRef{Bot: "b", ChannelId: 20}, Title: "test", Content: content(), Nonce: "binding"})
+			case "Reply":
+				_, err = s.h.Reply(ctx, &pb.ReplyRequest{Thread: &pb.ThreadRef{Bot: "b", ThreadId: 101}, Content: content(), Nonce: "binding"})
+			case "GetThread":
+				_, err = s.h.GetThread(ctx, &pb.GetThreadRequest{Thread: &pb.ThreadRef{Bot: "b", ThreadId: 101}})
+			case "ListHistory":
+				_, err = s.h.ListHistory(ctx, &pb.ListHistoryRequest{Thread: &pb.ThreadRef{Bot: "b", ThreadId: 101}})
+			case "ListChannels":
+				_, err = s.h.ListChannels(ctx, &pb.ListChannelsRequest{})
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			for name, fake := range s.fakes {
+				fake.mu.Lock()
+				count := len(fake.requests)
+				fake.mu.Unlock()
+				if name == "a" && count != 0 || name == "b" && count == 0 {
+					t.Fatalf("%s: bot %s made %d requests", op, name, count)
+				}
+			}
+		})
+	}
+}
+func TestGetThreadAnswer(t *testing.T) {
+	s := setup(t)
+	if err := s.reg.RegisterPost(100, registry.Entry{Bot: "a", ServerID: 1, ChannelID: 10, LastMessageID: 50, CreatedByDeck: true}, "key"); err != nil {
+		t.Fatal(err)
+	}
+	s.fake.archived = true
+	s.fake.locked = true
+	got, err := s.client.GetThread(s.ctx, &pb.GetThreadRequest{Thread: &pb.ThreadRef{ThreadId: 100}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := &pb.Thread{Bot: "a", ServerId: 1, ChannelId: 10, ThreadId: 100, Name: "thread", CreatedByDeck: true, Touched: true, LastMessageId: 90, Archived: true, Locked: true, Url: "https://discord.com/channels/1/100"}
+	if !proto.Equal(got.Thread, want) {
+		t.Fatalf("got %v want %v", got.Thread, want)
+	}
+	// Same route is readable by a second key without inheriting the first touch.
+	cfg := *s.cfg
+	cfg.Keys = append([]config.Key(nil), cfg.Keys...)
+	cfg.Keys[1].Grants = []config.Grant{{Bot: "a", Server: "1", Channels: []string{"10"}}}
+	other, err := NewHandler(&cfg, Dependencies{Context: s.h.ctx, Bots: s.h.bots, Registry: s.reg, Publisher: s.h.Publisher, Index: fixedIndex{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err = other.GetThread(transport.WithKeyName(s.ctx, "other"), &pb.GetThreadRequest{Thread: &pb.ThreadRef{ThreadId: 100}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want.Touched = false
+	if !proto.Equal(got.Thread, want) {
+		t.Fatalf("other key got %v want %v", got.Thread, want)
+	}
+}
+func TestListChannelsAnswer(t *testing.T) {
+	s := setup(t)
+	got, err := s.client.ListChannels(s.ctx, &pb.ListChannelsRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := &pb.ListChannelsResponse{Channels: []*pb.Channel{
+		{Bot: "a", ServerId: 1, ServerName: "Test server", ChannelId: 10, Name: "forum", Type: 15, RequiresTag: true, Tags: []*pb.ForumTag{{Id: 5, Name: "tag"}}},
+		{Bot: "a", ServerId: 1, ServerName: "Test server", ChannelId: 20, Name: "text", Type: 0},
+		{Bot: "b", ServerId: 1, ServerName: "Test server", ChannelId: 20, Name: "text", Type: 0},
+	}}
+	if !proto.Equal(got, want) {
+		t.Fatalf("got %v want %v", got, want)
 	}
 }
