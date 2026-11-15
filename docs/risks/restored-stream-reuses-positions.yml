@@ -23,8 +23,10 @@ description: >-
   restored creation time matches the record; this live restore is unsupported
   and is the named residual. Mitigation: the procedure is in the service's
   operating documentation. A newly created stream has a different creation
-  time: recreation while running triggers the error/end check and gated
-  replay in service, measured by stream-recreation. Recreation with the
+  time: the service design checks on error, end and reconnect and gates calls
+  during the check. stream-recreation measures the consumer-deleted error
+  and reconnect triggers and fresh consumers' sequence coverage; it does not
+  measure the end trigger or the RPC gate. Recreation with the
   service stopped is detected at startup. With nats.stream.manage true,
   a running service can create the missing stream itself, so operators stop
   it before deleting a stream they intend to restore.

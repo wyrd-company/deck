@@ -119,11 +119,17 @@ func run(label string, repair, recreate, managed bool) {
 		publish(1, 7)
 	}
 	trigger := receive(errors)
+	if trigger != jetstream.ErrConsumerDeleted.Error() {
+		panic(fmt.Sprintf("unexpected error trigger: %q", trigger))
+	}
 	closed := false
 	select {
 	case <-cc.Closed():
 		closed = true
 	default:
+	}
+	if closed {
+		panic("consume context ended before the observed error trigger")
 	}
 	if managed {
 		// The error arrives while the stream is absent. Management must run
@@ -162,6 +168,17 @@ func run(label string, repair, recreate, managed bool) {
 		}
 		invalid.Store(false)
 		cc = start(first)
+		after, err := stream.Info(ctx)
+		must(err)
+		if !after.Created.Equal(info.Created) {
+			panic("generation changed while creating fresh consumer")
+		}
+	}
+	info, err := stream.Info(ctx)
+	must(err)
+	changed := !info.Created.Equal(oldInfo.Created)
+	if changed != recreate {
+		panic("unexpected measured creation-time comparison")
 	}
 	if !recreate {
 		publish(6, 7)
@@ -177,7 +194,7 @@ func run(label string, repair, recreate, managed bool) {
 	if !reflect.DeepEqual(got, want) {
 		panic(fmt.Sprintf("%s: got %v, want %v", label, got, want))
 	}
-	emit(map[string]any{"case": label, "trigger": trigger, "closed_at_trigger": closed, "creation_changed": recreate, "new_sequences": got, "pass": true})
+	emit(map[string]any{"case": label, "trigger": trigger, "closed_at_trigger": closed, "creation_changed": changed, "new_sequences": got, "pass": true})
 }
 
 func main() {
@@ -186,5 +203,13 @@ func main() {
 	run("error-check-and-replay", true, true, false)
 	run("missing-stream-managed-before-check", true, true, true)
 	run("same-generation-consumer-deletion", true, false, false)
+	for _, test := range []reconnectCase{
+		{"reconnect-a-published-while-disconnected", true, true, true},
+		{"reconnect-b-service-publishes-after-reconnect", true, false, true},
+		{"reconnect-c-management-recreates-missing-stream", false, false, true},
+		{"reconnect-d-unmanaged-waits-for-operator", false, false, false},
+	} {
+		runReconnect(test)
+	}
 	emit(map[string]any{"state": "completed", "pass": true})
 }

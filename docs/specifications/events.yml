@@ -114,7 +114,22 @@ validation-criteria: >-
   with the stream absent at the check and management enabled, and with
   management disabled until an operator creates it; the index stays gated
   until the stream exists and replay finishes. A consumer-only deletion
-  keeps the epoch and resumes after the last indexed sequence. Concurrent
+  keeps the epoch and resumes after the last indexed sequence. With a TCP
+  relay cutting the service's NATS connection, also check: recreating and
+  publishing new 1 through 7 while disconnected; recreating while
+  disconnected and publishing new 1 through 7 through the service connection
+  after reconnect; deleting while disconnected with manage true, which
+  recreates the stream before the generation check; and manage false, which
+  leaves the index unavailable until an operator supplies the stream. The
+  reconnect callback itself must mark each check due; a filled status channel
+  must not lose that trigger. In every case read the actual stream creation
+  time and index every retained new sequence 1 through 7. A record whose
+  created matches the stream but whose epoch differs from the index must
+  discard old entries, adopt that epoch and replay 1 through 7, both after
+  another instance updated the record and after a lost write acknowledgement.
+  Recreating between the first creation-time read and fresh-consumer creation
+  repeats the check; an unchanged generation already caught up opens its
+  gate without waiting for a new message. Concurrent
   counts, ListUnread and an already-open Listen either complete against the
   old generation, wait for replay, or reach their deadline with UNAVAILABLE;
   their cursors never skip retained activity in the new generation, and a

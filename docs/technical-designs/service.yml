@@ -110,6 +110,25 @@ design-challenges:
     Unread covers what the stream holds; a cursor older than the stream's
     oldest message is answered with horizon_passed, and the client reads what
     fell out with ListHistory.
+  consumer-reset-coverage: >-
+    Source analysis for nats.go v1.55.0, jetstream/ordered.go:207-235:
+    ErrNoHeartbeat is reported to ConsumeErrHandler (lines 211-212) and
+    resets the consumer (line 224); ErrConsumerDeleted is reported and
+    resets it (line 226); nats.ErrNoResponders is reported and resets it
+    (line 228). The error trigger covers each. errConnected resets it
+    (line 227) but is suppressed from the user error handler (line 211);
+    jetstream/pull.go:358-368 stops heartbeat monitoring while disconnected
+    and emits errConnected after reconnect. The connection's reconnect
+    callback covers that path. errOrderedSequenceMismatch also resets
+    (line 225) without reaching the user error handler (line 211).
+    Reasoning from ordered.go:137-140, not a spike run: it is a gap in one
+    consumer's delivery sequence, rather than a stream-generation change;
+    error, end and reconnect checks cover the generation-changing reset
+    causes in this pinned version. The narrow race between a mismatch reset
+    and recreation with a lost consumer-deleted notice is a build-test lead
+    for the index. Re-run stream-recreation and this source audit on every
+    nats.go upgrade. Source references are the v1.55.0 files in
+    https://github.com/nats-io/nats.go/tree/v1.55.0, not unversioned sources.
   own-messages: >-
     A message deck sends is published by its send, the one path that knows its
     key, the key's fingerprint and the client's nonce. The gateway's and
@@ -320,13 +339,26 @@ proposed-design:
     from fingerprint and nonce to entries serves partial-sends. The index also
     holds the stream's epoch and its first and last sequence. The epoch tells
     stream generations apart. At start, whenever the consume context ends,
-    and on any error reported to its ConsumeErrHandler (measured for
-    `nats: consumer deleted` by stream-recreation), the service runs the
-    generation check. The error callback marks the index unavailable and
-    invalidates ingestion before returning, and signals a worker; it does
-    not stop or replace the consumer inside the callback, which nats.go calls
-    while holding its consumer lock. The worker stops the old context and
-    waits for Closed, rejecting queued callbacks from that context. It runs
+    on any error reported to its ConsumeErrHandler, and after every reconnect
+    of the service's NATS connection, the service runs the generation check.
+    stream-recreation measures the consumer-deleted error and reconnect
+    callback triggers and replacement consumers' sequence coverage; the end
+    trigger and RPC call gate are design requirements tested by events.
+    Disconnect marks the index unavailable and invalidates ingestion; error
+    and reconnect callbacks do the same before marking a check due. They
+    increment a monotonic due counter and signal a worker without waiting for
+    it. Gate changes, context tokens and the due count share the index's
+    synchronization. A coalesced wakeup cannot clear a newer due count: the
+    worker atomically opens the gate only when its completed check still
+    covers the current count, otherwise it checks again. Use the connection's
+    ReconnectHandler callback, queued by nats.go:3621-3622, whose callback
+    queue appends work (nats.go:3712-3743). Do not use a bounded StatusChanged
+    channel for this trigger: nats.go:6885-6898 drops notifications when its
+    buffer is full. The error callback never stops or replaces the consumer
+    itself, because nats.go calls it while holding its consumer lock. The
+    worker invalidates the old context's application token, stops the old
+    context and waits for Closed, rejecting all callbacks from that token,
+    including callbacks that arrive after Closed. It runs
     the same stream create/check step as startup, under nats.stream.manage,
     before reading creation time: with manage true a missing stream is
     created; with manage false the index stays unavailable and retries until
@@ -336,19 +368,30 @@ proposed-design:
     is missing or its `created` differs from the stream's creation time, the
     service writes a new record whose epoch is the current time in Unix
     nanoseconds, or the recorded epoch plus one when the clock is not ahead of
-    it, with a revision-checked write, and the index discards its entries and
-    replays with a fresh ordered consumer and deliver policy all. The
+    it, with a revision-checked write. A revision conflict retries the read;
+    after a lost write acknowledgement the retry adopts the record that
+    landed. The generation is unchanged only when the record's created
+    matches the stream AND its epoch equals the index's epoch. Otherwise the
+    index adopts the record's epoch, discards its entries and replays with a
+    fresh ordered consumer and deliver policy all, including when another
+    instance already wrote the matching record. The
     library's internal reset is never used to resume a new generation,
     because it can keep the previous stream's last sequence and skip the new
     stream's early activity. When the generation is unchanged, the index
     keeps its entries and epoch and a fresh consumer resumes from its last
     indexed sequence plus one. The check captures the stream's last sequence
-    after stream management, and opens the gate once the new consumer reaches
-    that position (immediately for an empty stream); later arrivals continue
-    live. Errors during replay close the gate and repeat the check. So a
-    stream deleted or recreated while the service runs, before start, or
-    whose record is deleted before start, begins a new generation at the
-    check. Across generations, epochs grow while the
+    after stream management. After creating the fresh consumer and before
+    opening the gate it re-reads the stream's creation time; a mismatch
+    discards that consumer and reruns the check. The gate opens once the
+    index's last indexed sequence is at or past the captured last sequence,
+    including an unchanged index already caught up and an empty stream.
+    Later arrivals continue live. Errors, ends or reconnects during replay
+    mark another check due. The measured connected-error and reconnect
+    traces detect a newly created stream and replay all retained sequences;
+    deletion alone with management on creates a replacement before checking,
+    while management off waits for an operator-supplied stream. At startup,
+    a changed creation time or missing record also selects a new epoch.
+    Across generations, epochs grow while the
     record survives, and a client follows a generation change whichever way
     the epoch moved, since positions of different epochs do not order and its
     cursor update accepts any other epoch. A restore from a snapshot keeps the
