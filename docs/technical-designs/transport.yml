@@ -15,8 +15,8 @@ relationships:
 objective: >-
   Carry the gRPC API between the client and the service over SSH served with
   Wish, with each client's SSH identity an ed25519 key in OpenBao or Vault
-  Transit that never leaves it, and resolve every call to the grants of the
-  key that signed the connection.
+  Transit that never leaves it, and resolve every call to the configured
+  key that signed the connection. The service API applies that key's grants.
 background:
   current-design: >-
     The client and the service have no connection between them. The
@@ -112,10 +112,13 @@ proposed-design:
     maximum connection time is unset. An absolute 30-second SSH handshake
     timeout bounds unauthenticated connections independently of idle traffic.
     Each authenticated SSH connection permits at most four session channels;
-    each gRPC transport permits 32 concurrent streams. Shutdown closes the
-    owned listener even before Wish registers it, and waits for canceled
-    handlers to return before service resources close. The client bounds connecting, the
-    handshake and every call but Listen by `service.timeout`.
+    each gRPC transport permits 32 concurrent streams. Concurrent SSH
+    connections are not capped, either before authentication or per key;
+    the channel and stream limits apply separately to each connection.
+    Shutdown closes the owned listener even before Wish registers it, and
+    waits for canceled handlers to return before service resources close.
+    The client bounds connecting, the handshake and every call but Listen
+    by `service.timeout`.
   modules: >-
     `internal/transport` holds both halves: the Transit signer, the client
     dialer that returns a gRPC client connection, the Wish server with its
