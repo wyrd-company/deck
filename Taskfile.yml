@@ -46,6 +46,14 @@ tasks:
         else
           intentional status
         fi
+  generate:
+    desc: Generate Go protobuf and gRPC code with pinned tools
+    cmds:
+      - bash scripts/generate.sh
+  generate:check:
+    desc: Fail when generated API code differs from the design proto
+    cmds:
+      - bash scripts/check-generated.sh
   check:
     desc: Run all repository checks
-    deps: [lint, build, test, workflows:check, intentional:check]
+    deps: [lint, build, test, generate:check, workflows:check, intentional:check]
