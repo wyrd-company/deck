@@ -119,7 +119,9 @@ description: >-
   given threads, or all the session's threads, and returns as soon as any of
   them has unread activity, printing all of it as read does and marking it
   read unless `--keep-unread`. Activity that is already unread when it starts
-  returns at once. Without `--timeout` it waits until interrupted.
+  returns at once. Without `--timeout` it waits until interrupted. When the
+  service reports none of the threads as touched by the key, nothing can
+  arrive, and listen exits 3 with each thread's state.
 
 
   `deck resolve THREAD` or `deck resolve --event PATH` (`-` reads stdin)
