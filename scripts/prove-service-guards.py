@@ -224,7 +224,13 @@ probe('bot-token startup read observes cancellation', 'runtime.go',
       'secrets.ReadSecret(ctx, where, b.Token)', 'secrets.ReadSecret(context.Background(), where, b.Token)',
       './internal/service', 'TestServiceStartupCancellation')
 probe_source('startup signal returns success rather than a startup error', 'cmd/deck/service_start.go',
-      'if ctx.Err() != nil {', 'if false {', './cmd/deck', 'TestServiceStartSignal')
+      'if ctx.Err() != nil && (err == nil || errors.Is(err, ctx.Err())) {', 'if false {', './cmd/deck', 'TestServiceStartSignal')
 probe_source('second signal regains its default action', 'cmd/deck/service_start.go',
       'context.AfterFunc(ctx, stop)', '_ = ctx', './cmd/deck', 'TestServiceStartSecondSignal')
+probe_source('a real startup failure after a signal is still reported', 'cmd/deck/service_start.go',
+      'if ctx.Err() != nil && (err == nil || errors.Is(err, ctx.Err())) {',
+      'if ctx.Err() != nil {', './cmd/deck', 'TestServiceStartRealFailureAfterSignal')
+probe('sanitized startup failures preserve cancellation identity', 'runtime.go',
+      'if errors.Is(cause, context.Canceled) {', 'if false {',
+      './cmd/deck', 'TestServiceStartSignal')
 print(f'PASS all {completed} targeted service mutation probes completed', flush=True)

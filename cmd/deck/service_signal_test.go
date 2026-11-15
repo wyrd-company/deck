@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -28,7 +30,7 @@ func TestServiceStartSignalHelper(t *testing.T) {
 		return
 	}
 	natsServer, credentials := testutil.JWTNATS(t)
-	target := map[string]string{"login": "/v1/auth/approle/login", "nats": "/v1/kv/data/deck/nats", "bot": "/v1/kv/data/deck/bots/helper", "host": "/v1/kv/data/deck/service", "second": "/v1/kv/data/deck/nats"}[stage]
+	target := map[string]string{"login": "/v1/auth/approle/login", "nats": "/v1/kv/data/deck/nats", "bot": "/v1/kv/data/deck/bots/helper", "host": "/v1/kv/data/deck/service", "second": "/v1/kv/data/deck/nats", "failure": "/unused"}[stage]
 	if target == "" {
 		t.Fatal("invalid stage")
 	}
@@ -80,7 +82,52 @@ func TestServiceStartSignalHelper(t *testing.T) {
 		t.Fatal(err)
 	}
 	var out, errs bytes.Buffer
-	code := run([]string{"service", "start", "--config", path}, &out, &errs)
+	ctx := context.Background()
+	var writerDone chan error
+	if stage == "failure" {
+		// Mirror main's incoming signal context. Hold a real credential read on a
+		// FIFO until SIGTERM has canceled it, then produce an independent empty-file
+		// error rather than an HTTP cancellation. This pins the race deterministically.
+		var stop context.CancelFunc
+		ctx, stop = signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+		defer stop()
+		if err = os.Remove(credential); err != nil {
+			t.Fatal(err)
+		}
+		if err = syscall.Mkfifo(credential, 0600); err != nil {
+			t.Fatal(err)
+		}
+		writerDone = make(chan error, 1)
+		go func() {
+			f, err := os.OpenFile(credential, os.O_WRONLY, 0)
+			if err != nil {
+				writerDone <- err
+				return
+			}
+			if err = syscall.Kill(os.Getpid(), syscall.SIGTERM); err != nil {
+				_ = f.Close()
+				writerDone <- err
+				return
+			}
+			<-ctx.Done()
+			writerDone <- f.Close()
+		}()
+	}
+	code := runContext(ctx, []string{"service", "start", "--config", path}, &out, &errs)
+	if stage == "failure" {
+		select {
+		case err := <-writerDone:
+			if err != nil {
+				t.Fatal(err)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("credential writer did not finish")
+		}
+		if ctx.Err() == nil || code != 1 || out.Len() != 0 || !strings.Contains(errs.String(), "vault.auth.token_file: credential file is empty") {
+			t.Fatalf("real startup failure hidden after signal: ctx=%v code=%d stdout=%q stderr=%q", ctx.Err(), code, out.String(), errs.String())
+		}
+		return
+	}
 	if code != 0 || out.Len() != 0 || errs.Len() != 0 {
 		t.Fatalf("signal during %s: code=%d stdout=%q stderr=%q", stage, code, out.String(), errs.String())
 	}
@@ -163,5 +210,18 @@ func TestServiceStartSecondSignal(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("second signal swallowed during teardown")
+	}
+}
+
+func TestServiceStartRealFailureAfterSignal(t *testing.T) {
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(executable, "-test.run=^TestServiceStartSignalHelper$", "-test.timeout=8s")
+	cmd.Env = append(os.Environ(), "DECK_START_SIGNAL_STAGE=failure")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("real failure after signal: %v\n%s", err, output)
 	}
 }

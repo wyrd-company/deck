@@ -50,7 +50,7 @@ func open(ctx context.Context, cfg *config.Service, secrets SecretReader, newBot
 	}()
 	credentials, err := secrets.ReadSecret(ctx, "nats.creds", cfg.NATS.Creds)
 	if err != nil {
-		return nil, errors.New("nats.creds: cannot read configured secret")
+		return nil, startupFailure("nats.creds: cannot read configured secret", err)
 	}
 	r.NATS, err = activity.Connect(cfg.NATS, credentials, r.Events)
 	if err != nil {
@@ -61,7 +61,7 @@ func open(ctx context.Context, cfg *config.Service, secrets SecretReader, newBot
 		return nil, errors.New("nats: cannot open JetStream")
 	}
 	if _, err = activity.EnsureStream(ctx, r.JetStream, cfg.NATS); err != nil {
-		return nil, errors.New("nats.stream: cannot create or check stream")
+		return nil, startupFailure("nats.stream: cannot create or check stream", err)
 	}
 	r.Registry, err = registry.Open(ctx, r.JetStream, cfg.NATS.Threads)
 	if err != nil {
@@ -73,7 +73,7 @@ func open(ctx context.Context, cfg *config.Service, secrets SecretReader, newBot
 		where := fmt.Sprintf("bots[%d].token", i)
 		token, readErr := secrets.ReadSecret(ctx, where, b.Token)
 		if readErr != nil {
-			return nil, fmt.Errorf("%s: cannot read configured secret", where)
+			return nil, startupFailure(where+": cannot read configured secret", readErr)
 		}
 		client, createErr := newBot(token)
 		if createErr != nil {
@@ -88,6 +88,19 @@ func open(ctx context.Context, cfg *config.Service, secrets SecretReader, newBot
 	}
 	return r, nil
 }
+
+// Keep cancellation identifiable without carrying upstream bodies or secrets.
+// A concurrent stop must not turn an independent startup failure into success.
+func startupFailure(message string, cause error) error {
+	if errors.Is(cause, context.Canceled) {
+		return fmt.Errorf("%s: %w", message, context.Canceled)
+	}
+	if errors.Is(cause, context.DeadlineExceeded) {
+		return fmt.Errorf("%s: %w", message, context.DeadlineExceeded)
+	}
+	return errors.New(message)
+}
+
 func (r *Runtime) Close() {
 	r.close.Do(func() {
 		r.cancel()

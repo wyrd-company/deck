@@ -48,7 +48,7 @@ func startCommand(ctx context.Context, args []string, stdout, stderr io.Writer) 
 		defer closeVault(secrets)
 		err = service.Run(ctx, cfg, secrets)
 	}
-	if ctx.Err() != nil {
+	if ctx.Err() != nil && (err == nil || errors.Is(err, ctx.Err())) {
 		return 0, true
 	}
 	if err != nil {
