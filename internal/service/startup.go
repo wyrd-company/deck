@@ -2,9 +2,6 @@ package service
 
 import (
 	"context"
-	"os"
-	"os/signal"
-	"syscall"
 
 	pb "github.com/wyrd-company/deck/internal/api/deckv1"
 	"github.com/wyrd-company/deck/internal/config"
@@ -12,7 +9,7 @@ import (
 )
 
 // Run opens the runtime, then the SSH listener, sharing serial startup reads.
-// SIGINT and SIGTERM cancel the serving context.
+// The caller owns signal handling and cancels ctx to stop the service.
 // On cancellation the transport closes and joins RPC handlers before the
 // runtime cancels process-owned sends and closes its shared resources.
 func Run(ctx context.Context, cfg *config.Service, secrets SecretReader) error {
@@ -28,8 +25,6 @@ func Run(ctx context.Context, cfg *config.Service, secrets SecretReader) error {
 // prepare also lets lifecycle tests install the streaming handler task 7 owns
 // while exercising the real runtime and transport startup/shutdown below.
 func run(ctx context.Context, cfg *config.Service, secrets SecretReader, prepare func(context.Context) (*Runtime, pb.DeckServiceServer, error)) error {
-	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
-	defer stop()
 	if err := ctx.Err(); err != nil {
 		return err
 	}

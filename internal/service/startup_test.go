@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -116,7 +117,9 @@ func TestServiceSIGTERMHelper(t *testing.T) {
 			runtime.Close()
 		}
 	}() // release resources even under adapter mutations
-	err = run(context.Background(), cfg, secrets, func(ctx context.Context) (*Runtime, pb.DeckServiceServer, error) {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	err = run(ctx, cfg, secrets, func(ctx context.Context) (*Runtime, pb.DeckServiceServer, error) {
 		r, err := open(ctx, cfg, secrets, func(token string) (*discord.Client, error) {
 			return discord.New(token, bot.WithRestClientConfigOpts(rest.WithURL(upstream.URL)))
 		})
@@ -267,31 +270,59 @@ func TestServiceSIGTERM(t *testing.T) {
 
 // Startup reads must retain cancellation even though the serving runtime is
 // detached later so transport can join handlers first.
-type blockingStartupSecret struct{ entered chan struct{} }
+type blockingStartupSecret struct {
+	entered     chan struct{}
+	block       string
+	credentials string
+}
 
-func (s blockingStartupSecret) ReadSecret(ctx context.Context, _ string, _ config.SecretRef) (string, error) {
+func (s blockingStartupSecret) ReadSecret(ctx context.Context, where string, _ config.SecretRef) (string, error) {
+	if where != s.block {
+		return s.credentials, nil
+	}
 	close(s.entered)
 	<-ctx.Done()
 	return "", ctx.Err()
 }
 func TestServiceStartupCancellation(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	secrets := blockingStartupSecret{entered: make(chan struct{})}
-	done := make(chan error, 1)
-	go func() { done <- Run(ctx, &config.Service{}, secrets) }()
-	select {
-	case <-secrets.entered:
-	case <-time.After(time.Second):
-		t.Fatal("startup secret read did not start")
+	natsServer, credentials := testutil.JWTNATS(t)
+	for _, where := range []string{"nats.creds", "bots[0].token", "host_key"} {
+		t.Run(where, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			// Each secret has a distinct ref in the CLI test; this reader targets the
+			// logical step so dropping a context on any single call is observable.
+			secrets := blockingStartupSecret{entered: make(chan struct{}), block: where, credentials: credentials}
+			cfg := &config.Service{Listen: config.Listen{SSH: "127.0.0.1:0"}, NATS: config.NATS{Servers: []string{natsServer.ClientURL()}, Timeout: time.Second, SubjectPrefix: "deck", Stream: config.Stream{Name: "cancel", Manage: true, MaxAge: time.Hour, DuplicateWindow: time.Minute, Replicas: 1}, Threads: config.Threads{Bucket: "cancel", Manage: true, Replicas: 1}}, Bots: []config.Bot{{Name: "a"}}}
+			// Host-key cancellation needs a valid bot token to finish Open.
+			reader := startupSecretFunc(func(ctx context.Context, step string, ref config.SecretRef) (string, error) {
+				if step == "bots[0].token" && where == "host_key" {
+					return "MTIz.test-only.signature", nil
+				}
+				return secrets.ReadSecret(ctx, step, ref)
+			})
+			done := make(chan error, 1)
+			go func() { done <- Run(ctx, cfg, reader) }()
+			select {
+			case <-secrets.entered:
+			case <-time.After(2 * time.Second):
+				t.Fatal("startup secret read did not start")
+			}
+			cancel()
+			select {
+			case err := <-done:
+				if err == nil {
+					t.Fatal("canceled startup succeeded")
+				}
+			case <-time.After(time.Second):
+				t.Fatal("startup read ignored cancellation")
+			}
+		})
 	}
-	cancel()
-	select {
-	case err := <-done:
-		if err == nil {
-			t.Fatal("canceled startup succeeded")
-		}
-	case <-time.After(time.Second):
-		t.Fatal("startup read ignored cancellation")
-	}
+}
+
+type startupSecretFunc func(context.Context, string, config.SecretRef) (string, error)
+
+func (f startupSecretFunc) ReadSecret(ctx context.Context, where string, ref config.SecretRef) (string, error) {
+	return f(ctx, where, ref)
 }

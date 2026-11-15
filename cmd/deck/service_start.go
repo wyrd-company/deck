@@ -5,6 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/wyrd-company/deck/internal/config"
 	"github.com/wyrd-company/deck/internal/service"
@@ -26,6 +29,11 @@ func startCommand(ctx context.Context, args []string, stdout, stderr io.Writer) 
 	if len(options.words) != 2 {
 		return serviceFailure(stdout, stderr, options.json, 2, errors.New("unexpected argument; use --help")), true
 	}
+	// Keep signal ownership here: cancellation must reach the exit-status check,
+	// including config loading, Vault login and every startup secret read.
+	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	context.AfterFunc(ctx, stop) // restore default handling for a second signal
 	path := options.path
 	if path == "" {
 		path = config.ServicePath

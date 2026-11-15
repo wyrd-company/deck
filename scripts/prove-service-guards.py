@@ -17,11 +17,15 @@ require_pass(['go', 'test', '-count=1', './internal/service/...'])
 
 completed = 0
 
-def probe(name, path, before, after, package, test):
+def probe_source(name, path, before, after, package, test):
     global completed
-    mutate(name, 'internal/service/' + path, before, after,
+    mutate(name, path, before, after,
            ['go', 'test', '-count=1', '-timeout=20s', '-run', '^' + test + '$', package])
     completed += 1
+
+
+def probe(name, path, before, after, package, test):
+    probe_source(name, 'internal/service/' + path, before, after, package, test)
 
 
 probe('Discord nonce includes sending fingerprint', 'discord/content.go',
@@ -200,10 +204,10 @@ probe('metadata HTTP refusals take precedence over Discord error codes', 'discor
 probe('real SSH handler enforces explicit channel grants', 'handler.go',
       'ch == "*" || ch == strconv.FormatUint(e.ChannelID, 10)', 'ch == "*" || true',
       './internal/service', 'TestSSHHandlerGrants')
-probe('service handles native SIGTERM', 'startup.go',
+probe_source('service command handles native SIGTERM', 'cmd/deck/service_start.go',
       'signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)',
       'signal.NotifyContext(ctx, os.Interrupt, syscall.SIGINT)',
-      './internal/service', 'TestServiceSIGTERM')
+      './cmd/deck', 'TestServiceStartSignal')
 probe('transport joins handlers before runtime cancellation', 'startup.go',
       'context.WithCancel(context.WithoutCancel(ctx))', 'context.WithCancel(ctx)',
       './internal/service', 'TestServiceSIGTERM')
@@ -213,4 +217,11 @@ probe('startup secret reads observe cancellation', 'startup.go',
       'stopStartup := context.AfterFunc(ctx, cancel)',
       'stopStartup := context.AfterFunc(context.Background(), cancel)',
       './internal/service', 'TestServiceStartupCancellation')
+probe('bot-token startup read observes cancellation', 'runtime.go',
+      'secrets.ReadSecret(ctx, where, b.Token)', 'secrets.ReadSecret(context.Background(), where, b.Token)',
+      './internal/service', 'TestServiceStartupCancellation')
+probe_source('startup signal returns success rather than a startup error', 'cmd/deck/service_start.go',
+      'if ctx.Err() != nil {', 'if false {', './cmd/deck', 'TestServiceStartSignal')
+probe_source('second signal regains its default action', 'cmd/deck/service_start.go',
+      'context.AfterFunc(ctx, stop)', '_ = ctx', './cmd/deck', 'TestServiceStartSecondSignal')
 print(f'PASS all {completed} targeted service mutation probes completed', flush=True)
