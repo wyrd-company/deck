@@ -38,6 +38,11 @@ deduplicated while the original send is in flight or its event is retained.
 After retention expires, repeating it can duplicate the message. deck never
 repeats a send automatically.
 
+Copy the entire printed shell command, including any assignments before `deck`.
+Those preserve line breaks and other control characters in the original content.
+If a content flag read stdin, supply the same input again when repeating. A
+completed post's nonce cannot be reused to post to a different channel.
+
 Each session command reports unread activity on stderr, or in `unread` with
 `--json`. Use [reading](reading.md) to handle replies. `deck skill` prints the
 embedded agent instructions. The [CLI specification](../specifications/command-line-interface.yml)
