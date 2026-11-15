@@ -1,0 +1,51 @@
+version: "3"
+
+vars:
+  VERSION: '{{.VERSION | default "dev"}}'
+  LDFLAGS: -s -w -X main.Version={{.VERSION}}
+  ACTIONLINT: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+
+tasks:
+  default:
+    desc: List available tasks
+    cmds:
+      - task --list
+  format:
+    desc: Format Go sources
+    cmds:
+      - gofmt -w .
+  format:check:
+    desc: Check Go formatting
+    cmds:
+      - test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
+  vet:
+    desc: Run go vet
+    cmds:
+      - go vet ./...
+  lint:
+    desc: Vet and check formatting
+    deps: [vet, format:check]
+  test:
+    desc: Run tests
+    cmds:
+      - go test ./...
+  build:
+    desc: Build deck into bin/
+    cmds:
+      - CGO_ENABLED=0 go build -trimpath -ldflags="{{.LDFLAGS}}" -o bin/deck ./cmd/deck
+  workflows:check:
+    desc: Validate GitHub Actions workflows
+    cmds:
+      - '{{.ACTIONLINT}}'
+  intentional:check:
+    desc: Validate intentional configuration and intents
+    cmds:
+      - |
+        if [ -n "$(git tag --list '[0-9]*.[0-9]*.[0-9]*')" ]; then
+          intentional check
+        else
+          intentional status
+        fi
+  check:
+    desc: Run all repository checks
+    deps: [lint, build, test, workflows:check, intentional:check]

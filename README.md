@@ -44,3 +44,11 @@ Preferences:
 - config.yml NOT env var for any config
 - wyrd.foo user docs, a logo (cyberpunk deck theme) - light/dark, social preview, demo.gif (VHS)
 - intentional
+
+## Development
+
+Install Go (the version in `go.mod`), [Task](https://taskfile.dev/) and
+[intentional](https://intentional.foo/). Run `task check` to format-check, vet,
+build, test, lint workflows and validate release configuration. `task build`
+creates `bin/deck`; pass `VERSION=1.2.3` to inject a release version. Until a
+baseline release tag exists, the intentional check uses `intentional status`.
