@@ -78,6 +78,10 @@ tasks:
     desc: Prove validation, Vault and check-task guards with restored mutations
     cmds:
       - python3 scripts/prove-guards.py --integration
+  transport:guards:check:
+    desc: Prove transport authorization and carried Vault guards
+    cmds:
+      - python3 scripts/prove-transport-guards.py
   config:home:check:
     desc: Prove passwd-home lookup with the real CLI in bubblewrap (Linux)
     cmds:

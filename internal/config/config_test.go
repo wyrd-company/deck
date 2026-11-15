@@ -296,3 +296,29 @@ func TestFieldPathsEscapeControls(t *testing.T) {
 		}
 	}
 }
+
+func TestVaultLoopbackForms(t *testing.T) {
+	for _, address := range []string{"http://localhost:8200", "http://[::1]:8200"} {
+		t.Run(address, func(t *testing.T) {
+			if err := ValidateVaultAddress(address); err != nil {
+				t.Fatalf("loopback rejected: %v", err)
+			}
+			raw, err := os.ReadFile("../../docs/specifications/assets/configuration/examples/client.yml")
+			if err != nil {
+				t.Fatal(err)
+			}
+			var doc map[string]any
+			if err := yaml.Unmarshal(raw, &doc); err != nil {
+				t.Fatal(err)
+			}
+			doc["vault"].(map[string]any)["address"] = address
+			raw, err = yaml.Marshal(doc)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := ParseClient(raw, "/tmp/deck/config.yml"); err != nil {
+				t.Fatalf("configured loopback rejected: %v", err)
+			}
+		})
+	}
+}

@@ -209,7 +209,7 @@ func (h *grantHandler) Listen(req *deckv1.ListenRequest, stream grpc.ServerStrea
 	if len(Grants(stream.Context())) != 1 || KeyName(stream.Context()) == "" {
 		return status.Error(codes.Internal, "missing stream identity")
 	}
-	if err := stream.Send(&deckv1.ListenResponse{Through: &deckv1.StreamPosition{Epoch: uint64(len(KeyName(stream.Context())))}}); err != nil {
+	if err := stream.Send(&deckv1.ListenResponse{Through: &deckv1.StreamPosition{Epoch: uint64(KeyName(stream.Context())[0])}}); err != nil {
 		return err
 	}
 	<-stream.Context().Done()
@@ -279,7 +279,7 @@ func TestLiveSSHGrants(t *testing.T) {
 				t.Fatal(err)
 			}
 			first, err := stream.Recv()
-			if err != nil || first.GetThrough().GetEpoch() != uint64(len(test.name)) {
+			if err != nil || first.GetThrough().GetEpoch() != uint64(test.name[0]) {
 				t.Fatalf("stream identity: %v %v", first, err)
 			}
 			cancel()
@@ -445,5 +445,133 @@ func (b *baoFixture) storeHost(t *testing.T, raw []byte) {
 	cached, err := ReadHostKey(context.Background(), c, ref)
 	if err != nil || string(cached.PublicKey().Marshal()) != string(signer.PublicKey().Marshal()) {
 		t.Fatal("host key was read more than once")
+	}
+}
+
+type probeHandler struct {
+	deckv1.UnimplementedDeckServiceServer
+	wait bool
+}
+
+func (h *probeHandler) ListChannels(ctx context.Context, _ *deckv1.ListChannelsRequest) (*deckv1.ListChannelsResponse, error) {
+	if h.wait {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	return &deckv1.ListChannelsResponse{Channels: []*deckv1.Channel{{Name: strings.Repeat("x", 5<<20)}}}, nil
+}
+func (h *probeHandler) Listen(_ *deckv1.ListenRequest, stream grpc.ServerStreamingServer[deckv1.ListenResponse]) error {
+	if err := stream.Send(&deckv1.ListenResponse{}); err != nil {
+		return err
+	}
+	<-stream.Context().Done()
+	return stream.Context().Err()
+}
+func TestSSHProtocolBoundary(t *testing.T) {
+	signer, host := testHost(t), testHost(t)
+	address := serveTest(t, []config.Key{{Name: "client", PublicKey: DescribeKey(signer.PublicKey(), "").PublicKey}}, host, &probeHandler{})
+	sshConfig := &ssh.ClientConfig{User: "deck", Auth: []ssh.AuthMethod{ssh.PublicKeys(signer)}, HostKeyCallback: ssh.FixedHostKey(host.PublicKey()), Timeout: time.Second}
+	client, err := ssh.Dial("tcp", address, sshConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	for _, request := range []struct {
+		name    string
+		payload []byte
+	}{
+		{"shell", nil}, {"exec", ssh.Marshal(struct{ Command string }{"uname"})},
+		{"env", ssh.Marshal(struct{ Key, Value string }{"HOME", "/tmp"})},
+		{"auth-agent-req@openssh.com", nil},
+		{"pty-req", ssh.Marshal(struct {
+			Term                         string
+			Columns, Rows, Width, Height uint32
+			Modes                        string
+		}{Term: "xterm"})},
+		{"subsystem", ssh.Marshal(struct{ Name string }{"sftp"})},
+	} {
+		channel, requests, err := client.OpenChannel("session", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		go ssh.DiscardRequests(requests)
+		ok, err := channel.SendRequest(request.name, true, request.payload)
+		_ = channel.Close()
+		if err != nil || ok {
+			t.Fatalf("request %s: accepted=%v err=%v", request.name, ok, err)
+		}
+	}
+	if conn, err := client.Dial("tcp", "127.0.0.1:1"); err == nil {
+		_ = conn.Close()
+		t.Fatal("port forwarding accepted")
+	}
+	if ok, _, err := client.SendRequest("tcpip-forward", true, ssh.Marshal(struct {
+		Host string
+		Port uint32
+	}{"127.0.0.1", 0})); err != nil || ok {
+		t.Fatalf("reverse forwarding: %v %v", ok, err)
+	}
+	sshConfig.User = "somebody"
+	if conn, err := ssh.Dial("tcp", address, sshConfig); err == nil {
+		_ = conn.Close()
+		t.Fatal("wrong username accepted")
+	}
+	sshConfig.User = "deck"
+	sshConfig.Auth = []ssh.AuthMethod{ssh.Password("anything")}
+	if conn, err := ssh.Dial("tcp", address, sshConfig); err == nil {
+		_ = conn.Close()
+		t.Fatal("password accepted")
+	}
+}
+func TestCallLifetimeAndSize(t *testing.T) {
+	signer, host := testHost(t), testHost(t)
+	keys := []config.Key{{Name: "client", PublicKey: DescribeKey(signer.PublicKey(), "").PublicKey}}
+	cfg := &config.Client{Service: config.ServiceEndpoint{HostKey: DescribeKey(host.PublicKey(), "").PublicKey}}
+	cfg.Service.Address = serveTest(t, keys, host, &probeHandler{})
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	conn, err := dialSigner(ctx, cfg, signer, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := conn.API.ListChannels(ctx, &deckv1.ListChannelsRequest{})
+	if err != nil || len(result.GetChannels()) != 1 || len(result.Channels[0].Name) != 5<<20 {
+		t.Fatalf("large response: %v", err)
+	}
+	_ = conn.Close()
+	conn, err = dialSigner(ctx, cfg, signer, 50*time.Millisecond)
+	if err != nil {
+		t.Fatal(err)
+	}
+	streamCtx, streamCancel := context.WithCancel(context.Background())
+	defer streamCancel()
+	stream, err := conn.API.Listen(streamCtx, &deckv1.ListenRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := stream.Recv(); err != nil {
+		t.Fatal(err)
+	}
+	// More than one unary timeout can pass without ending a Listen.
+	time.Sleep(110 * time.Millisecond)
+	if err := stream.Context().Err(); err != nil {
+		t.Fatalf("Listen inherited unary deadline: %v", err)
+	}
+	_ = conn.Close()
+	_, err = stream.Recv()
+	if err == nil {
+		t.Fatal("close left stream running")
+	}
+	cfg.Service.Address = serveTest(t, keys, host, &probeHandler{wait: true})
+	conn, err = dialSigner(ctx, cfg, signer, 50*time.Millisecond)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	start := time.Now()
+	_, err = conn.API.ListChannels(context.Background(), &deckv1.ListChannelsRequest{})
+	requireCode(t, err, codes.DeadlineExceeded)
+	if time.Since(start) > time.Second {
+		t.Fatal("unary timeout was not applied")
 	}
 }

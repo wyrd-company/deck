@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"sync"
 	"time"
@@ -54,7 +55,11 @@ func DialClient(ctx context.Context, cfg *config.Client) (*ClientConnection, err
 		return nil, err
 	}
 	defer func() {
-		closeCtx, closeCancel := context.WithTimeout(context.Background(), cfg.Vault.Timeout)
+		closeTimeout := cfg.Vault.Timeout
+		if closeTimeout <= 0 {
+			closeTimeout = 10 * time.Second
+		}
+		closeCtx, closeCancel := context.WithTimeout(context.Background(), closeTimeout)
 		defer closeCancel()
 		_ = client.Close(closeCtx)
 	}()
@@ -72,6 +77,9 @@ func dialSigner(ctx context.Context, cfg *config.Client, signer ssh.Signer, time
 	}
 	raw, err := (&net.Dialer{}).DialContext(ctx, "tcp", cfg.Service.Address)
 	if err != nil {
+		if ctx.Err() != nil {
+			return nil, status.FromContextError(ctx.Err()).Err()
+		}
 		return nil, status.Error(codes.Unavailable, "cannot connect to SSH service")
 	}
 	stopCancel := context.AfterFunc(ctx, func() { _ = raw.Close() })
@@ -85,8 +93,9 @@ func dialSigner(ctx context.Context, cfg *config.Client, signer ssh.Signer, time
 	deadline, _ := ctx.Deadline()
 	_ = raw.SetDeadline(deadline)
 	mismatch := false
+	recorder := &signingRecorder{Signer: signer}
 	sshConn, chans, reqs, err := ssh.NewClientConn(raw, cfg.Service.Address, &ssh.ClientConfig{
-		User: "deck", Auth: []ssh.AuthMethod{ssh.PublicKeys(signer)},
+		User: "deck", Auth: []ssh.AuthMethod{ssh.PublicKeys(recorder)},
 		HostKeyCallback: func(_ string, _ net.Addr, key ssh.PublicKey) error {
 			if string(key.Marshal()) != string(host.Marshal()) {
 				mismatch = true
@@ -98,6 +107,13 @@ func dialSigner(ctx context.Context, cfg *config.Client, signer ssh.Signer, time
 	if err != nil {
 		if mismatch {
 			return nil, ErrHostKeyMismatch
+		}
+		if recorder.err != nil {
+			return nil, recorder.err
+		}
+		var networkError net.Error
+		if errors.As(err, &networkError) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+			return nil, status.Error(codes.Unavailable, "SSH service disconnected during handshake")
 		}
 		var authErr *ssh.ServerAuthError
 		if errors.As(err, &authErr) {
@@ -168,4 +184,16 @@ func dialSigner(ctx context.Context, cfg *config.Client, signer ssh.Signer, time
 	}
 	success = true
 	return &ClientConnection{API: deckv1.NewDeckServiceClient(grpcConn), Fingerprint: ssh.FingerprintSHA256(signer.PublicKey()), grpc: grpcConn, ssh: sshClient}, nil
+}
+
+// Preserve a sanitized Vault error's category through SSH's handshake wrapping.
+type signingRecorder struct {
+	ssh.Signer
+	err error
+}
+
+func (s *signingRecorder) Sign(random io.Reader, data []byte) (*ssh.Signature, error) {
+	signature, err := s.Signer.Sign(random, data)
+	s.err = err
+	return signature, err
 }

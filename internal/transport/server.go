@@ -99,7 +99,7 @@ func NewServer(keys []config.Key, host ssh.Signer, handler deckv1.DeckServiceSer
 				return request == "subsystem" && session.Subsystem() == subsystem
 			}
 			s.PtyCallback = func(wishssh.Context, wishssh.Pty) bool { return false }
-			s.ChannelHandlers = map[string]wishssh.ChannelHandler{"session": wishssh.DefaultSessionHandler}
+			s.ChannelHandlers = map[string]wishssh.ChannelHandler{"session": deckSessionHandler}
 			s.RequestHandlers = map[string]wishssh.RequestHandler{}
 			return nil
 		},
@@ -128,3 +128,38 @@ func (s *Server) Serve(listener net.Listener) error {
 	return nil
 }
 func (s *Server) Close() error { _ = s.channels.Close(); s.grpc.Stop(); return s.ssh.Close() }
+
+// Wish's default session accepts env and agent-forwarding requests. Filter the
+// request stream before Wish sees it so the only accepted request is deck.
+func deckSessionHandler(server *wishssh.Server, conn *ssh.ServerConn, channel ssh.NewChannel, ctx wishssh.Context) {
+	wishssh.DefaultSessionHandler(server, conn, &subsystemChannel{NewChannel: channel, ctx: ctx}, ctx)
+}
+
+type subsystemChannel struct {
+	ssh.NewChannel
+	ctx wishssh.Context
+}
+
+func (c *subsystemChannel) Accept() (ssh.Channel, <-chan *ssh.Request, error) {
+	channel, requests, err := c.NewChannel.Accept()
+	if err != nil {
+		return nil, nil, err
+	}
+	filtered := make(chan *ssh.Request)
+	go func() {
+		defer close(filtered)
+		for request := range requests {
+			var payload struct{ Name string }
+			if request.Type != "subsystem" || ssh.Unmarshal(request.Payload, &payload) != nil || payload.Name != subsystem {
+				_ = request.Reply(false, nil)
+				continue
+			}
+			select {
+			case filtered <- request:
+			case <-c.ctx.Done():
+				return
+			}
+		}
+	}()
+	return channel, filtered, nil
+}
