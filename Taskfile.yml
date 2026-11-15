@@ -119,15 +119,15 @@ tasks:
   release:scripts:check:
     desc: Check release scripts and their failure guards
     cmds:
-      - bash -n scripts/release-notes.sh scripts/validate-publisher-contract.sh scripts/prove-config-home-macos.sh
-      - python3 -m unittest discover -s scripts/tests -p 'test_release.py'
+      - bash -n scripts/check-release-source.sh scripts/release-notes.sh scripts/validate-publisher-contract.sh scripts/prove-config-home-macos.sh
+      - python3 -m unittest discover -s scripts/tests -p 'test_release*.py'
   npm:check:
     desc: Test the native binary installer and launcher without publishing
     cmds:
       - npm test --prefix npm
       - npm pack --dry-run --ignore-scripts ./npm
   release:guards:check:
-    desc: Prove checksum, HTTPS, stable-version and handoff guards with restored mutations
+    desc: Prove anonymous-source, checksum, HTTPS, stable-version and handoff guards with restored mutations
     cmds:
       - python3 scripts/prove-release-guards.py
   release:snapshot:
@@ -143,6 +143,12 @@ tasks:
       RELEASE_VERSION: '{{.RELEASE_VERSION | default "0.0.0"}}'
     cmds:
       - node scripts/prove-release-install.js dist "{{.RELEASE_VERSION}}"
+  release:source:check:
+    desc: Require an anonymously accessible published source tag before releasing
+    requires:
+      vars: [RELEASE_VERSION]
+    cmds:
+      - bash scripts/check-release-source.sh "{{.RELEASE_VERSION}}"
   release:compatibility:
     desc: Prove the pinned publisher queue/staging/AUR contract without publishing (needs rpm, dpkg-deb)
     requires:

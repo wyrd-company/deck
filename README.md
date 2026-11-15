@@ -77,11 +77,12 @@ Until a baseline release tag exists, the intentional check uses `intentional sta
 Homebrew formula in `dist/`, without publishing. `task release:compatibility
 PUBLISHER_ROOT=/path/to/repo.wyrd.foo` additionally exercises the pinned
 publisher's validation, immutable queue, package staging and AUR rendering.
+The compatibility task needs `rpm`, `dpkg-deb`, and a clean publisher checkout at
+the configured `PUBLISHER_COMMIT`; that pin already admits deck. Its source-tag
+provenance check requires the version's tag to be published and anonymously
+accessible. An unpublished snapshot stops at `cannot resolve source tag`.
 `task release:install:check` proves a packed npm install using local snapshot bytes
 in place of the HTTPS download; run that proof on a disposable machine.
-It needs `rpm` and `dpkg-deb`, and a clean publisher checkout at the configured
-`PUBLISHER_COMMIT`. The current pin's product allowlist must admit deck before
-that gate can pass; it is an external release prerequisite.
 
 `task image:build VERSION=dev` builds and loads the service image locally.
 `task image:build:multiarch` writes `dist/deck-image.tar` as a multi-arch OCI
@@ -95,6 +96,14 @@ sets hostile home/user/config/proxy/Vault variables, and compares actual CLI
 config lookup to the macOS directory service. Linux has `task config:home:check`.
 
 ## Releases
+
+The repository must be public before the first release tag. The publisher,
+Homebrew, npm installer and AUR fetch source tags and release assets without deck
+credentials. Repository visibility is the operator's decision. The release gate
+resolves the tag anonymously from outside the checkout with inherited credentials
+and Git configuration removed, and refuses a private repository or a missing tag
+before any publishing job can run. Run `task release:source:check
+RELEASE_VERSION=1.2.3` to check an existing tag without publishing anything.
 
 [Intentional](https://intentional.foo/) is the version and release mechanism.
 Record a user-visible change with `intentional add --release-unit deck:patch
@@ -112,8 +121,9 @@ intentional tag --plan release-plan.json
 Keep the saved plan outside tracked files. Never create release tags by hand.
 A main-branch push publishes nothing. A release-tag push:
 
-1. Validates intentional's changelog notes and proves the pinned repo.wyrd.foo
-   publisher contract before any publishing job can run.
+1. Checks anonymous source-tag access, validates intentional's changelog notes,
+   and proves the pinned repo.wyrd.foo publisher contract before any publishing
+   job can run.
 2. Creates the GitHub release with Linux/macOS archives, DEB/RPM packages,
    `checksums.txt`, and notes extracted from `CHANGELOG.md`.
 3. Publishes the multi-arch GHCR image (`:<version>` and `:latest`), generated
