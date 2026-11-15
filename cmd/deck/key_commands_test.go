@@ -26,6 +26,8 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
+const keyCommandToken = "DECK-TOKEN-MUST-NOT-APPEAR-IN-OUTPUT"
+
 func TestKeyCommands(t *testing.T) {
 	public, private, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -111,7 +113,12 @@ func keyConfig(t *testing.T, kind, address string) string {
 	if err := yaml.Unmarshal(raw, &document); err != nil {
 		t.Fatal(err)
 	}
-	document["vault"] = map[string]any{"address": address, "timeout": "1s"}
+	directory := t.TempDir()
+	tokenPath := filepath.Join(directory, "token")
+	if err := os.WriteFile(tokenPath, []byte(keyCommandToken), 0600); err != nil {
+		t.Fatal(err)
+	}
+	document["vault"] = map[string]any{"address": address, "timeout": "1s", "auth": map[string]any{"token_file": tokenPath}}
 	if kind == "client" {
 		document["key"] = map[string]any{"mount": "identities", "name": "agent"}
 	} else {
@@ -121,7 +128,7 @@ func keyConfig(t *testing.T, kind, address string) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	path := filepath.Join(t.TempDir(), "config.yml")
+	path := filepath.Join(directory, "config.yml")
 	if err := os.WriteFile(path, raw, 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -160,7 +167,7 @@ func TestKeyCommandFailures(t *testing.T) {
 		if kind == "service" {
 			words = []string{"service", "host-key"}
 		}
-		cases := []string{"forbidden", "unreachable", "invalid-config", "invalid-key"}
+		cases := []string{"forbidden", "server-error", "redirect", "unreachable", "invalid-config", "invalid-key"}
 		if kind == "service" {
 			for name := range invalidHosts {
 				cases = append(cases, name)
@@ -174,16 +181,33 @@ func TestKeyCommandFailures(t *testing.T) {
 					body = secret
 				}
 				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					token := r.Header.Get("X-Vault-Token")
+					if token != keyCommandToken {
+						t.Error("fake Vault did not receive configured token")
+					}
+					if name == "redirect" {
+						w.Header().Set("Location", "/"+token)
+						w.WriteHeader(http.StatusTemporaryRedirect)
+						return
+					}
+					if name == "server-error" {
+						w.WriteHeader(http.StatusInternalServerError)
+						_, _ = io.WriteString(w, secret+token)
+						return
+					}
 					if name == "forbidden" {
 						w.WriteHeader(http.StatusForbidden)
-						_, _ = io.WriteString(w, secret)
+						_, _ = io.WriteString(w, secret+token)
 						return
 					}
 					if kind == "client" {
-						_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"type": secret}})
+						_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"type": secret + token}})
 						return
 					}
 					raw := body
+					if name == "invalid-key" {
+						raw += token
+					}
 					data := map[string]any{"private": raw}
 					if name == "missing-host-field" {
 						data = map[string]any{"other": secret}
@@ -193,6 +217,9 @@ func TestKeyCommandFailures(t *testing.T) {
 				defer server.Close()
 				path := keyConfig(t, kind, server.URL)
 				code, category := 1, "failed"
+				if name == "redirect" {
+					code, category = 4, "unavailable"
+				}
 				if name == "unreachable" {
 					server.Close()
 					code, category = 4, "unavailable"
@@ -214,7 +241,7 @@ func TestKeyCommandFailures(t *testing.T) {
 						t.Fatalf("status %d want %d: %s%s", got, code, stdout.String(), stderr.String())
 					}
 					combined := stdout.String() + stderr.String()
-					for _, forbidden := range []string{secret, body, "PRIVATE KEY", "test-passphrase"} {
+					for _, forbidden := range []string{secret, body, keyCommandToken, "PRIVATE KEY", "test-passphrase"} {
 						if forbidden != "" && strings.Contains(combined, forbidden) {
 							t.Fatal("failure output leaked upstream or key material")
 						}
