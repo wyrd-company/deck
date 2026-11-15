@@ -47,7 +47,7 @@ func (l *channelListener) Accept() (net.Conn, error) {
 }
 func (l *channelListener) Close() error   { return nil }
 func (l *channelListener) Addr() net.Addr { return &net.TCPAddr{} }
-func sshFakeDial(t *testing.T, f *fake) (Dial, string) {
+func sshFakeDial(t *testing.T, f *fake) (Dial, string, func() string) {
 	t.Helper()
 	_, clientPrivate, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -74,11 +74,12 @@ func sshFakeDial(t *testing.T, f *fake) (Dial, string) {
 	pb.RegisterDeckServiceServer(server, f)
 	go server.Serve(grpcListener)
 	t.Cleanup(func() { listener.Close(); close(grpcListener.done); server.Stop() })
+	var authenticated atomic.Value
 	serverConfig := &ssh.ServerConfig{PublicKeyCallback: func(meta ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
 		if meta.User() != "deck" || string(key.Marshal()) != string(clientSigner.PublicKey().Marshal()) {
 			return nil, errors.New("unknown key")
 		}
-		return &ssh.Permissions{}, nil
+		return &ssh.Permissions{Extensions: map[string]string{"fingerprint": ssh.FingerprintSHA256(key)}}, nil
 	}}
 	serverConfig.AddHostKey(hostSigner)
 	go func() {
@@ -94,6 +95,7 @@ func sshFakeDial(t *testing.T, f *fake) (Dial, string) {
 					return
 				}
 				defer conn.Close()
+				authenticated.Store(conn.Permissions.Extensions["fingerprint"])
 				go ssh.DiscardRequests(requests)
 				for next := range channels {
 					if next.ChannelType() != "session" {
@@ -157,13 +159,17 @@ func sshFakeDial(t *testing.T, f *fake) (Dial, string) {
 			return Connection{}, err
 		}
 		return Connection{API: pb.NewDeckServiceClient(conn), Fingerprint: fingerprint, Close: func() error { conn.Close(); return client.Close() }}, nil
-	}, fingerprint
+	}, fingerprint, func() string { value, _ := authenticated.Load().(string); return value }
 }
 func TestCommandsOverSSH(t *testing.T) {
 	f := setup(t)
-	dial, key := sshFakeDial(t, f.fake)
+	dial, key, authenticated := sshFakeDial(t, f.fake)
 	f.fake.post = func(_ context.Context, r *pb.PostRequest) (*pb.PostResponse, error) {
-		own, err := f.open().Own(ss(), key, r.Nonce)
+		serverKey := authenticated()
+		if serverKey == "" || serverKey != key {
+			t.Errorf("server authenticated %q, connection reports %q", serverKey, key)
+		}
+		own, err := f.open().Own(ss(), serverKey, r.Nonce)
 		if err != nil || !own {
 			t.Errorf("authenticated fingerprint not pre-recorded: %v %v", own, err)
 		}

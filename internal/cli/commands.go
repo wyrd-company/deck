@@ -205,14 +205,14 @@ func (i *invocation) send(ctx context.Context) error {
 	}
 	if pollError != "" {
 		i.result["poll_error"] = pollError
-		fmt.Fprintln(i.app.Stderr, "deck: poll: "+pollError)
+		fmt.Fprintln(i.app.Stderr, "deck: poll: "+line(pollError))
 	}
 	role := "created"
 	if channel != nil {
-		fmt.Fprintf(&i.text, "posted %d in %s/%d\n%s\n", t.ThreadId, t.Bot, t.ChannelId, threadURL(t))
+		fmt.Fprintf(&i.text, "posted %d in %s/%d\n%s\n", t.ThreadId, line(t.Bot), t.ChannelId, line(threadURL(t)))
 	} else {
 		role = "replied"
-		fmt.Fprintf(&i.text, "replied %d in %d\n%s/%d\n", message.Id, t.ThreadId, threadURL(t), message.Id)
+		fmt.Fprintf(&i.text, "replied %d in %d\n%s/%d\n", message.Id, t.ThreadId, line(threadURL(t)), message.Id)
 	}
 	if err = i.client.Store.Sent(i.client.Session, i.client.Fingerprint, nonce, role, t, message.Id, position); err != nil {
 		return fmt.Errorf("message sent, but could not record local store result: %w", err)
@@ -284,7 +284,7 @@ func (i *invocation) inbox(ctx context.Context) error {
 		if c.State != pb.ThreadState_THREAD_STATE_TOUCHED.String() {
 			count = c.State
 		}
-		fmt.Fprintf(&i.text, "%s %d %s/%d %s\n", count, t.Info.ThreadId, t.Info.Bot, t.Info.ChannelId, t.Info.Name)
+		fmt.Fprintf(&i.text, "%s %d %s/%d %s\n", count, t.Info.ThreadId, line(t.Info.Bot), t.Info.ChannelId, line(t.Info.Name))
 	}
 	i.result["threads"] = rows
 	return nil
@@ -354,7 +354,7 @@ func (i *invocation) channels(ctx context.Context) error {
 				break
 			}
 		}
-		fmt.Fprintf(&i.text, "%s/%d %d %s / %s%s\n", c.Bot, c.ChannelId, c.Type, c.ServerName, c.Name, alias)
+		fmt.Fprintf(&i.text, "%s/%d %s %s / %s%s\n", line(c.Bot), c.ChannelId, channelType(c.Type), line(c.ServerName), line(c.Name), line(alias))
 	}
 	i.result["channels"] = channels
 	return nil
@@ -397,7 +397,7 @@ func (i *invocation) resolve() error {
 	for _, s := range sessions {
 		values := []string{}
 		for _, identifier := range s.Identifiers {
-			values = append(values, identifier.Name+"="+identifier.Value)
+			values = append(values, line(identifier.Name)+"="+line(identifier.Value))
 		}
 		i.text.WriteString(strings.Join(values, " ") + "\n")
 	}

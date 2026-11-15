@@ -40,6 +40,10 @@ type Connection struct {
 	Fingerprint string
 	Close       func() error
 }
+
+// Dial bounds only connection establishment with its context. A successful
+// connection must remain usable after that context is cancelled, until Close.
+// Per-RPC deadlines and listen cancellation are managed by the CLI.
 type Dial func(context.Context, *config.Client) (Connection, error)
 
 // DefaultDial is wired by the transport command adapter (task 5).
@@ -105,7 +109,7 @@ func (a App) Run(ctx context.Context, args []string) int {
 		return a.skillWithoutConfig(f)
 	}
 	if err != nil {
-		return a.error(invalid("%v", err), jsonMode)
+		return a.error(configurationError(path, err), jsonMode)
 	}
 	if f.command == "resolve" {
 		return a.runResolve(f, cfg)
@@ -159,7 +163,7 @@ func (a App) error(err error, jsonMode bool) int {
 		json.NewEncoder(a.Stdout).Encode(map[string]any{"error": map[string]string{"category": category(code), "message": err.Error()}})
 	} else {
 		for _, line := range strings.Split(err.Error(), "\n") {
-			fmt.Fprintln(a.Stderr, "deck: "+line)
+			fmt.Fprintln(a.Stderr, "deck: "+terminalText(line, false))
 		}
 	}
 	return code
@@ -220,7 +224,7 @@ func (i *invocation) reportUnread(ctx context.Context) {
 	if err != nil {
 		i.result["unread"] = map[string]string{"error": err.Error()}
 		if !i.flags.has("json") {
-			fmt.Fprintf(i.app.Stderr, "unread: unknown (%s)\n", err)
+			fmt.Fprintf(i.app.Stderr, "unread: unknown (%s)\n", line(err.Error()))
 		}
 		return
 	}
@@ -291,4 +295,16 @@ func validateFlags(f flags) error {
 		return invalid("use only one of --after and --before")
 	}
 	return nil
+}
+
+func configurationError(path string, err error) error {
+	var fields config.Errors
+	if errors.As(err, &fields) {
+		lines := make([]string, 0, len(fields))
+		for _, field := range fields {
+			lines = append(lines, path+": "+field.Error())
+		}
+		return invalid("%s\nRun deck config validate --config %s to inspect configuration.", strings.Join(lines, "\n"), path)
+	}
+	return invalid("%s: %v; check the path and run deck config validate --config %s", path, err, path)
 }

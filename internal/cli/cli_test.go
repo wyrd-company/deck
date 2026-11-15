@@ -620,7 +620,7 @@ func TestHistoryChannelsSkillResolveAndText(t *testing.T) {
 		t.Fatal(result)
 	}
 	code, out, err := f.run("channels")
-	if code != 0 || out != "helper/2 15 Team / questions [team]\n" || err != "unread: none\n" {
+	if code != 0 || out != "helper/2 forum Team / questions [team]\n" || err != "unread: none\n" {
 		t.Fatalf("%d %q %q", code, out, err)
 	}
 	result = f.result("skill")
@@ -899,18 +899,68 @@ func TestReadLeavesUntouchedCursor(t *testing.T) {
 	}
 }
 func TestOutputContainsNoConfigurationSecrets(t *testing.T) {
-	f := setup(t)
-	f.seed()
-	secret := "do-not-print-token-123"
-	f.doc["vault"].(map[string]any)["auth"] = map[string]any{"token_file": filepath.Join(t.TempDir(), secret)}
-	f.save()
-	t.Setenv("VAULT_TOKEN", secret)
-	t.Setenv("DECK_UNCONFIGURED", secret)
-	for _, args := range [][]string{{"channels"}, {"channels", "--json"}, {"inbox", "--json"}, {"resolve", "10", "--json"}, {"skill", "--json"}} {
-		code, out, err := f.run(args...)
-		if code != 0 || strings.Contains(out+err, secret) || strings.Contains(out+err, "PRIVATE KEY") || strings.Contains(out+err, "vault:v1:") {
-			t.Fatal(code, out, err)
-		}
+	for _, failureCode := range []codes.Code{codes.OK, codes.Unavailable, codes.PermissionDenied, codes.InvalidArgument, codes.Internal} {
+		t.Run(failureCode.String(), func(t *testing.T) {
+			f := setup(t)
+			f.seed()
+			token := "do-not-print-token-123"
+			signature := "vault:v42:ZmFrZS1zaWduYXR1cmUtZm9yLXJlZGFjdGlvbi10ZXN0"
+			tokenFile := filepath.Join(t.TempDir(), "vault-token")
+			if err := os.WriteFile(tokenFile, []byte(token), 0600); err != nil {
+				t.Fatal(err)
+			}
+			f.doc["vault"].(map[string]any)["auth"] = map[string]any{"token_file": tokenFile}
+			f.save()
+			t.Setenv("VAULT_TOKEN", token)
+			t.Setenv("DECK_UNCONFIGURED", signature)
+			if failureCode != codes.OK {
+				fail := status.Error(failureCode, "service failed; inspect configuration")
+				f.fake.post = func(context.Context, *pb.PostRequest) (*pb.PostResponse, error) { return nil, fail }
+				f.fake.reply = func(context.Context, *pb.ReplyRequest) (*pb.ReplyResponse, error) { return nil, fail }
+				f.fake.channels = func(context.Context, *pb.ListChannelsRequest) (*pb.ListChannelsResponse, error) { return nil, fail }
+				f.fake.count = func(context.Context, *pb.CountUnreadRequest) (*pb.CountUnreadResponse, error) { return nil, fail }
+				f.fake.list = func(context.Context, *pb.ListUnreadRequest) (*pb.ListUnreadResponse, error) { return nil, fail }
+				f.fake.history = func(context.Context, *pb.ListHistoryRequest) (*pb.ListHistoryResponse, error) { return nil, fail }
+				f.fake.listen = func(*pb.ListenRequest, grpc.ServerStreamingServer[pb.ListenResponse]) error { return fail }
+			}
+			for _, command := range [][]string{{"post", "--title", "Q", "--text", "hello"}, {"reply", "10", "--text", "hello"}, {"inbox"}, {"read", "--keep-unread"}, {"history", "10"}, {"listen", "--keep-unread", "--timeout", "1s"}, {"channels"}, {"resolve", "10"}, {"skill"}} {
+				for _, jsonMode := range []bool{false, true} {
+					args := append([]string{}, command...)
+					if jsonMode {
+						args = append(args, "--json")
+					}
+					code, out, errout := f.run(args...)
+					want := 0
+					if failureCode != codes.OK && command[0] != "resolve" && command[0] != "skill" {
+						want = exitCode(status.Error(failureCode, "failure"))
+						if (command[0] == "post" || command[0] == "reply") && unknownSend(status.Error(failureCode, "failure")) {
+							want = 4
+						}
+					}
+					if code != want {
+						t.Fatalf("%v code %d want %d: %s %s", args, code, want, out, errout)
+					}
+					for _, secret := range []string{token, signature, "vault:v42:", "PRIVATE KEY", "ZmFrZS1zaWduYXR1cmUtZm9yLXJlZGFjdGlvbi10ZXN0"} {
+						if strings.Contains(out+errout, secret) {
+							t.Fatalf("credential material reached %v output", args)
+						}
+					}
+					if jsonMode {
+						var value map[string]any
+						if err := json.Unmarshal([]byte(out), &value); err != nil {
+							t.Fatal(err, out)
+						}
+					}
+				}
+			}
+			for _, args := range [][]string{{"post", "--title", "Q"}, {"reply", "10"}, {"read", "missing"}, {"listen", "--timeout", "bad"}, {"inbox", "--config", filepath.Join(t.TempDir(), "missing")}, {"resolve", "--event", "-"}} {
+				f.input = `{}`
+				code, out, errout := f.run(args...)
+				if code != 2 || strings.Contains(out+errout, token) || strings.Contains(out+errout, signature) {
+					t.Fatalf("invalid %v: %d %s %s", args, code, out, errout)
+				}
+			}
+		})
 	}
 }
 
@@ -1115,6 +1165,55 @@ func TestSendStatesAndFailedRepeat(t *testing.T) {
 					}
 				}
 			})
+		}
+	}
+}
+
+func TestTextEscapesUntrustedControls(t *testing.T) {
+	f := setup(t)
+	f.seed()
+	bad := "name\nforged\r\x1b[31m"
+	thread := *baseThread
+	thread.Name = bad
+	if err := f.open().Sent(ss(), keyA, "original", "created", &thread, 107, &pb.StreamPosition{Epoch: 100, Sequence: 5}); err != nil {
+		t.Fatal(err)
+	}
+	f.fake.count = func(context.Context, *pb.CountUnreadRequest) (*pb.CountUnreadResponse, error) {
+		return &pb.CountUnreadResponse{Threads: []*pb.ThreadCount{touched(1)}}, nil
+	}
+	a := person(12, 9, "first\nsecond\r\x1b[31m")
+	a.Author.Username = bad
+	a.GetMessage().Attachments = []*pb.Attachment{{Filename: bad, Url: "https://example.com/\rfile", Size: 1}}
+	f.fake.list = func(context.Context, *pb.ListUnreadRequest) (*pb.ListUnreadResponse, error) {
+		return &pb.ListUnreadResponse{Activity: []*pb.Activity{a}, Threads: []*pb.ThreadCount{touched(1)}, Through: &pb.StreamPosition{Epoch: 100, Sequence: 9}}, nil
+	}
+	for _, args := range [][]string{{"inbox"}, {"read", "--keep-unread"}} {
+		code, out, err := f.run(args...)
+		if code != 0 || strings.ContainsAny(out+err, "\r\x1b") || strings.Contains(out, "name\nforged") || !strings.Contains(out, `name\nforged\r\u001b[31m`) {
+			t.Fatalf("%v: %d %q %q", args, code, out, err)
+		}
+	}
+	code, out, err := f.run("read", "--keep-unread")
+	if code != 0 || !strings.Contains(out, "  first\n  second\\r\\u001b[31m") {
+		t.Fatal(code, out, err)
+	}
+	result := f.result("read", "--keep-unread")
+	if result["activity"].([]any)[0].(map[string]any)["message"].(map[string]any)["content"] != a.GetMessage().Content {
+		t.Fatal("JSON content changed", result)
+	}
+}
+func TestSessionConfigurationErrorsNameFileAndFix(t *testing.T) {
+	f := setup(t)
+	delete(f.doc, "key")
+	f.save()
+	for _, jsonMode := range []bool{false, true} {
+		args := []string{"inbox"}
+		if jsonMode {
+			args = append(args, "--json")
+		}
+		code, out, err := f.run(args...)
+		if code != 2 || !strings.Contains(out+err, f.path+": key: required field is missing") || !strings.Contains(out+err, "deck config validate --config ") {
+			t.Fatal(code, out, err)
 		}
 	}
 }

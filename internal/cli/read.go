@@ -187,7 +187,7 @@ func (i *invocation) renderActivities(activity []*pb.Activity, metadata map[uint
 		if t := metadata[id]; t != nil {
 			title = t.Name
 		}
-		fmt.Fprintf(&i.text, "## %s (%d)\n", title, id)
+		fmt.Fprintf(&i.text, "## %s (%d)\n", line(title), id)
 		for _, a := range groups[id] {
 			author := a.GetAuthor().GetDisplayName()
 			if author == "" {
@@ -204,10 +204,10 @@ func (i *invocation) renderActivities(activity []*pb.Activity, metadata map[uint
 			if a.GetPollVote() != nil {
 				kind = "poll_vote"
 			}
-			fmt.Fprintf(&i.text, "%s %s %s %d\n", when, author, kind, a.Id)
+			fmt.Fprintf(&i.text, "%s %s %s %d\n", when, line(author), kind, a.Id)
 			if m := a.GetMessage(); m != nil {
 				if m.Content != "" {
-					i.text.WriteString("  " + strings.ReplaceAll(m.Content, "\n", "\n  ") + "\n")
+					i.text.WriteString("  " + strings.ReplaceAll(terminalText(m.Content, true), "\n", "\n  ") + "\n")
 				}
 				for _, embed := range m.Embeds {
 					fields := embed.GetFields()
@@ -215,23 +215,23 @@ func (i *invocation) renderActivities(activity []*pb.Activity, metadata map[uint
 					if label == "" {
 						label = fields["author"].GetStructValue().GetFields()["name"].GetStringValue()
 					}
-					fmt.Fprintf(&i.text, "  embed: %s\n", label)
+					fmt.Fprintf(&i.text, "  embed: %s\n", line(label))
 				}
 				for _, f := range m.Attachments {
-					fmt.Fprintf(&i.text, "  attachment: %s %d %s\n", f.Filename, f.Size, f.Url)
+					fmt.Fprintf(&i.text, "  attachment: %s %d %s\n", line(f.Filename), f.Size, line(f.Url))
 				}
 				if p := m.Poll; p != nil {
-					fmt.Fprintf(&i.text, "  poll: %s\n", p.Question)
+					fmt.Fprintf(&i.text, "  poll: %s\n", line(p.Question))
 					for _, answer := range p.Answers {
-						fmt.Fprintf(&i.text, "  answer: %d %s\n", answer.AnswerId, answer.Text)
+						fmt.Fprintf(&i.text, "  answer: %d %s\n", answer.AnswerId, line(answer.Text))
 					}
 				}
 			}
 			if c := a.GetComponent(); c != nil {
 				if len(c.Values) > 0 {
-					fmt.Fprintf(&i.text, "  chose %s in %s on %d\n", strings.Join(c.Values, ", "), c.CustomId, c.MessageId)
+					fmt.Fprintf(&i.text, "  chose %s in %s on %d\n", line(strings.Join(c.Values, ", ")), line(c.CustomId), c.MessageId)
 				} else {
-					fmt.Fprintf(&i.text, "  pressed %s on %d\n", c.CustomId, c.MessageId)
+					fmt.Fprintf(&i.text, "  pressed %s on %d\n", line(c.CustomId), c.MessageId)
 				}
 			}
 			if p := a.GetPollVote(); p != nil {
