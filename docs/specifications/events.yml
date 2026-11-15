@@ -13,8 +13,8 @@ description: >-
   a touched thread, and nothing for any other thread. Only the thread's bot
   publishes: when several of deck's bots can see a touched thread, the others
   ignore it. Activity on the starter message of a thread started in a text or
-  announcement channel (a poll vote or component use on it, its poll result,
-  a reply to it in the channel) belongs to that thread.
+  announcement channel (a poll vote or component use on it, and its poll
+  result) belongs to that thread.
 
 
   The subject is `<prefix>.<server id>.<channel id>.<thread id>`, with each
@@ -42,11 +42,12 @@ description: >-
   the API returns current ones.
 
 
-  Every event carries these headers. `Nats-Msg-Id` is `message:<id>` or
-  `component:<id>` with the Discord snowflake, and for a poll vote
-  `poll_vote:<message id>:<user id>:<answer id>:<add|remove>`, which does not
-  depend on the service's clock, so JetStream drops a repeat within the
-  stream's duplicate window from any publisher. `Deck-Kind` is `message`,
+  Every event carries these headers. `Nats-Msg-Id` is `<kind>:<activity id>`:
+  a message's or interaction's Discord snowflake, or a poll vote's snowflake
+  that the service made when the vote arrived, so each vote, a repeated one
+  included, is its own event, and JetStream drops a repeat publish of one
+  activity within the stream's duplicate window. Each thread has one
+  publisher, its bot, so no activity is published under two identifiers. `Deck-Kind` is `message`,
   `component` or `poll_vote`. `Deck-Activity-Id` is the activity's snowflake.
   `Deck-Message-Type` is the Discord message type, on messages only.
   `Deck-Sent-By` is the client key's name and `Deck-Nonce` the client's nonce,
@@ -79,9 +80,11 @@ validation-criteria: >-
   shows the subject, every header, de-duplication of a repeated activity, and
   that activity in a thread nobody touched publishes nothing. Against a fake
   Discord it also shows: two bots that see one touched thread publish each
-  message once, with `sent_by`, and one poll vote seen by both once; a poll
-  vote, a component use and a reply on a text channel post's starter message
-  published on the thread's subject; and recovery after a restart publishing,
+  message once, with `sent_by`, and one poll vote seen by both once; a vote
+  added, removed and added again within the duplicate window as three events;
+  a deck reply whose REST call outlasts the settling buffer published with
+  `sent_by` and nonce from its gateway copy; a poll vote and a component use
+  on a text channel post's starter message published on the thread's subject; and recovery after a restart publishing,
   once each, the messages sent while the service was down, in a thread that
   stayed active and in one that archived again, with live messages during
   recovery and a crash in the middle of it leaving none behind.

@@ -60,8 +60,10 @@ message ChannelRef {
 
 // ThreadRef names a thread. A touched thread has one bot, the one that first
 // touched it through deck, and every call on it uses that bot: the bot may be
-// empty, and naming another bot is INVALID_ARGUMENT. For a thread not touched
-// the bot may be empty when the calling key's grants name exactly one bot.
+// empty, and naming another bot is INVALID_ARGUMENT for a key granted the
+// thread through its bot (PERMISSION_DENIED for any other key). For a thread
+// not touched the bot may be empty when the calling key's grants name exactly
+// one bot.
 message ThreadRef {
   string bot = 1;
   uint64 thread_id = 2;
@@ -152,10 +154,10 @@ message PostRequest {
   repeated string tags = 3;
   Content content = 4;
   // The client's identifier for this send: 1 to 25 letters and digits,
-  // unique per send. A repeat with the same nonce from the same key within 10
-  // minutes returns the first call's result and sends nothing. The nonce
-  // travels on the published message, so the client recognises its own
-  // messages by it.
+  // unique per send. A repeat with the same nonce from the same key returns
+  // the first call's result when that call is in flight or succeeded, as the
+  // gRPC API specification sets out, and sends nothing. The nonce travels on
+  // the published message, so the client recognises its own messages by it.
   string nonce = 5;
 }
 
@@ -176,7 +178,8 @@ message ReplyRequest {
   // When set, the reply is a Discord reply to this message in the thread.
   uint64 reply_to_message_id = 3;
   // As PostRequest.nonce. The service also sends it to Discord as the
-  // message nonce with enforce_nonce, so Discord drops a repeat as well.
+  // message nonce with enforce_nonce, so Discord answers a repeat with the
+  // first message.
   string nonce = 4;
 }
 

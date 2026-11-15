@@ -87,23 +87,25 @@ proposed-design:
     any value below 2^63. Times are RFC 3339 in UTC.
   recording: >-
     Before every post or reply, the client generates a nonce of 20 random
-    letters and digits and, in one transaction, upserts the session and
-    inserts a `pending` send with the nonce (and the thread for a reply). Only
-    then does it call the service, so any event of that message finds the send
-    already recorded. After a successful post, one transaction inserts the
-    thread, inserts the session thread with role `created`, the cursor at the
-    position the response carries and touched_at now, and marks the send
-    `sent` with its thread and message. After a successful reply, one
-    transaction upserts the thread, inserts the session thread with role
-    `replied` and the cursor at the response's position when the session held
-    none for it, sets touched_at to now, and marks the send `sent`. A call
-    whose outcome is unknown (a lost connection or a deadline after the
-    request left) is sent once more with the same nonce, which the service and
-    Discord answer without a second send; if that also fails, the send stays
-    `pending`, and the command reports that the outcome is unknown and exits
-    4. A send the service refused is marked `failed`. A post or reply that the
-    service performed but the store failed to record reports the message and
-    exits 1, naming the store failure.
+    letters and digits, or takes the one `--nonce` gives, and, in one
+    transaction, upserts the session and inserts a `pending` send with the
+    nonce (and the thread for a reply), or finds that send already recorded
+    for a repeat. Only then does it call the service, so any event of that
+    message finds the send already recorded. After a successful post, one
+    transaction inserts the thread, inserts the session thread with role
+    `created`, the cursor at the position the response carries and touched_at
+    now, and marks the send `sent` with its thread and message. After a
+    successful reply, one transaction upserts the thread, inserts the session
+    thread with role `replied` and the cursor at the response's position when
+    the session held none for it, sets touched_at to now, and marks the send
+    `sent`. A call whose outcome is unknown (a lost connection or a deadline
+    after the request left) is sent once more with the same nonce, which the
+    service answers with the first result; if that also fails, the send stays
+    `pending`, and the command reports that the outcome is unknown with the
+    nonce and the command that repeats it with `--nonce`, and exits 4. A send
+    the service refused is marked `failed`. A post or reply that the service
+    performed but the store failed to record reports the message and exits 1,
+    naming the store failure.
   cursors-and-unread: >-
     For a set of threads, the client builds one Cursor per thread from the
     session's cursor_epoch and cursor_sequence. The unread report sends the
@@ -115,11 +117,12 @@ proposed-design:
     cursor to the position of the last activity it received for that thread,
     own messages included, with one `UPDATE session_threads SET cursor_epoch =
     ?, cursor_sequence = ? WHERE session_key = ? AND thread_id = ? AND
-    (cursor_epoch < ? OR (cursor_epoch = ? AND cursor_sequence < ?))`, so that
-    a cursor never moves to an earlier position even when two processes read
-    at once, and moves to a recreated stream's positions, whose epoch is
-    greater. A thread whose count carries horizon_passed is reported with a
-    note that older activity may have left the stream, naming `deck history`.
+    (cursor_epoch <> ? OR cursor_sequence < ?)`, so that within one epoch a
+    cursor never moves to an earlier position even when two processes read at
+    once, and a cursor moves to the positions of whatever stream now holds the
+    thread, recreated or restored. A thread whose count carries horizon_passed
+    is reported with a note that older activity may have left the stream,
+    naming `deck history`.
   listen: >-
     Listen sends the threads' cursors to the Listen call and reads responses
     until one carries activity whose nonce is not one of the session's sends,

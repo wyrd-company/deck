@@ -85,10 +85,12 @@ aggregates:
         publishes the first message.
       reply: >-
         Sends a message into a thread whose parent is granted. The service adds
-        the replying key to the thread's entry before it sends the message, so
-        nothing after the reply can go unpublished, and keeps the key there
-        whether or not the send succeeds: an attempted reply touches the
-        thread.
+        the replying key to the thread's entry, as pending, before it sends the
+        message, so nothing after the reply can go unpublished, and marks it
+        sent when the send succeeds. A failed send removes the key only while
+        it is still pending and no other send by that key into the thread is
+        in flight, so a failed attempt touches nothing and never undoes a
+        concurrent success.
       read-history: >-
         Returns messages from Discord with an after or before message
         snowflake. Any thread whose parent is granted can be read by its
@@ -103,7 +105,10 @@ aggregates:
         touched it. Events on the stream cover every touched thread, and who
         may subscribe to them is NATS authorization.
       - A thread has one bot. A call that names another bot for a touched
-        thread is refused, and only the thread's bot publishes its events.
+        thread is refused, and only the thread's bot publishes its events. A
+        thread whose bot is no longer configured, or can no longer see it,
+        produces nothing and refuses calls until its registry entry expires or
+        is deleted.
       - A message's content is text, user and role mentions, embeds,
         components, a poll and files, in Discord's limits; an optional persona
         sets the author of a leading embed that holds the text, and mentions
@@ -124,8 +129,7 @@ aggregates:
       greater snowflake. For a thread started from a message in a text or
       announcement channel, the starter message lives in the parent channel
       under the thread's own snowflake; activity on it (a poll vote or
-      component use on it, its poll result, a reply to it in the channel)
-      belongs to the thread.
+      component use on it, and its poll result) belongs to the thread.
     identity: The activity's snowflake.
     commands:
       acknowledge: >-
@@ -164,11 +168,11 @@ aggregates:
         every message, records its snowflake and the time.
       mark-read: >-
         Moves the cursor to the position of the last activity the session was
-        shown, never to an earlier one.
+        shown, never to an earlier one in the same stream.
       resolve: >-
         Returns the identifiers of every session related to a thread.
     invariants:
-      - A cursor never moves to an earlier position.
+      - Within one stream, a cursor never moves to an earlier position.
       - A message the session sent is never unread for that session, and never
         wakes it, whenever it reaches the stream.
       - Session affinity is stored only here, never on the service.

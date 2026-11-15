@@ -13,7 +13,9 @@ description: >-
   last seen, and publishes them.
   Component uses and poll votes in the gap cannot be read back from Discord,
   so they never reach the stream, and a person who pressed a button during
-  the gap saw "This interaction failed". Mitigation: disgo resumes sessions
+  the gap saw "This interaction failed". The same holds for the poll result
+  Discord posts in a text channel for a text channel post's starter message,
+  since recovery reads threads and not their parent channels. Mitigation: disgo resumes sessions
   where Discord allows, the healthcheck fails while a session is down so the
   container runtime can act, and the poll itself still shows every vote in
   Discord. Accepted for component uses.

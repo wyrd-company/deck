@@ -6,8 +6,9 @@ description: >-
   at a later position is after the cursor, so activity that reaches the stream
   late is still unread. A post or a session's first reply starts the cursor at
   the position the service returns for that message. Reading without keeping
-  unread moves it to the position of the last activity read, and it never
-  moves to an earlier position.
+  unread moves it to the position of the last activity read; within one
+  stream it never moves to an earlier position, and when the stream is
+  replaced it moves to the new stream's positions.
 terms:
   - activity
   - unread

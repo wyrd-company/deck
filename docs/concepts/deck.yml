@@ -1,12 +1,14 @@
 $schema: https://refinery.systems/ontology/concept
 relationships:
   assumes:
+    - one-service-instance-per-configuration
     - person-replies-arrive-with-content
     - component-interactions-reach-the-gateway
     - each-bot-fits-one-gateway-session
   exposes:
     - stolen-client-key-acts-within-its-grants
     - gateway-gap-loses-interactions
+    - send-outcome-lost-in-a-service-crash
   references:
     - discord-conversations
     - command-line-interface

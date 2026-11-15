@@ -41,6 +41,8 @@ decision-outcome:
       Excluding by snowflake or by position fails for a message that reaches
       the stream after its session read something newer, or before the sending
       command recorded its result; a nonce recorded first has neither race.
+      Discord returns a message's nonce on its gateway event, so the service
+      tags deck's own replies whichever copy it publishes first.
 expected-outcomes:
   positive:
     - The service holds no session state of any kind.

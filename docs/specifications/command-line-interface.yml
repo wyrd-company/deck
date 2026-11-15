@@ -73,6 +73,9 @@ description: >-
   and `--poll-multiselect` allows several answers. `--file PATH` repeats and
   attaches the file under its base name. `--persona NAME` uses a configured
   persona, `--no-persona` uses none, and otherwise `default_persona` applies.
+  `--nonce NONCE` repeats an earlier send whose outcome was unknown with that
+  send's nonce, so the service returns the first result if the send went
+  through and sends it now if it did not.
   At most one flag reads stdin, and a message needs text, an embed, components,
   a poll or a file.
 
@@ -84,9 +87,9 @@ description: >-
   cursor at the new message. Every post and reply records a nonce for the send
   in the local store before it calls the service. When the outcome of a send
   is unknown, the command sends it once more with the same nonce, which the
-  service and Discord answer without sending twice; if that fails too, it
-  reports `outcome unknown` with the nonce and exits 4, and checking with
-  `deck inbox --all` or `deck history` comes before sending again. Text: `posted 1571484634081529857 in
+  service answers with the first result if the send went through; if that
+  fails too, it reports `outcome unknown`, prints the command that repeats it
+  with `--nonce <nonce>`, and exits 4. Text: `posted 1571484634081529857 in
   helper/1287000000000000002` and the thread URL, on stdout. JSON: `{"thread":
   Thread, "message": Activity, "unread": ...}`, with Thread and Activity in
   the protojson form of the gRPC API.
@@ -191,18 +194,19 @@ description: >-
   holds a bot token, an OpenBao token, a signature or a private key.
 
 
-  Exit statuses are categorical, and every gRPC code maps to one. 0: success.
-  1 (`failed`): INTERNAL, UNAUTHENTICATED, UNKNOWN and every other code not
-  below, a service host key that differs from `service.host_key`, and a local
-  store failure. 2 (`invalid`): a usage error, an invalid configuration, an
-  invalid event, and INVALID_ARGUMENT. 3 (`refused`): a target the allow or
-  deny lists exclude, PERMISSION_DENIED (which also covers a target the bot
-  cannot see), NOT_FOUND (a `--reply-to` message that does not exist),
-  FAILED_PRECONDITION, and a listen with no thread still touched. 4 (`unavailable`): the service, OpenBao
-  or Vault cannot be reached, UNAVAILABLE, RESOURCE_EXHAUSTED, and
-  DEADLINE_EXCEEDED from `service.timeout`. 5 (`timeout`): listen's timeout
-  passed with no activity. 130: interrupted. The JSON error category is the
-  word in backticks.
+  Exit statuses are categorical, and every gRPC code maps to one. 0:
+  success. 1 (`failed`): INTERNAL, UNAUTHENTICATED, UNKNOWN and every other
+  code not below, a service host key that differs from `service.host_key`,
+  and a local store failure. 2 (`invalid`): a usage error, an invalid
+  configuration, an invalid event, and INVALID_ARGUMENT. 3 (`refused`): a
+  target the allow or deny lists exclude, PERMISSION_DENIED (which also
+  covers a target the bot cannot see), NOT_FOUND (a `--reply-to` message
+  that does not exist), FAILED_PRECONDITION, and a listen with no thread
+  still touched. 4 (`unavailable`): the service, OpenBao or Vault cannot be
+  reached, UNAVAILABLE, RESOURCE_EXHAUSTED, DEADLINE_EXCEEDED from
+  `service.timeout`, and a send whose outcome is unknown. 5 (`timeout`):
+  listen's timeout passed with no activity. 130: interrupted. The JSON error
+  category is the word in backticks.
 validation-criteria: >-
   Command tests run every command against a fake service over a real SSH
   connection and check exact text and JSON output, each exit status for the

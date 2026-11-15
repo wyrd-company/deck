@@ -22,9 +22,11 @@ description: >-
   Identifiers are Discord snowflakes in uint64 fields; zero means absent. A
   bot is named by its name in the service configuration. A touched thread has
   one bot, the one that first touched it through deck, and every call on the
-  thread uses it: a reference may leave the bot empty, and a reference that
-  names another bot is INVALID_ARGUMENT naming the thread's bot. Keys share a
-  thread by holding grants on its bot. For a channel, or a thread not touched,
+  thread uses it: a reference may leave the bot empty. The grant check runs
+  against the thread's bot first, so a key without a grant covering the
+  thread through that bot is refused with PERMISSION_DENIED, and only a key
+  with one that named another bot gets INVALID_ARGUMENT naming the thread's
+  bot. Keys share a thread by holding grants on its bot. For a channel, or a thread not touched,
   an empty bot means the one bot the calling key's grants name, and is
   INVALID_ARGUMENT when they name several.
 
@@ -39,12 +41,16 @@ description: >-
   whether the target exists.
 
 
-  Post and Reply carry the client's `nonce`, an identifier for the send. The
-  service remembers each key's nonces for 10 minutes and answers a repeat with
-  the first call's result without sending again; Reply also sends the nonce to
-  Discord with enforce_nonce, so Discord drops a repeat across a service
-  restart. The nonce travels on the published message, and is how a client
-  recognises its own messages in counts, lists and events.
+  Post and Reply carry the client's `nonce`, an identifier for the send. A
+  repeat of a nonce by the same key while the first call is in flight waits
+  for it and returns its result; a repeat within 10 minutes of a success
+  returns that result without sending again; a repeat of a failure runs
+  again. After a service restart, a repeat whose nonce the event stream holds
+  for that key returns that message. Reply and a text channel post also send
+  the nonce to Discord with enforce_nonce, which answers a repeat with the
+  first message; a forum post has no such deduplication in Discord. The nonce
+  travels on the published message, and is how a client recognises its own
+  messages in counts, lists and events.
 
 
   Content carries embeds and components as `google.protobuf.Struct` values
@@ -92,7 +98,8 @@ description: >-
   NOT_GRANTED; neither fails the call. ListUnread returns at most its limit in
   stream order and sets `more` when activity remains; a client that marks
   read moves each cursor to the position of the last activity it received for
-  that thread, and never to an earlier position.
+  that thread, never to an earlier position in the same epoch, and to the
+  current epoch's positions when its epoch differs.
 
 
   Listen answers at once with each thread's state and any unread activity,
@@ -124,8 +131,12 @@ validation-criteria: >-
   JetStream server, and show each error code above for the case that causes
   it, a same-bot wildcard grant on one server refusing a channel of another
   server, an ungranted bot refused before any Discord request, a repeated
-  nonce returning the first result without a second send, a Post whose
-  registry bucket is unreachable creating nothing, and two concurrent replies
-  by one key, one failing, leaving the key's touch in place. A contract test marshals Activity values of each kind with protojson
+  nonce returning the first result without a second send (also while the
+  first is in flight, and for a text channel post repeated after a restart,
+  which takes the thread Discord already started), a Post whose registry
+  bucket is unreachable creating nothing, two concurrent replies by one key,
+  one failing, leaving the key's touch in place, a failed first reply leaving
+  the thread untouched, and a key granted only another bot refused for a
+  touched thread with PERMISSION_DENIED. A contract test marshals Activity values of each kind with protojson
   and proto field names and validates them against
   `assets/events/activity.schema.json`.
