@@ -49,6 +49,7 @@ type fakeDiscord struct {
 	block            <-chan struct{}
 	entered          chan struct{}
 	archived, locked bool
+	metadataStatus   int
 	onSend           func()
 }
 
@@ -73,16 +74,24 @@ func (f *fakeDiscord) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	f.requests = append(f.requests, request{r.Method, r.URL.RequestURI(), body})
 	reject, lose, pollFail, already, block, entered, onSend := f.reject, f.lose, f.pollFail, f.already, f.block, f.entered, f.onSend
 	archived, locked := f.archived, f.locked
+	metadataStatus := f.metadataStatus
 	f.mu.Unlock()
 	w.Header().Set("Content-Type", "application/json")
 	respond := func(v any) { _ = json.NewEncoder(w).Encode(v) }
 	path := r.URL.Path
 	if r.Method == "GET" {
+		if metadataStatus != 0 {
+			w.WriteHeader(metadataStatus)
+			respond(map[string]any{"code": 0, "message": "private upstream error"})
+			return
+		}
 		switch path {
 		case "/channels/10":
 			respond(map[string]any{"id": "10", "guild_id": "1", "type": 15, "name": "forum", "available_tags": []any{map[string]any{"id": "5", "name": "tag"}}})
 		case "/channels/20":
 			respond(map[string]any{"id": "20", "guild_id": "1", "type": 0, "name": "text"})
+		case "/channels/50":
+			respond(map[string]any{"id": "50", "type": 1, "recipients": []any{}})
 		case "/channels/30":
 			respond(map[string]any{"id": "30", "guild_id": "2", "type": 0, "name": "outside"})
 		case "/guilds/1":

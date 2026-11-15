@@ -191,7 +191,7 @@ func (h *Handler) target(ctx context.Context, k config.Key, bot string, id uint6
 	client := h.bots[bot]
 	ch, err := client.Channel(ctx, id)
 	if err != nil {
-		return nil, nil, existing, denied()
+		return nil, nil, existing, discord.Error(err)
 	}
 	e := channelEntry(bot, ch)
 	if !granted(k, e) {

@@ -141,4 +141,16 @@ probe('ListChannels returns forum tags', 'handler.go',
 probe('ListChannels returns required-tag flag', 'handler.go',
       'c.RequiresTag = requires', 'c.RequiresTag = requires && false',
       './internal/service', 'TestListChannelsAnswer')
+probe('metadata outages retain unavailable classification', 'handler.go',
+      'return nil, nil, existing, discord.Error(err)', 'return nil, nil, existing, denied()',
+      './internal/service', 'TestMetadataReadErrors')
+probe('non-guild metadata uses the uniform refusal', 'discord/errors.go',
+      'if errors.Is(err, errNotGuild) {', 'if false {',
+      './internal/service', 'TestMetadataReadErrors')
+probe('empty bot does not disclose an unreachable touched thread', 'handler.go',
+      'if bot == "" && !reachable {', 'if false {',
+      './internal/service', 'TestEmptyBotTouchedAndSingleBot')
+probe('single-bot grants accept empty bot references', 'handler.go',
+      'if len(bots) != 1 {', 'if len(bots) != 1 || true {',
+      './internal/service', 'TestEmptyBotTouchedAndSingleBot')
 print(f'PASS all {completed} service guard probes completed', flush=True)

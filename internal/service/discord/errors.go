@@ -36,6 +36,9 @@ func Unknown(err error) bool {
 	return !errors.As(err, &r) || r.Response == nil || r.Response.StatusCode >= 500
 }
 func Error(err error) error {
+	if errors.Is(err, errNotGuild) {
+		return status.Error(codes.PermissionDenied, "target is not granted")
+	}
 	if err == nil {
 		return nil
 	}
