@@ -24,6 +24,9 @@ objective:
   - Does a message in a text channel become a thread whose identifier is the
     message's own, as a forum post's is?
   - May the test application request the privileged message content intent?
+  - Does a message sent with a nonce carry it back in its gateway event and
+    REST response, and does enforce_nonce answer a repeat with the first
+    message?
 
 background:
   current-design: >-
@@ -72,8 +75,9 @@ environment:
   resources:
     - The test server's forum channel (type 15, no required tags) and text
       channel
-    - Three runs on 2026-11-15; the third added two more replies to show the
-      history order
+    - Four runs on 2026-11-15; the third added two more replies to show the
+      history order, and the fourth sent the post and the replies with nonces
+      and repeated the last reply's nonce
 
 findings:
   forum-post-carries-a-poll:
@@ -147,6 +151,17 @@ findings:
       message content intent requested (intents 16810497: guilds, guild
       messages, message content, guild message polls).
 
+  nonces:
+    verdict: confirmed for messages, not for forum posts
+    notes: >-
+      Measured: each reply sent with CreateMessage, a nonce and enforce_nonce
+      carries the nonce in its gateway MESSAGE_CREATE and in the REST
+      response, and a repeat of the last reply's nonce returns the same
+      message without sending a second one. A forum post created with a
+      nonce on its starter message carries the nonce in neither its gateway
+      event nor the REST response, so Discord gives a forum post no nonce
+      correlation or deduplication.
+
   interactions-not-exercised:
     verdict: not measured
     notes: >-
@@ -155,14 +170,18 @@ findings:
       records what proves component interactions and their acknowledgement.
 
 conclusion: >-
-  disgo covers what deck's service needs from Discord: forum posts with every
-  content type in the starter message, threads started from text channel
+  disgo covers what deck's service needs from Discord: forum posts whose
+  starter message holds text, a persona embed, a button and a poll, threads
+  started from text channel
   messages with the same identifier rule, gateway delivery of replies in a few
   hundred milliseconds, and history reads with an after-message-id cursor. The
   gateway can deliver an event for a new thread before the REST call that
   created it returns, so the service publishes its own posts from the REST
   response and holds gateway events for threads created in the last few seconds
-  until their registration settles. A person's reply and a component
+  until their registration settles. A message sent with a nonce carries it
+  back on the gateway, so the service recognises its own replies whichever
+  copy arrives first, and enforce_nonce makes a repeated reply return the
+  first; a forum post gets neither. A person's reply and a component
   interaction remain to be observed with a person present.
 
 next-steps:

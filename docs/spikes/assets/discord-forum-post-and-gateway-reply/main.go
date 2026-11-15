@@ -88,6 +88,7 @@ type observed struct {
 	authorBot  bool
 	webhook    bool
 	hasContent bool
+	nonce      string
 	at         time.Time
 }
 
@@ -122,6 +123,7 @@ func (r *recorder) onMessage(event *events.GuildMessageCreate) {
 		authorBot:  event.Message.Author.Bot,
 		webhook:    event.Message.WebhookID != nil,
 		hasContent: event.Message.Content != "",
+		nonce:      string(event.Message.Nonce),
 		at:         time.Now(),
 	}
 	r.mu.Lock()
@@ -276,6 +278,7 @@ func main() {
 			Components:      []discord.LayoutComponent{button},
 			Poll:            poll,
 			AllowedMentions: noMentions,
+			Nonce:           "deckspikepost" + stamp[17:19],
 		},
 	})
 	pollInStarter := err == nil
@@ -307,7 +310,7 @@ func main() {
 		"rest_ms":                time.Since(sent).Milliseconds(),
 	})
 	if item, latency, ok := rec.await(post.Message.ID, sent, 15*time.Second); ok {
-		emit("gateway-starter-message", "pass", map[string]any{"latency_ms": latency.Milliseconds(), "before_rest_returned": item.at.Before(returned), "author_bot": item.authorBot, "has_content": item.hasContent})
+		emit("gateway-starter-message", "pass", map[string]any{"latency_ms": latency.Milliseconds(), "before_rest_returned": item.at.Before(returned), "author_bot": item.authorBot, "has_content": item.hasContent, "nonce_echoed": pollInStarter && item.nonce == "deckspikepost"+stamp[17:19], "rest_nonce_echoed": string(post.Message.Nonce) == "deckspikepost"+stamp[17:19]})
 	} else {
 		emit("gateway-starter-message", "fail", map[string]any{"error": "not delivered within 15s"})
 	}
@@ -331,15 +334,27 @@ func main() {
 	var reply *discord.Message
 	for i := 1; i <= 3; i++ {
 		sent = time.Now()
-		reply, err = client.Rest.CreateMessage(thread, discord.MessageCreate{Content: fmt.Sprintf("deck spike: reply %d by the bot", i), AllowedMentions: noMentions})
+		nonce := fmt.Sprintf("deckspikereply%d%s", i, stamp[17:19])
+		reply, err = client.Rest.CreateMessage(thread, discord.MessageCreate{Content: fmt.Sprintf("deck spike: reply %d by the bot", i), AllowedMentions: noMentions, Nonce: nonce, EnforceNonce: true})
 		if err != nil {
 			emit("bot-reply", "fail", discordError(err))
 			break
 		}
 		if item, latency, ok := rec.await(reply.ID, sent, 15*time.Second); ok {
-			emit("bot-reply", "pass", map[string]any{"n": i, "latency_ms": latency.Milliseconds(), "author_bot": item.authorBot, "has_content": item.hasContent})
+			emit("bot-reply", "pass", map[string]any{"n": i, "latency_ms": latency.Milliseconds(), "author_bot": item.authorBot, "has_content": item.hasContent, "nonce_echoed": item.nonce == nonce, "rest_nonce_echoed": string(reply.Nonce) == nonce})
 		} else {
 			emit("bot-reply", "fail", map[string]any{"n": i, "error": "gateway did not deliver within 15s"})
+		}
+	}
+
+	// Step 5b: the last reply's nonce again, with enforce_nonce: Discord
+	// should answer with the same message instead of sending a second one.
+	if reply != nil {
+		again, err := client.Rest.CreateMessage(thread, discord.MessageCreate{Content: "deck spike: reply 3 by the bot", AllowedMentions: noMentions, Nonce: string(reply.Nonce), EnforceNonce: true})
+		if err != nil {
+			emit("enforce-nonce-repeat", "fail", discordError(err))
+		} else {
+			emit("enforce-nonce-repeat", "pass", map[string]any{"same_message": again.ID == reply.ID})
 		}
 	}
 
