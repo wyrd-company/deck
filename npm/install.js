@@ -146,9 +146,8 @@ function runTar(args, options = {}) {
   return result.stdout;
 }
 
-function listArchive(archive, target, options = {}) {
-  const compressed = true;
-  const output = runTar([compressed ? "-tzf" : "-tf", archive], options);
+function listArchive(archive, options = {}) {
+  const output = runTar(["-tzf", archive], options);
   return String(output)
     .split(/\r?\n/)
     .filter(Boolean);
@@ -182,10 +181,9 @@ function validateArchiveEntries(entries, target) {
 }
 
 function extractExecutable(archive, target, destination, options = {}) {
-  const entry = validateArchiveEntries(listArchive(archive, target, options), target);
-  const compressed = true;
+  const entry = validateArchiveEntries(listArchive(archive, options), target);
   const contents = runTar(
-    [compressed ? "-xOzf" : "-xOf", archive, entry],
+    ["-xOzf", archive, entry],
     { ...options, encoding: null, maxBuffer: MAX_EXECUTABLE_BYTES },
   );
   if (!Buffer.isBuffer(contents) || contents.length === 0) {
