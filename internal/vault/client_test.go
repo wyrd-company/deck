@@ -164,7 +164,9 @@ func TestLiveAddressForms(t *testing.T) {
 	t.Run("unix-agent", func(t *testing.T) {
 		s := startBao(t, true)
 		prepare(t, s)
+		admin(t, s.root, "POST", "secret/data/deck/cold", map[string]any{"data": map[string]any{"token": "cold-value"}})
 		var reads atomic.Int64
+		var coldReads atomic.Int64
 		var incomingToken atomic.Bool
 		socket := unixProxy(t, s, func(r *http.Request) {
 			if r.Header.Get("X-Vault-Token") != "" {
@@ -172,6 +174,12 @@ func TestLiveAddressForms(t *testing.T) {
 			}
 			if strings.HasSuffix(r.URL.Path, "/secret/data/deck/shared") {
 				reads.Add(1)
+			}
+			if strings.HasSuffix(r.URL.Path, "/secret/data/deck/cold") {
+				coldReads.Add(1)
+				// Hold cache misses long enough for the released callers to
+				// overlap on the wire if ReadSecret stops serializing fills.
+				time.Sleep(20 * time.Millisecond)
 			}
 		})
 		c, err := New(context.Background(), config.Vault{Address: "unix://" + socket})
@@ -181,17 +189,20 @@ func TestLiveAddressForms(t *testing.T) {
 		defer c.Close(context.Background())
 		verifyOperations(t, c)
 		var wg sync.WaitGroup
+		start := make(chan struct{})
 		for range 8 {
 			wg.Go(func() {
-				_, err := c.ReadSecret(context.Background(), "host_key", config.SecretRef{Mount: "secret", Path: "deck/shared", Field: "token"})
-				if err != nil {
-					t.Error(err)
+				<-start
+				value, err := c.ReadSecret(context.Background(), "host_key", config.SecretRef{Mount: "secret", Path: "deck/cold", Field: "token"})
+				if err != nil || value != "cold-value" {
+					t.Errorf("cold read: %v", err)
 				}
 			})
 		}
+		close(start)
 		wg.Wait()
-		if reads.Load() != 1 || incomingToken.Load() {
-			t.Fatalf("KV GETs=%d, client sent token=%v", reads.Load(), incomingToken.Load())
+		if reads.Load() != 1 || coldReads.Load() != 1 || incomingToken.Load() {
+			t.Fatalf("KV GETs=%d, cold GETs=%d, client sent token=%v", reads.Load(), coldReads.Load(), incomingToken.Load())
 		}
 	})
 }
