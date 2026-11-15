@@ -18,7 +18,7 @@ func str(v any) string            { s, _ := v.(string); return s }
 // callers cannot accidentally enable credentials in URLs, proxies or remote HTTP.
 func ValidateVaultAddress(address string) error {
 	u, err := url.Parse(address)
-	if err != nil || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.Opaque != "" {
+	if err != nil || u.User != nil || strings.ContainsAny(address, "?#") || u.Opaque != "" {
 		return FieldError{"vault.address", "use unix:///path, https://host:port, or loopback http:// without user information, query or fragment"}
 	}
 	valid := false

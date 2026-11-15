@@ -239,3 +239,31 @@ func TestExactInvalidFieldPaths(t *testing.T) {
 		})
 	}
 }
+
+func TestVaultAddressRejectsQueryAndFragment(t *testing.T) {
+	for _, base := range []string{"https://vault.example", "http://127.0.0.1:8200", "unix:///run/bao.sock"} {
+		if err := ValidateVaultAddress(base); err != nil {
+			t.Fatal(err)
+		}
+		for _, suffix := range []string{"?", "#", "?q=1", "#fragment"} {
+			address := base + suffix
+			if err := ValidateVaultAddress(address); err == nil {
+				t.Errorf("accepted query/fragment address %q", address)
+			}
+		}
+	}
+	for _, kind := range []string{"client", "service"} {
+		for _, suffix := range []string{"?", "#"} {
+			raw := mutate(t, kind, func(m map[string]any) {
+				object(m["vault"])["address"] = "https://vault.example" + suffix
+			})
+			var err error
+			if kind == "client" {
+				_, err = ParseClient(raw, "/tmp/config.yml")
+			} else {
+				_, err = ParseService(raw)
+			}
+			assertPaths(t, err, "vault.address")
+		}
+	}
+}
