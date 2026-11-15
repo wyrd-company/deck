@@ -23,6 +23,10 @@ Only one flag can read stdin. `--mention USER` and `--mention-role ROLE` accept
 configured aliases or Discord IDs and can repeat. A configured default persona
 can be overridden with `--persona NAME` or `--no-persona`.
 
+Text must be valid UTF-8. The complete encoded request, including attachments,
+must fit within 64 MiB. Invalid input exits 2 and names the field to fix before
+recording or sending a message.
+
 ```sh
 deck post team --title 'Pick a time' --mention owner \
   --poll 'When?' --answer Today --answer Tomorrow --poll-duration 48h
@@ -41,7 +45,10 @@ repeats a send automatically.
 Copy the entire printed shell command, including any assignments before `deck`.
 Those preserve line breaks and other control characters in the original content.
 If a content flag read stdin, supply the same input again when repeating. A
-completed post's nonce cannot be reused to post to a different channel.
+post's nonce cannot be reused to post to a different channel, including while
+its outcome is unknown. Keep the original bot qualification when repeating an
+uncompleted post. An unresolved post from an older local store without a saved
+channel must be checked in Discord before choosing a new nonce.
 
 Each session command reports unread activity on stderr, or in `unread` with
 `--json`. Use [reading](reading.md) to handle replies. `deck skill` prints the

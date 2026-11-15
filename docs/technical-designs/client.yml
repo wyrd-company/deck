@@ -82,7 +82,7 @@ proposed-design:
     records its schema version; a newer version than the client knows is an
     error, and an older one is migrated in one transaction.
   store-schema: >-
-    Four tables. `sessions(key TEXT PRIMARY KEY, identifiers TEXT NOT NULL,
+    Five tables. `sessions(key TEXT PRIMARY KEY, identifiers TEXT NOT NULL,
     seen_at TEXT NOT NULL)`, with identifiers a JSON array of `{name, value}`.
     `threads(thread_id INTEGER PRIMARY KEY, bot TEXT NOT NULL, server_id
     INTEGER NOT NULL, channel_id INTEGER NOT NULL, title TEXT NOT NULL)`.
@@ -97,9 +97,19 @@ proposed-design:
     message_id INTEGER, state TEXT NOT NULL CHECK (state IN ('pending',
     'sent', 'failed', 'unknown')), sent_at TEXT NOT NULL, PRIMARY KEY
     (key_fingerprint, nonce))`, with indexes on `(session_key, thread_id)` and
-    `message_id`. Snowflakes and stream positions are stored as SQLite
+    `message_id`. Schema 2 adds `post_targets(key_fingerprint TEXT NOT NULL,
+    nonce TEXT NOT NULL, bot TEXT NOT NULL, channel_id INTEGER NOT NULL,
+    PRIMARY KEY(key_fingerprint, nonce))`, with a composite foreign key to
+    sends. It records the post target in the same transaction as Pending,
+    before a thread ID exists. Schema 1 is migrated under the creation lock;
+    unresolved legacy posts without a known target cannot be repeated until
+    the caller inspects Discord and chooses a new nonce. Offline relays can
+    still read schema 1 without migrating. Snowflakes and stream positions are stored as SQLite
     integers, which hold any value below 2^63. Times are RFC 3339 in UTC.
   recording: >-
+    Before recording a send, the client checks its serialized protobuf size
+    against 64 MiB and marshals the exact request. Invalid UTF-8 or excessive
+    size exits 2 naming the field, without a send record or uncertain outcome.
     Before every post or reply, the client generates a nonce of 20 random
     letters and digits, or takes the one `--nonce` gives, and, in one
     transaction, upserts the session and inserts a `pending` send under its

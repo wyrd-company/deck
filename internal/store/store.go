@@ -53,6 +53,11 @@ CREATE INDEX sends_session_thread ON sends(session_key,thread_id);
 CREATE INDEX sends_message ON sends(message_id);
 PRAGMA user_version=1;`
 
+// Keep the original target even before a post has returned a thread ID.
+const postTargetsMigration = `
+CREATE TABLE post_targets(key_fingerprint TEXT NOT NULL, nonce TEXT NOT NULL, bot TEXT NOT NULL, channel_id INTEGER NOT NULL, PRIMARY KEY(key_fingerprint,nonce), FOREIGN KEY(key_fingerprint,nonce) REFERENCES sends(key_fingerprint,nonce));
+PRAGMA user_version=2;`
+
 // OpenReadOnly never creates or migrates the database, for offline relays.
 func OpenReadOnly(path string) (*Store, error) { return open(path, true) }
 func Open(path string) (*Store, error)         { return open(path, false) }
@@ -117,8 +122,8 @@ func open(path string, readOnly bool) (*Store, error) {
 	if err = conn.QueryRowContext(context.Background(), "PRAGMA user_version").Scan(&version); err != nil {
 		return fail(err)
 	}
-	if version > 1 {
-		return fail(fmt.Errorf("store schema %d is newer than supported schema 1; upgrade deck", version))
+	if version > 2 {
+		return fail(fmt.Errorf("store schema %d is newer than supported schema 2; upgrade deck", version))
 	}
 	if version < 1 {
 		if readOnly {
@@ -126,6 +131,11 @@ func open(path string, readOnly bool) (*Store, error) {
 			return s, nil
 		}
 		if _, err = conn.ExecContext(context.Background(), schema); err != nil {
+			return fail(err)
+		}
+	}
+	if version < 2 && !readOnly {
+		if _, err = conn.ExecContext(context.Background(), postTargetsMigration); err != nil {
 			return fail(err)
 		}
 	}
@@ -220,6 +230,20 @@ func (s *Store) Pending(ss session.Session, key, nonce, kind string, thread uint
 					return ErrNonceConflict
 				}
 			}
+			if kind == "post" && !previousThread.Valid && len(channel) > 0 && channel[0] != nil {
+				var bot string
+				var id uint64
+				err := tx.QueryRow(`SELECT bot,channel_id FROM post_targets WHERE key_fingerprint=? AND nonce=?`, key, nonce).Scan(&bot, &id)
+				if err == sql.ErrNoRows {
+					return fmt.Errorf("cannot verify a legacy post's channel; inspect Discord before choosing a new nonce: %w", ErrNonceConflict)
+				}
+				if err != nil {
+					return err
+				}
+				if channel[0].ChannelId != id || channel[0].Bot != bot {
+					return ErrNonceConflict
+				}
+			}
 			return nil
 		}
 		if err != sql.ErrNoRows {
@@ -230,6 +254,9 @@ func (s *Store) Pending(ss session.Session, key, nonce, kind string, thread uint
 			target = thread
 		}
 		_, err = tx.Exec(`INSERT INTO sends VALUES(?,?,?,?,?,NULL,'pending',?)`, key, nonce, ss.Key(), kind, target, now())
+		if err == nil && kind == "post" && len(channel) > 0 && channel[0] != nil {
+			_, err = tx.Exec(`INSERT INTO post_targets VALUES(?,?,?,?)`, key, nonce, channel[0].Bot, channel[0].ChannelId)
+		}
 		return err
 	})
 }

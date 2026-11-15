@@ -1822,3 +1822,70 @@ func TestCompletedPostNonceCannotChangeChannel(t *testing.T) {
 		t.Fatal("same channel repeat refused", calls)
 	}
 }
+
+func TestUncompletedPostNonceCannotChangeChannel(t *testing.T) {
+	for _, state := range []string{"pending", "unknown", "failed"} {
+		for _, original := range []string{"helper/2", "2"} {
+			t.Run(state+"/"+original, func(t *testing.T) {
+				f := setup(t)
+				s := f.open()
+				bot := "helper"
+				if original == "2" {
+					bot = ""
+				}
+				if state == "pending" {
+					if err := s.Pending(ss(), keyA, "targetBound", "post", 0, &pb.ChannelRef{Bot: bot, ChannelId: 2}); err != nil {
+						t.Fatal(err)
+					}
+				} else {
+					f.fake.post = func(context.Context, *pb.PostRequest) (*pb.PostResponse, error) {
+						code := codes.Unavailable
+						if state == "failed" {
+							code = codes.PermissionDenied
+						}
+						return nil, status.Error(code, "fixture failure")
+					}
+					code, _, stderr := f.run("post", original, "--title", "T", "--text", "hello", "--nonce", "targetBound")
+					if code != 4 && state == "unknown" || code != 3 && state == "failed" {
+						t.Fatal(code, stderr)
+					}
+				}
+				before, err := s.SendRecord(keyA, "targetBound")
+				if err != nil || before.State != state {
+					t.Fatal(before, err)
+				}
+				calls := 0
+				f.fake.post = func(_ context.Context, r *pb.PostRequest) (*pb.PostResponse, error) {
+					calls++
+					if r.Channel.Bot != bot || r.Channel.ChannelId != 2 {
+						t.Error("uncompleted post retargeted", r.Channel)
+					}
+					return &pb.PostResponse{Thread: baseThread, Message: person(11, 7, "sent"), Position: &pb.StreamPosition{Epoch: 100, Sequence: 5}}, nil
+				}
+				otherQualification := "2"
+				if original == "2" {
+					otherQualification = "helper/2"
+				}
+				for _, target := range []string{"helper/3", "other/2", otherQualification} {
+					for _, jsonMode := range []bool{false, true} {
+						args := []string{"post", target, "--title", "T", "--text", "hello", "--nonce", "targetBound"}
+						if jsonMode {
+							args = append(args, "--json")
+						}
+						code, out, stderr := f.run(args...)
+						if code != 2 || calls != 0 || !strings.Contains(out+stderr, "nonce already belongs") {
+							t.Fatalf("uncompleted target not refused: exit=%d calls=%d out=%s err=%s", code, calls, out, stderr)
+						}
+						if after, err := s.SendRecord(keyA, "targetBound"); err != nil || after != before {
+							t.Fatal("retarget changed send state", after, err)
+						}
+					}
+				}
+				f.result("post", original, "--title", "T", "--text", "hello", "--nonce", "targetBound")
+				if calls != 1 {
+					t.Fatal("original target did not repeat once", calls)
+				}
+			})
+		}
+	}
+}

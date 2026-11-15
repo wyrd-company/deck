@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -145,7 +146,7 @@ func TestSchemaAndNonceOwnership(t *testing.T) {
 	if err = s.Pending(other, "A", "n", "post", 0); err == nil {
 		t.Fatal("stole nonce")
 	}
-	if _, err = s.db.Exec("PRAGMA user_version=2"); err != nil {
+	if _, err = s.db.Exec("PRAGMA user_version=3"); err != nil {
 		t.Fatal(err)
 	}
 	path := ""
@@ -180,7 +181,7 @@ func TestConcurrentCreation(t *testing.T) {
 				if err = s.db.QueryRow("PRAGMA journal_mode").Scan(&mode); err != nil || mode != "wal" {
 					t.Errorf("mode %q: %v", mode, err)
 				}
-				if err = s.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 1 {
+				if err = s.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 2 {
 					t.Errorf("version %d: %v", version, err)
 				}
 			}()
@@ -305,5 +306,63 @@ func TestEnableWALRejectsNonBusyError(t *testing.T) {
 	err = enableWAL(conn)
 	if err == nil || time.Since(start) > 2*time.Second {
 		t.Fatalf("non-busy error retried: elapsed=%v err=%v", time.Since(start), err)
+	}
+}
+
+func TestPostTargetsMigration(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "deck.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(schema); err != nil {
+		t.Fatal(err)
+	}
+	legacy := &Store{db: db}
+	ss := testSession()
+	if err := legacy.Pending(ss, "A", "legacy", "post", 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := legacy.SendState("A", "legacy", "unknown"); err != nil {
+		t.Fatal(err)
+	}
+	legacy.Close()
+	// Offline relays can still read schema1 without migrating it.
+	readOnly, err := OpenReadOnly(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	own, err := readOnly.Own(ss, "A", "legacy")
+	if err != nil || !own {
+		t.Fatal("legacy ownership lost", own, err)
+	}
+	var version int
+	if err := readOnly.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 1 {
+		t.Fatal("offline lookup migrated store", version, err)
+	}
+	readOnly.Close()
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if err := s.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 2 {
+		t.Fatal("post target migration did not finish", version, err)
+	}
+	original := &pb.ChannelRef{Bot: "helper", ChannelId: 2}
+	if err := s.Pending(ss, "A", "legacy", "post", 0, original); !errors.Is(err, ErrNonceConflict) {
+		t.Fatal("unbound legacy target did not fail closed", err)
+	}
+	if record, err := s.SendRecord("A", "legacy"); err != nil || record.State != "unknown" {
+		t.Fatal("migration changed outcome", record, err)
+	}
+	if err := s.Pending(ss, "A", "new", "post", 0, original); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Pending(ss, "A", "new", "post", 0, &pb.ChannelRef{Bot: "helper", ChannelId: 3}); !errors.Is(err, ErrNonceConflict) {
+		t.Fatal("migrated store did not bind new target", err)
+	}
+	if err := s.Pending(ss, "A", "new", "post", 0, original); err != nil {
+		t.Fatal("original target cannot repeat", err)
 	}
 }
