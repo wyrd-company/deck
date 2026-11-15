@@ -23,6 +23,11 @@ activity. `--keep-unread` preserves the cursor. Listen returns immediately for
 activity already unread, otherwise waits for another reply. Your own sends are
 excluded, including sends made before a client-key rotation or rename.
 
+Read and listen save their cursors after stdout accepts the result. An output
+failure leaves activity unread. If saving fails after output, the command exits 1
+and reports the store failure on stderr, including with `--json`; a later read may
+show the activity again.
+
 Read and listen use threads your session posted or replied in. To inspect another
 thread before answering, or older messages that may have left event retention,
 use history:

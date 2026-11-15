@@ -74,8 +74,11 @@ proposed-design:
     with.
   local-store: >-
     The store is the SQLite file `store.path`, created with mode 0600 in a
-    directory of mode 0700. It opens with `journal_mode=WAL`,
-    `busy_timeout=5000` and `foreign_keys=on`, and `PRAGMA user_version`
+    directory of mode 0700. Connections set `busy_timeout=5000` and
+    `foreign_keys=on`. Before migration, the writer switches to
+    `journal_mode=WAL` outside a transaction, retrying SQLITE_BUSY for at
+    most five seconds because changing journal mode can bypass SQLite's
+    busy handler during concurrent first use. `PRAGMA user_version`
     records its schema version; a newer version than the client knows is an
     error, and an older one is migrated in one transaction.
   store-schema: >-
@@ -131,7 +134,8 @@ proposed-design:
     configured name holds today; a nonce alone never matches. Read sends
     them to ListUnread, leaves out of what it prints
     the activity whose sender key and nonce match one of the session's sends,
-    and, unless `--keep-unread`, moves each thread's cursor to the response's
+    and, unless `--keep-unread`, writes the output successfully before
+    moving each thread's cursor to the response's
     `through` position, whether or not anything was listed, with one `UPDATE
     session_threads SET cursor_epoch = ?, cursor_sequence = ? WHERE
     session_key = ? AND thread_id = ? AND (cursor_epoch <> ? OR
@@ -141,7 +145,13 @@ proposed-design:
     reached, whatever its epoch. A process that read before a generation
     change and writes after it can set a cursor back to the old generation;
     the next count then treats every retained activity as unread, a duplicate
-    the unread guarantee allows. A read that lists nothing still moves the
+    the unread guarantee allows. The unread report counts from the proposed
+    positions in memory before output; only after stdout accepts the entire
+    result are those positions committed. An output failure leaves the
+    cursors unchanged. A commit failure after output exits 1 and reports the
+    store failure on stderr, also in JSON mode, preserving its single result
+    object. A crash between output and commit can repeat activity on the next
+    read. A read that lists nothing still moves the
     cursor to `through`, so a thread whose count carried horizon_passed stops
     carrying it; until then, the unread report notes that older activity may
     have left the stream, naming `deck history`.
