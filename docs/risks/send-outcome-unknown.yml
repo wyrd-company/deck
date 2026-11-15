@@ -24,9 +24,11 @@ description: >-
   has registered the thread in memory, while the entry's write to the bucket
   can still be retrying, for as long as NATS stays unreachable; if the service
   stops before the write lands, the thread is no longer touched, produces no
-  events and answers NOT_TOUCHED until a key replies in it again. Mitigation:
-  the client records every send before it calls the service and never repeats
-  one on its own; an unknown outcome is reported with exit status 4 and the
+  events and answers NOT_TOUCHED until a key replies in it again. A reply
+  whose outcome is unknown keeps its key's touch, so the thread produces
+  events for the key whether or not the reply reached Discord. Mitigation: the
+  client records every send before it calls the service and never repeats one
+  on its own; an unknown outcome is reported with exit status 4 and the
   command that repeats it with its nonce, which is safe whenever the first
   send reached the stream; the service logs each lost registration at a clean
   stop; and the first window is only the time between Discord's answer and

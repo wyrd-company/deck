@@ -161,9 +161,11 @@ validation-criteria: >-
   exists, a Post whose registry bucket is unreachable creating nothing, two
   concurrent replies by one key, one failing, leaving the key's touch in
   place, a second reply by a key already sent failing without removing its
-  touch, a failed first reply leaving the thread untouched, a pending key a
-  crash left behind removed at start, a forum post whose answer was lost
-  ending UNAVAILABLE without a search, and a key granted only another bot
-  refused for a touched thread with PERMISSION_DENIED. A contract test
-  marshals Activity values of each kind with protojson and proto field names
-  and validates them against `assets/events/activity.schema.json`.
+  touch, a failed first reply leaving the thread untouched, a reply whose
+  outcome is unknown leaving its key's touch in place, live publishes during
+  a thread's pending recovery leaving its boundary unraised, a forum post
+  whose answer was lost ending UNAVAILABLE without a search, and a key
+  granted only another bot refused for a touched thread with
+  PERMISSION_DENIED. A contract test marshals Activity values of each kind
+  with protojson and proto field names and validates them against
+  `assets/events/activity.schema.json`.

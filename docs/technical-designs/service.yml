@@ -90,16 +90,19 @@ design-challenges:
     oldest first, publishes each as publishing says (dropping the bot's own
     type 0 and 19 messages, publishing each other message the activity index
     does not hold), and raises the entry's last_message_id to the newest
-    message it read. A thread Discord reports as deleted (code 10003) leaves
-    the registry. Any other failed read leaves the thread's boundary where it
-    was, so the thread is read again at the bot's next READY and never drops
-    out of recovery. An archived thread keeps its last_message_id (measured),
-    so archived and active, public and private threads are read alike. The
-    cost is one channel read per registered thread per READY, plus one message
-    read per 100 missed messages; the registry's sweep bounds the number of
-    registered threads by `nats.threads.max_age`. Component uses and poll
-    votes in the gap cannot be recovered; the risk
-    gateway-gap-loses-interactions covers them.
+    message it read. A thread's recovery is pending from READY until a read of
+    it succeeds, and while it is pending, live publishes do not raise its
+    last_message_id, so a stop during recovery leaves the boundary before
+    every message recovery has not read. A thread Discord reports as deleted
+    (code 10003) leaves the registry. Any other failed read leaves the
+    thread's boundary where it was and its recovery pending, so the thread is
+    read again at the bot's next READY and never drops out of recovery. An
+    archived thread keeps its last_message_id (measured), so archived and
+    active, public and private threads are read alike. The cost is one channel
+    read per registered thread per READY, plus one message read per 100 missed
+    messages; the registry's sweep bounds the number of registered threads by
+    `nats.threads.max_age`. Component uses and poll votes in the gap cannot be
+    recovered; the risk gateway-gap-loses-interactions covers them.
   cheap-unread: >-
     Unread counts come from an in-memory activity index that follows the event
     stream, so a count costs no Discord or NATS request, whatever the cursor.
@@ -167,12 +170,13 @@ design-challenges:
     it sends, and returns UNAVAILABLE without sending when that write fails. A
     key absent from the entry is written `pending` and marked `sent` when its
     send succeeds; a key already `sent` stays `sent` through later replies.
-    Both states count as touched. When a send fails, the service removes the
-    key only if it is still `pending` and no other send by that key into that
-    thread is in flight, and removes an entry left with no keys that deck did
-    not create, so a failed attempt touches nothing and a concurrent success
-    is never undone. After recovery at start, a `pending` key with no message
-    from that key in the thread's index entries is removed the same way.
+    Both states count as touched. When a send fails (the service refused it,
+    or Discord answered with an error), the service removes the key only if it
+    is still `pending` and no other send by that key into that thread is in
+    flight, and removes an entry left with no keys that deck did not create,
+    so a failed attempt touches nothing and a concurrent success is never
+    undone. A send whose outcome is unknown leaves its key as it is, so the
+    thread stays touched for the key whether or not the reply reached Discord.
 proposed-design:
   high-level-overview: >-
     One process holds: one disgo client per bot; one NATS connection with a
