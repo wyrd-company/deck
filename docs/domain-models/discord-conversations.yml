@@ -49,8 +49,8 @@ aggregates:
       go to threads (types 10, 11 and 12) whose parent is a granted channel.
     identity: The channel's snowflake, with the bot that reaches it.
     invariants:
-      - A channel outside every grant of the calling key does not exist for
-        that key: it is neither listed, posted to, nor read.
+      - A channel outside every grant of the calling key is refused to that
+        key, which can neither list it, post to it nor read from it.
       - Posts go only to channel types 0, 5, 15 and 16.
   client-key:
     description: >-
