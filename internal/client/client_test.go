@@ -3,6 +3,9 @@ package client
 import (
 	pb "github.com/wyrd-company/deck/internal/api/deckv1"
 	"github.com/wyrd-company/deck/internal/config"
+	"github.com/wyrd-company/deck/internal/session"
+	"github.com/wyrd-company/deck/internal/store"
+	"path/filepath"
 	"testing"
 )
 
@@ -28,6 +31,23 @@ func TestAllowedPolicy(t *testing.T) {
 				t.Fatalf("Allowed=%v want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestOwnSubtractionDoesNotUnderflow(t *testing.T) {
+	s, err := store.Open(filepath.Join(t.TempDir(), "deck.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ss := session.Session{}
+	if err := s.Pending(ss, "key", "nonce", "reply", 10); err != nil {
+		t.Fatal(err)
+	}
+	c := &Client{Store: s, Session: ss}
+	result, err := c.Counts([]*pb.ThreadCount{{ThreadId: 10, State: pb.ThreadState_THREAD_STATE_TOUCHED, Count: 1, Own: []*pb.OwnMessage{{SenderKey: "key", Nonce: "nonce"}, {SenderKey: "key", Nonce: "nonce"}}}})
+	if err != nil || result.Total != 0 || len(result.Threads) != 1 || result.Threads[0].Count != 0 {
+		t.Fatalf("own subtraction underflow: result=%+v err=%v", result, err)
 	}
 }
 
