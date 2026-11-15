@@ -24,7 +24,11 @@ description: >-
   NAME=VALUE` on any session command replaces detection with that one
   identifier. With no variable set and no `--session`, the command runs as the
   default session, whose identifier list is empty. The session commands are
-  post, reply, inbox, read, history, listen, channels and skill.
+  post, reply, inbox, read, history, listen, channels and skill. read and
+  listen act on the session's own threads: a THREAD argument the session does
+  not hold is a usage error that names `deck history` for reading it, and so
+  is calling either with no THREAD argument when the session holds no
+  threads.
 
 
   Unread report. After a session command does its work, the client counts the
@@ -137,7 +141,9 @@ description: >-
 
 
   `deck skill` prints the agent skill embedded in the executable, a Markdown
-  file with name and description front matter, to stdout.
+  file with name and description front matter, to stdout. It needs no
+  configuration; without one, its unread line is `unread: unknown (no
+  configuration)`.
 
 
   `deck config validate` loads the client configuration without contacting
