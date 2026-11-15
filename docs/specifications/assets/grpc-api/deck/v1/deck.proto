@@ -1,0 +1,362 @@
+syntax = "proto3";
+
+// Package deck.v1 is the API the deck service serves on its `deck` SSH
+// subsystem. Every call acts with the grants of the client key that signed
+// the SSH connection. Snowflakes are Discord identifiers carried as uint64;
+// zero means absent. Lists of activity are oldest first.
+package deck.v1;
+
+import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/wyrd-company/deck/internal/api/deckv1;deckv1";
+
+service DeckService {
+  // ListChannels returns every channel the calling key's grants cover whose
+  // type takes posts (0 text, 5 announcement, 15 forum, 16 media).
+  rpc ListChannels(ListChannelsRequest) returns (ListChannelsResponse);
+
+  // Post creates a thread: a forum post in a forum or media channel, or a
+  // message and a public thread started from it in a text or announcement
+  // channel. The thread is recorded as touched by the calling key, and its
+  // first message is published, before the call returns.
+  rpc Post(PostRequest) returns (PostResponse);
+
+  // Reply sends a message into a thread whose parent channel is granted. The
+  // calling key is recorded as having touched the thread before the message
+  // is sent.
+  rpc Reply(ReplyRequest) returns (ReplyResponse);
+
+  // GetThread returns a thread's metadata. Any thread whose parent channel is
+  // granted can be read; reading does not touch it.
+  rpc GetThread(GetThreadRequest) returns (GetThreadResponse);
+
+  // ListHistory returns a thread's messages from Discord. Any thread whose
+  // parent channel is granted can be read; reading does not touch it.
+  rpc ListHistory(ListHistoryRequest) returns (ListHistoryResponse);
+
+  // CountUnread counts, for each cursor, the activity in its thread after the
+  // cursor that is not excluded and is not a system message.
+  rpc CountUnread(CountUnreadRequest) returns (CountUnreadResponse);
+
+  // ListUnread returns the activity CountUnread counts.
+  rpc ListUnread(ListUnreadRequest) returns (ListUnreadResponse);
+
+  // Listen sends one response at once with every thread's state and any
+  // unread activity, then one response for each further activity that is
+  // published in the threads, until the client ends the call.
+  rpc Listen(ListenRequest) returns (stream ListenResponse);
+}
+
+// ChannelRef names a channel. The bot may be empty when the calling key's
+// grants name exactly one bot.
+message ChannelRef {
+  string bot = 1;
+  uint64 channel_id = 2;
+}
+
+// ThreadRef names a thread. The bot may be empty when the thread is touched,
+// since the thread registry records its bot, or when the calling key's grants
+// name exactly one bot.
+message ThreadRef {
+  string bot = 1;
+  uint64 thread_id = 2;
+}
+
+message Channel {
+  string bot = 1;
+  uint64 server_id = 2;
+  string server_name = 3;
+  uint64 channel_id = 4;
+  string name = 5;
+  // Discord's channel type: 0 text, 5 announcement, 15 forum, 16 media.
+  uint32 type = 6;
+  // The tags a forum or media channel offers for posts.
+  repeated ForumTag tags = 7;
+  // Whether a post in this forum or media channel needs at least one tag.
+  bool requires_tag = 8;
+}
+
+message ForumTag {
+  uint64 id = 1;
+  string name = 2;
+}
+
+message ListChannelsRequest {}
+
+message ListChannelsResponse {
+  repeated Channel channels = 1;
+}
+
+// Content is what a post's first message or a reply carries. At least one of
+// text, embeds, components, poll and files is set.
+message Content {
+  // Discord markdown. At most 2000 characters, or 4096 with a persona.
+  string text = 1;
+  // Users and roles to mention. The service writes each mention at the start
+  // of the message content and allows exactly these in allowed_mentions;
+  // everyone and here are never allowed.
+  repeated uint64 mention_user_ids = 2;
+  repeated uint64 mention_role_ids = 3;
+  // Discord embed objects, as Discord's API defines them. At most 10, or 9
+  // with a persona.
+  repeated google.protobuf.Struct embeds = 4;
+  // Discord top-level component objects, as Discord's API defines them. A
+  // list that holds a Components V2 layout component (type 9 or above) is
+  // sent with the IS_COMPONENTS_V2 flag and needs empty text, embeds, poll
+  // and persona.
+  repeated google.protobuf.Struct components = 5;
+  PollCreate poll = 6;
+  // At most 10 files.
+  repeated File files = 7;
+  // When set, the text becomes the description of a leading embed whose
+  // author is the persona.
+  Persona persona = 8;
+}
+
+message PollCreate {
+  // At most 300 characters.
+  string question = 1;
+  // 1 to 10 answers of at most 55 characters each.
+  repeated string answers = 2;
+  // 1 to 768; zero means 24.
+  uint32 duration_hours = 3;
+  bool allow_multiselect = 4;
+}
+
+message File {
+  // The file name Discord shows; the attachment's URL ends with it.
+  string name = 1;
+  bytes data = 2;
+  // Alt text, at most 1024 characters.
+  string description = 3;
+}
+
+message Persona {
+  // At most 256 characters.
+  string name = 1;
+  // An http or https URL.
+  string icon_url = 2;
+}
+
+message PostRequest {
+  ChannelRef channel = 1;
+  // The thread's name: 1 to 100 characters.
+  string title = 2;
+  // Forum tags by name or by snowflake in decimal, for forum and media
+  // channels only; at most 5.
+  repeated string tags = 3;
+  Content content = 4;
+}
+
+message PostResponse {
+  Thread thread = 1;
+  // The thread's first message, as published.
+  Activity message = 2;
+}
+
+message ReplyRequest {
+  ThreadRef thread = 1;
+  Content content = 2;
+  // When set, the reply is a Discord reply to this message in the thread.
+  uint64 reply_to_message_id = 3;
+}
+
+message ReplyResponse {
+  Thread thread = 1;
+  Activity message = 2;
+}
+
+message Thread {
+  string bot = 1;
+  uint64 server_id = 2;
+  // The thread's parent channel.
+  uint64 channel_id = 3;
+  uint64 thread_id = 4;
+  string name = 5;
+  bool archived = 6;
+  bool locked = 7;
+  uint64 last_message_id = 8;
+  // Whether deck created the thread.
+  bool created_by_deck = 9;
+  // Whether the calling key touched the thread.
+  bool touched = 10;
+  // https://discord.com/channels/<server id>/<thread id>
+  string url = 11;
+}
+
+message GetThreadRequest {
+  ThreadRef thread = 1;
+}
+
+message GetThreadResponse {
+  Thread thread = 1;
+}
+
+message ListHistoryRequest {
+  ThreadRef thread = 1;
+  // At most one of after_id and before_id. With neither, the newest messages.
+  uint64 after_id = 2;
+  uint64 before_id = 3;
+  // 1 to 100; zero means 50.
+  uint32 limit = 4;
+}
+
+message ListHistoryResponse {
+  // Message activities, oldest first, with Discord's current content.
+  repeated Activity activity = 1;
+  // Whether Discord holds more messages beyond the ones returned, in the
+  // direction of the cursor.
+  bool more = 2;
+}
+
+// Cursor is a session's read position in one thread.
+message Cursor {
+  uint64 thread_id = 1;
+  // Activity with a snowflake greater than this is after the cursor.
+  uint64 after_id = 2;
+  // Messages after the cursor that the session sent itself.
+  repeated uint64 exclude_ids = 3;
+}
+
+enum ThreadState {
+  THREAD_STATE_UNSPECIFIED = 0;
+  // The calling key touched the thread; its count is valid.
+  THREAD_STATE_TOUCHED = 1;
+  // The thread registry has no entry naming the calling key for the thread.
+  THREAD_STATE_NOT_TOUCHED = 2;
+  // The thread's parent channel is outside the calling key's grants.
+  THREAD_STATE_NOT_GRANTED = 3;
+}
+
+message ThreadCount {
+  uint64 thread_id = 1;
+  ThreadState state = 2;
+  // Unread activity after the cursor; zero unless the state is touched.
+  uint32 count = 3;
+}
+
+message CountUnreadRequest {
+  repeated Cursor cursors = 1;
+}
+
+message CountUnreadResponse {
+  repeated ThreadCount threads = 1;
+}
+
+message ListUnreadRequest {
+  repeated Cursor cursors = 1;
+  // At most this many activities across all threads, the oldest first; zero
+  // means 500.
+  uint32 limit = 2;
+}
+
+message ListUnreadResponse {
+  repeated Activity activity = 1;
+  // Each cursor's thread, with its count before this list.
+  repeated ThreadCount threads = 2;
+  // Whether unread activity remains beyond the limit.
+  bool more = 3;
+}
+
+message ListenRequest {
+  repeated Cursor cursors = 1;
+}
+
+message ListenResponse {
+  repeated Activity activity = 1;
+  // Set on the first response only.
+  repeated ThreadCount threads = 2;
+}
+
+// Activity is one new thing in a touched thread, and the payload of every
+// event on the stream, in its protojson form with proto field names.
+message Activity {
+  // The message's or interaction's snowflake, or for a poll vote one the
+  // service makes from the millisecond it received the vote.
+  uint64 id = 1;
+  google.protobuf.Timestamp time = 2;
+  // The name of the bot whose thread this is.
+  string bot = 3;
+  uint64 server_id = 4;
+  // The thread's parent channel.
+  uint64 channel_id = 5;
+  uint64 thread_id = 6;
+  User author = 7;
+  // The name of the client key that sent the message through deck; empty for
+  // everything deck did not send.
+  string sent_by = 8;
+  oneof kind {
+    Message message = 10;
+    ComponentUse component = 11;
+    PollVote poll_vote = 12;
+  }
+}
+
+message User {
+  uint64 id = 1;
+  string username = 2;
+  // The user's global display name, when set.
+  string display_name = 3;
+  bool bot = 4;
+  // Set when a webhook sent the message; the user is then the webhook.
+  uint64 webhook_id = 5;
+}
+
+message Message {
+  // Discord's message type: 0 default, 19 reply, 46 poll result, and the
+  // system types.
+  uint32 type = 1;
+  string content = 2;
+  repeated google.protobuf.Struct embeds = 3;
+  repeated google.protobuf.Struct components = 4;
+  repeated Attachment attachments = 5;
+  Poll poll = 6;
+  uint64 reply_to_message_id = 7;
+  repeated uint64 mention_user_ids = 8;
+  repeated uint64 mention_role_ids = 9;
+}
+
+message Attachment {
+  uint64 id = 1;
+  string filename = 2;
+  string content_type = 3;
+  uint64 size = 4;
+  // Discord's CDN URL. In an event it is the URL Discord gave when the
+  // message arrived, which expires; the API returns a current one.
+  string url = 5;
+  string description = 6;
+}
+
+message Poll {
+  string question = 1;
+  repeated PollAnswer answers = 2;
+  google.protobuf.Timestamp expires_at = 3;
+  bool allow_multiselect = 4;
+}
+
+message PollAnswer {
+  uint32 answer_id = 1;
+  string text = 2;
+}
+
+// ComponentUse is a person pressing a button or choosing from a select menu
+// on a message deck sent. The service has acknowledged it to Discord with a
+// deferred message update.
+message ComponentUse {
+  // The message that holds the component.
+  uint64 message_id = 1;
+  string custom_id = 2;
+  // Discord's component type: 2 button, 3 string select, 5 user select,
+  // 6 role select, 7 mentionable select, 8 channel select.
+  uint32 component_type = 3;
+  // The chosen values of a select menu, as Discord sends them.
+  repeated string values = 4;
+}
+
+message PollVote {
+  uint64 message_id = 1;
+  uint32 answer_id = 2;
+  // Whether the vote was removed rather than added.
+  bool removed = 3;
+}
