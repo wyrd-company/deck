@@ -423,14 +423,36 @@ func main() {
 	// Step 9: a text channel has no posts; a message there becomes a thread's
 	// starter when a thread is started from it.
 	sent = time.Now()
-	starter, err := client.Rest.CreateMessage(textChannelID, discord.MessageCreate{Content: "deck spike: text channel starter", AllowedMentions: noMentions})
+	starterNonce := "deckspiketext" + stamp[17:19]
+	starter, err := client.Rest.CreateMessage(textChannelID, discord.MessageCreate{Content: "deck spike: text channel starter", AllowedMentions: noMentions, Nonce: starterNonce, EnforceNonce: true})
 	if err != nil {
 		emit("text-channel-thread", "fail", discordError(err))
 	} else {
+		if item, _, ok := rec.await(starter.ID, sent, 15*time.Second); ok {
+			emit("text-channel-starter-nonce", "pass", map[string]any{"nonce_echoed": item.nonce == starterNonce, "rest_nonce_echoed": string(starter.Nonce) == starterNonce})
+		} else {
+			emit("text-channel-starter-nonce", "fail", map[string]any{"error": "gateway did not deliver within 15s"})
+		}
 		textThread, err := client.Rest.CreateThreadFromMessage(textChannelID, starter.ID, discord.ThreadCreateFromMessage{Name: "deck spike " + stamp})
 		if err != nil {
 			emit("text-channel-thread", "fail", discordError(err))
 		} else {
+			// A repeat of the post, as after a service restart: the same nonce
+			// returns the same message, and starting its thread again fails
+			// with the code that names an existing thread.
+			again, err := client.Rest.CreateMessage(textChannelID, discord.MessageCreate{Content: "deck spike: text channel starter", AllowedMentions: noMentions, Nonce: starterNonce, EnforceNonce: true})
+			if err != nil {
+				emit("text-channel-repeat", "fail", discordError(err))
+			} else {
+				_, threadErr := client.Rest.CreateThreadFromMessage(textChannelID, again.ID, discord.ThreadCreateFromMessage{Name: "deck spike " + stamp})
+				detail := map[string]any{"same_message": again.ID == starter.ID}
+				if threadErr != nil {
+					detail["second_thread"] = discordError(threadErr)
+				} else {
+					detail["second_thread"] = "created"
+				}
+				emit("text-channel-repeat", "pass", detail)
+			}
 			rec.track(textThread.ID(), "text-thread")
 			sent = time.Now()
 			inThread, err := client.Rest.CreateMessage(textThread.ID(), discord.MessageCreate{Content: "deck spike: reply in a text channel thread", AllowedMentions: noMentions})

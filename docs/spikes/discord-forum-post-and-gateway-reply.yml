@@ -75,9 +75,10 @@ environment:
   resources:
     - The test server's forum channel (type 15, no required tags) and text
       channel
-    - Four runs on 2026-11-15; the third added two more replies to show the
-      history order, and the fourth sent the post and the replies with nonces
-      and repeated the last reply's nonce
+    - Five runs on 2026-11-15; the third added two more replies to show the
+      history order, the fourth sent the post and the replies with nonces and
+      repeated the last reply's nonce, and the fifth also sent the text
+      channel message with a nonce and repeated it as a post retry would
 
 findings:
   forum-post-carries-a-poll:
@@ -157,8 +158,12 @@ findings:
       Measured: each reply sent with CreateMessage, a nonce and enforce_nonce
       carries the nonce in its gateway MESSAGE_CREATE and in the REST
       response, and a repeat of the last reply's nonce returns the same
-      message without sending a second one. A forum post created with a
-      nonce on its starter message carries the nonce in neither its gateway
+      message without sending a second one. The same holds for a message in
+      the text channel: its nonce comes back on the gateway event and in the
+      REST response, a repeat with the nonce returns the same message, and
+      starting a thread on it a second time fails with Discord code 160004, "A
+      thread has already been created for this message". A forum post created
+      with a nonce on its starter message carries the nonce in neither its gateway
       event nor the REST response, so Discord gives a forum post no nonce
       correlation or deduplication.
 
