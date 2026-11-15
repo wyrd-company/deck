@@ -101,7 +101,8 @@ proposed-design:
     checks before it sends a message, reads messages or reads the stream, and
     lists filter by the same check.
   limits: >-
-    The gRPC server accepts messages up to 64 MiB and sends up to 16 MiB.
+    The gRPC server and client each accept and send messages up to 64 MiB;
+    grpc-go's client default of 4 MiB would refuse a long ListUnread.
     Keepalive: the client pings every 30 seconds with a 10-second timeout while
     a call is open; the service's enforcement policy allows pings every 15
     seconds with no stream open. The Wish idle timeout is 10 minutes and the

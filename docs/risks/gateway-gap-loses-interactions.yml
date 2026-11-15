@@ -5,10 +5,11 @@ relationships:
 slug: gateway-gap-loses-interactions
 title: Component uses and poll votes during a gateway gap are lost
 description: >-
-  When a bot's gateway session drops and cannot resume, Discord does not
-  replay the events between the old session and the new one. Messages in that
-  gap are recovered: on the new session's READY the service reads each active
-  touched thread's messages after the newest one it holds and publishes them.
+  When a bot's gateway session drops and cannot resume, or the service is not
+  running, Discord does not replay the events in between. Messages in that
+  gap are recovered: on every READY, the first after a start included, the
+  service reads each active touched thread's messages after the newest one it
+  holds and publishes them.
   Component uses and poll votes in the gap cannot be read back from Discord,
   so they never reach the stream, and a person who pressed a button during
   the gap saw "This interaction failed". Mitigation: disgo resumes sessions
