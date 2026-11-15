@@ -1,6 +1,6 @@
 # A bot token is a reference to OpenBao or Vault, never a value.
 vault:
-  address: unix:///run/wyrwood/vault.sock
+  address: unix:///run/openbao/agent.sock
 host_key: {path: deck/service, field: host_key}
 nats:
   servers: [nats://nats.example.internal:4222]

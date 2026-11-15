@@ -3,6 +3,6 @@ service:
   address: ${DECK_SERVICE}
   host_key: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOpOs2okPTF0d06WZveRMcp0ceUWeO2jllkuCtP2YhX6
 vault:
-  address: unix:///run/wyrwood/vault.sock
+  address: unix:///run/openbao/agent.sock
 key:
   name: deck-agents-laptop

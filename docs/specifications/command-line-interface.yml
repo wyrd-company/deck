@@ -42,7 +42,8 @@ description: >-
   `[<bot>/]<snowflake>`, or omitted for `channels.default`. A THREAD is
   `[<bot>/]<snowflake>` or a Discord URL
   `https://discord.com/channels/<server>/<thread>[/<message>]`. A USER or ROLE
-  is an alias from `aliases.users` or `aliases.roles`, or a snowflake. The
+  is an alias from `aliases.users` or `aliases.roles`, or a snowflake. A
+  reference made only of digits is a snowflake, and any other is an alias. The
   client checks every channel against `channels.allow` and `channels.deny`
   before it calls the service; for a reply into a thread the local store does
   not hold, it first asks the service for the thread's parent channel.
@@ -79,11 +80,13 @@ description: >-
   1571484634081529857` and the message URL. JSON: as post.
 
 
-  `deck inbox [--all]` lists the session's threads with unread activity, the
-  most recent activity first, or with `--all` every thread the session holds.
-  It changes no cursor. Text: one line per thread, `<count>  <thread>
-  <bot>/<channel>  <title>`. JSON: `{"threads": [{"thread": Thread, "count":
-  2, "state": "THREAD_STATE_TOUCHED"}], "unread": ...}`.
+  `deck inbox [--all]` lists the session's threads that have unread activity,
+  or with `--all` every thread the session holds, the one the session touched
+  most recently first. It changes no cursor. Text: one line per thread,
+  `<count>  <thread>  <bot>/<channel>  <title>`. JSON: `{"threads":
+  [{"thread_id": "1571484634081529857", "bot": "helper", "channel_id":
+  "1287000000000000002", "title": "Changelog wording", "count": 2, "state":
+  "THREAD_STATE_TOUCHED"}], "unread": ...}`.
 
 
   `deck read [THREAD...] [--keep-unread] [--limit N]` prints the unread

@@ -39,8 +39,9 @@ description: >-
   Client rules beyond the schema: `default_persona` names a persona in
   `personas`; every alias used in `channels.default`, `channels.allow` and
   `channels.deny` is in `aliases.channels`. A channel reference is
-  `[<bot>/]<snowflake>` or an alias; a reference with no bot matches that
-  channel through any bot. `store.path` defaults to `deck.db` in the
+  `[<bot>/]<snowflake>` or an alias; a reference made only of digits is a
+  snowflake, and a reference with no bot matches that channel through any
+  bot. `store.path` defaults to `deck.db` in the
   directory that holds the configuration file. `service.timeout` defaults to
   15s, `vault.timeout` to 10s, `key.mount` to `transit`, and
   `session.variables` to none.

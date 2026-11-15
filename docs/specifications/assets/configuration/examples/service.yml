@@ -6,7 +6,7 @@ listen:
   health: ":8080"   # default :8080; GET /healthz and /livez
 
 vault:
-  address: unix:///run/wyrwood/vault.sock
+  address: unix:///run/openbao/agent.sock
   kv_mount: kv      # default secret
   timeout: 10s
   # A socket that injects its own token needs no auth. Otherwise one of:

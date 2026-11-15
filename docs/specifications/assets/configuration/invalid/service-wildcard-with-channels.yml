@@ -1,6 +1,6 @@
 # "*" stands alone: every channel, or a list of channels.
 vault:
-  address: unix:///run/wyrwood/vault.sock
+  address: unix:///run/openbao/agent.sock
 host_key: {path: deck/service, field: host_key}
 nats:
   servers: [nats://nats.example.internal:4222]

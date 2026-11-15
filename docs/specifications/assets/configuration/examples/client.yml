@@ -12,8 +12,9 @@ service:
 
 vault:
   # unix:///path, https://host:port, or http:// on a loopback host.
-  address: unix:///run/wyrwood/vault.sock
-  # Without auth, requests carry no token: the socket adds the container's own.
+  address: unix:///run/openbao/agent.sock
+  # Without auth, requests carry no token: an OpenBao Agent or Vault Agent
+  # listening on the socket adds its own.
   # auth:
   #   token_file: /run/secrets/openbao-token
 
