@@ -1,0 +1,6 @@
+{"nats_go":"1.55.0","nats_server":"2.11.9","pass":false,"state":"started"}
+{"case":"unrepaired-recreation","closed_at_trigger":false,"creation_changed":true,"new_sequences":[6,7],"pass":true,"trigger":"nats: consumer deleted"}
+{"case":"error-check-and-replay","closed_at_trigger":false,"creation_changed":true,"new_sequences":[1,2,3,4,5,6,7],"pass":true,"trigger":"nats: consumer deleted"}
+{"case":"missing-stream-managed-before-check","closed_at_trigger":false,"creation_changed":true,"new_sequences":[1,2,3,4,5,6,7],"pass":true,"trigger":"nats: consumer deleted"}
+{"case":"same-generation-consumer-deletion","closed_at_trigger":false,"creation_changed":false,"new_sequences":[6,7],"pass":true,"trigger":"nats: consumer deleted"}
+{"pass":true,"state":"completed"}

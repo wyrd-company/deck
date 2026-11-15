@@ -1,0 +1,74 @@
+$schema: https://refinery.systems/ontology/spike
+title: An ordered consumer error triggers the generation check and a complete replay
+relationships:
+  references:
+    - service
+    - events
+    - restored-stream-reuses-positions
+objective:
+  - Does deleting and recreating a stream report an error while an ordered
+    consumer's consume context stays open?
+  - Does replacing that consumer after the generation check deliver every
+    retained sequence of the recreated stream, including sequences below the
+    previous stream's last sequence?
+  - Does the check work when stream management creates the missing stream,
+    and when only the consumer is deleted and the generation stays the same?
+background:
+  current-design: >-
+    The activity index uses an ordered, headers-only consumer and identifies
+    generations by stream creation time and the registry's generation record.
+  problems:
+    - An ordered consumer resets internally after deletion and resumes after
+      its last stream sequence, even when the stream's sequences restarted.
+ideas:
+  - Treat a consumer error as invalidating the index, stop the consume context
+    outside the error callback, run stream management and the generation
+    check, and create a fresh consumer from the generation's first sequence
+    or the same generation's last indexed sequence plus one.
+environment:
+  location: >-
+    `docs/spikes/assets/stream-recreation/`, in the standalone module
+    `docs/spikes/assets`. Run `run.sh`; its JSON lines are saved in
+    `result.jsonl`. Each case starts its own embedded NATS server on a random
+    loopback port with a temporary file store, removes the store and stops
+    the server on exit. No Discord connection or credentials are used.
+  tools:
+    - Go 1.27.3, linux/amd64
+    - Embedded nats-server v2.11.9 and nats.go v1.55.0, pinned in the spike module's go.mod
+findings:
+  consumer-error:
+    verdict: confirmed
+    notes: >-
+      Measured: after indexing old sequences 1 through 5, deletion reports
+      `nats: consumer deleted` while ConsumeContext.Closed remains open.
+      Without the check, the consumer receives only new sequences 6 and 7.
+  generation-replay:
+    verdict: confirmed working
+    notes: >-
+      Measured: the error callback invalidates ingestion; a worker stops the
+      old context, compares stream creation time, and starts a fresh ordered
+      consumer with deliver all. All new sequences 1 through 7 arrive.
+  management-before-comparison:
+    verdict: confirmed working
+    notes: >-
+      Measured: the error also arrives while the stream is absent. Creating
+      the missing stream before reading its creation time gives a changed
+      generation and all new sequences 1 through 7. With management disabled,
+      this step waits for the operator to create the stream.
+  unchanged-generation:
+    verdict: confirmed working
+    notes: >-
+      Measured: deleting only the consumer reports the same error, leaves the
+      creation time unchanged, and a fresh consumer starting at indexed
+      sequence 5 plus one receives sequences 6 and 7.
+conclusion: >-
+  On the measured versions, the reported error supplies the generation-check
+  trigger. The service uses that trigger and replaces the consume context;
+  it does not let the library's reset continue ingestion against the old
+  index. The recreation fallback is unnecessary for these observations.
+  The probe checks stream consumption and sequence coverage, not production
+  RPC concurrency or snapshot restoration; the service design specifies the
+  call gate and the stop-before-restore procedure separately.
+next-steps:
+  - The service's embedded-NATS tests exercise CountUnread, ListUnread and
+    Listen across the same recreation trace and concurrent calls.
