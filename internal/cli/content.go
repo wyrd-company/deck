@@ -11,6 +11,7 @@ import (
 	"time"
 
 	pb "github.com/wyrd-company/deck/internal/api/deckv1"
+	"github.com/wyrd-company/deck/internal/client"
 	"google.golang.org/protobuf/types/known/structpb"
 )
 
@@ -87,9 +88,7 @@ func (i *invocation) content() (*pb.Content, error) {
 			aliases = i.client.Config.Aliases.Roles
 		}
 		for _, value := range f.values[kind] {
-			if a, ok := aliases[value]; ok {
-				value = a
-			}
+			value = client.ResolveAlias(value, aliases)
 			id, err := parseID(value)
 			if err != nil {
 				return nil, invalid("--%s requires a snowflake or configured alias", kind)

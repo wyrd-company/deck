@@ -7,6 +7,18 @@ import (
 	"strings"
 )
 
+// ResolveAlias leaves digit-only references literal, even if a numeric alias
+// has the same spelling. Invalid numeric snowflakes must not fall back to aliases.
+func ResolveAlias(value string, aliases map[string]string) string {
+	if value != "" && strings.Trim(value, "0123456789") == "" {
+		return value
+	}
+	if alias, ok := aliases[value]; ok {
+		return alias
+	}
+	return value
+}
+
 // Reference parses an optional bot and nonzero snowflake, or a Discord thread
 // URL. Aliases are resolved by the caller before this function.
 func Reference(value string) (string, uint64, error) {

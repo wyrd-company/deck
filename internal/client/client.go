@@ -45,9 +45,7 @@ type Unread struct {
 // every matching deny reference. A present, empty allow list allows nothing.
 func Allowed(c *config.Client, bot string, channel uint64) bool {
 	match := func(ref string, deny bool) bool {
-		if alias, ok := c.Aliases.Channels[ref]; ok {
-			ref = alias
-		}
+		ref = ResolveAlias(ref, c.Aliases.Channels)
 		b, id, err := Reference(ref)
 		return err == nil && id == channel && (b == "" || b == bot || deny && bot == "")
 	}

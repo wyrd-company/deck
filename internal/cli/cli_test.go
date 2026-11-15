@@ -1218,3 +1218,38 @@ func TestSessionConfigurationErrorsNameFileAndFix(t *testing.T) {
 		}
 	}
 }
+
+func TestNumericReferencesOverrideAliases(t *testing.T) {
+	for _, target := range []string{"123", "helper/123", "default"} {
+		t.Run("deny/"+target, func(t *testing.T) {
+			f := setup(t)
+			f.doc["aliases"] = map[string]any{"channels": map[string]string{"123": "helper/999"}}
+			f.doc["channels"] = map[string]any{"default": "123", "deny": []string{"123"}}
+			f.save()
+			args := []string{"post", "--title", "Q", "--text", "hello"}
+			if target != "default" {
+				args = append(args, target)
+			}
+			code, _, stderr := f.run(args...)
+			if code != 3 || f.dialN != 0 {
+				t.Fatalf("deny bypass: %d dial=%d %s", code, f.dialN, stderr)
+			}
+		})
+	}
+	f := setup(t)
+	f.doc["aliases"] = map[string]any{"channels": map[string]string{"123": "helper/999"}, "users": map[string]string{"123": "999", "owner": "8"}, "roles": map[string]string{"123": "999", "editors": "9"}}
+	f.doc["channels"] = map[string]any{"allow": []string{"123"}}
+	f.save()
+	f.fake.post = func(_ context.Context, r *pb.PostRequest) (*pb.PostResponse, error) {
+		if r.Channel.ChannelId != 123 || !reflect.DeepEqual(r.Content.MentionUserIds, []uint64{123, 8}) || !reflect.DeepEqual(r.Content.MentionRoleIds, []uint64{123, 9}) {
+			t.Errorf("numeric reference redirected: %v", r)
+		}
+		return &pb.PostResponse{Thread: baseThread, Message: person(11, 7, "sent"), Position: &pb.StreamPosition{Epoch: 100, Sequence: 5}}, nil
+	}
+	f.result("post", "123", "--title", "Q", "--text", "hello", "--mention", "123", "--mention", "owner", "--mention-role", "123", "--mention-role", "editors")
+	code, _, _ := f.run("post", "999", "--title", "Q", "--text", "no")
+	if code != 3 {
+		t.Fatal("numeric allow redirected", code)
+	}
+}
+

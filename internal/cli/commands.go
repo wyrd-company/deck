@@ -49,9 +49,7 @@ func (i *invocation) check(bot string, id uint64) error {
 	return nil
 }
 func (i *invocation) channel(value string) (*pb.ChannelRef, error) {
-	if alias, ok := i.client.Config.Aliases.Channels[value]; ok {
-		value = alias
-	}
+	value = client.ResolveAlias(value, i.client.Config.Aliases.Channels)
 	bot, id, err := client.Reference(value)
 	if err != nil {
 		return nil, invalid("%v", err)
