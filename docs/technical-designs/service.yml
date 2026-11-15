@@ -174,7 +174,11 @@ design-challenges:
     sending, for as long as the stream holds them, restart or not; each
     message a send publishes carries the position the send started at in its
     `Deck-Send-Start` header, so the repeat's cursor starts where the first
-    send's did. Anything else sends: a repeat of a send that failed, and a
+    send's did. A send stays in flight until the index can find every message
+    it published. A forum starter also carries its safe poll failure in
+    `Deck-Poll-Error`, so a repeat restores `poll_error`; a repeated result
+    refreshes its thread metadata and checks its current grants. Anything else
+    sends: a repeat of a send that failed, and a
     repeat whose first send never reached the stream. The service sends
     Discord, for each reply and text channel post, a nonce derived from the
     key's fingerprint and the client's nonce (the first 25 characters of the
@@ -279,8 +283,7 @@ proposed-design:
     the channel's REQUIRE_TAG flag is set (INVALID_ARGUMENT without one), and
     then sends the poll, when there is one, as the thread's second message,
     because Discord drops a poll from a forum post's starter (measured). A
-    poll-only post uses its title as the starter's text. A
-    poll that fails to send leaves the post in place and is reported in
+    poll-only post uses its title as the starter's text. A poll that fails to send leaves the post in place and is reported in
     `poll_error`. In a text or announcement channel it sends the message, poll
     included, with the derived nonce and enforce_nonce, then starts a thread
     from it with the title, taking the existing thread on code 160004 as

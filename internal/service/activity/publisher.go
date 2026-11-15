@@ -47,7 +47,10 @@ func EnsureStream(ctx context.Context, js jetstream.JetStream, cfg config.NATS) 
 }
 
 // Envelope excludes API-only sequence and keeps the replay index in headers.
-func Envelope(prefix string, a *pb.Activity, start *pb.StreamPosition) (*nats.Msg, error) {
+// SendMetadata preserves the safe partial outcome needed to reconstruct a send.
+type SendMetadata struct{ PollError string }
+
+func Envelope(prefix string, a *pb.Activity, start *pb.StreamPosition, metadata ...SendMetadata) (*nats.Msg, error) {
 	if a == nil || a.Id == 0 || a.Time == nil || a.Bot == "" || a.ServerId == 0 || a.ChannelId == 0 || a.ThreadId == 0 {
 		return nil, errors.New("invalid activity")
 	}
@@ -85,6 +88,9 @@ func Envelope(prefix string, a *pb.Activity, start *pb.StreamPosition) (*nats.Ms
 		m.Header.Set("Deck-Sender-Key", a.SenderKey)
 		m.Header.Set("Deck-Nonce", a.Nonce)
 		m.Header.Set("Deck-Send-Start", fmt.Sprintf("%d:%d", start.Epoch, start.Sequence))
+		if len(metadata) > 0 && metadata[0].PollError != "" {
+			m.Header.Set("Deck-Poll-Error", metadata[0].PollError)
+		}
 	}
 	return m, nil
 }
@@ -118,8 +124,8 @@ func New(ctx context.Context, js jetstream.JetStream, prefix string) *Publisher 
 	go p.run()
 	return p
 }
-func (p *Publisher) Submit(a *pb.Activity, start *pb.StreamPosition) (<-chan Result, error) {
-	m, err := Envelope(p.prefix, a, start)
+func (p *Publisher) Submit(a *pb.Activity, start *pb.StreamPosition, metadata ...SendMetadata) (<-chan Result, error) {
+	m, err := Envelope(p.prefix, a, start, metadata...)
 	if err != nil {
 		return nil, err
 	}
@@ -136,8 +142,8 @@ func (p *Publisher) Submit(a *pb.Activity, start *pb.StreamPosition) (<-chan Res
 	}
 	return q.done, nil
 }
-func (p *Publisher) Publish(ctx context.Context, a *pb.Activity, start *pb.StreamPosition) (uint64, error) {
-	done, err := p.Submit(a, start)
+func (p *Publisher) Publish(ctx context.Context, a *pb.Activity, start *pb.StreamPosition, metadata ...SendMetadata) (uint64, error) {
+	done, err := p.Submit(a, start, metadata...)
 	if err != nil {
 		return 0, err
 	}

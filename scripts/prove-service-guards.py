@@ -51,4 +51,14 @@ probe('thread recovery boundary precedes the first reply', 'handler.go',
 probe('post poll is a second message', 'send.go',
       'message.Poll = nil', '// mutation: keep the poll on the starter',
       './internal/service', 'TestForumPollAndHeaders')
-print('PASS all 11 service guard probes completed', flush=True)
+probe('flight persists until the index can find its publication', 'send.go',
+      'if err = h.Index.Confirm(run, &CompletedSend{Thread: out.Thread, Messages: messages, Position: position, PollError: out.PollError}); err != nil {',
+      'if false {', './internal/service', 'TestRepeatWaitsForIndexAndRestoresPollFailure')
+probe('partial poll failures survive event replay', 'activity/publisher.go',
+      'm.Header.Set("Deck-Poll-Error", metadata[0].PollError)',
+      'm.Header.Set("Deck-Poll-ErroX", metadata[0].PollError)',
+      './internal/service', 'TestRepeatWaitsForIndexAndRestoresPollFailure')
+probe('completed sends refresh metadata and recheck their own grants', 'handler.go',
+      'if c.Thread == nil {', 'return c.Thread,nil; if c.Thread == nil {',
+      './internal/service', 'TestRepeatWaitsForIndexAndRestoresPollFailure')
+print('PASS all 14 service guard probes completed', flush=True)

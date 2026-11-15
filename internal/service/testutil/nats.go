@@ -1,3 +1,10 @@
+// ---
+// relationships:
+//
+//	verifies:
+//	  - service
+//
+// ---
 // Package testutil starts real, isolated JetStream servers for service tests.
 package testutil
 

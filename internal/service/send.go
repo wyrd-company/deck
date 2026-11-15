@@ -9,6 +9,7 @@ import (
 	"github.com/disgoorg/snowflake/v2"
 	pb "github.com/wyrd-company/deck/internal/api/deckv1"
 	"github.com/wyrd-company/deck/internal/config"
+	"github.com/wyrd-company/deck/internal/service/activity"
 	discord "github.com/wyrd-company/deck/internal/service/discord"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -49,11 +50,11 @@ func (h *Handler) send(ctx context.Context, k config.Key, nonce, operation strin
 		return proto.Clone(f.response), nil
 	}
 }
-func (h *Handler) publish(ctx context.Context, k config.Key, nonce string, a *pb.Activity, start *pb.StreamPosition) error {
+func (h *Handler) publish(ctx context.Context, k config.Key, nonce string, a *pb.Activity, start *pb.StreamPosition, metadata ...activity.SendMetadata) error {
 	a.SentBy = k.Name
 	a.SenderKey = h.fingerprints[k.Name]
 	a.Nonce = nonce
-	seq, err := h.Publisher.Publish(ctx, a, start)
+	seq, err := h.Publisher.Publish(ctx, a, start, metadata...)
 	if err != nil {
 		return unavailable()
 	}
@@ -101,7 +102,11 @@ func (h *Handler) Post(ctx context.Context, r *pb.PostRequest) (*pb.PostResponse
 			return nil, unavailable()
 		}
 		if completed != nil {
-			out := &pb.PostResponse{Thread: completed.Thread, Position: completed.Position}
+			thread, err := h.completedThread(run, k, completed)
+			if err != nil {
+				return nil, err
+			}
+			out := &pb.PostResponse{Thread: thread, Position: completed.Position, PollError: completed.PollError}
 			if len(completed.Messages) > 0 {
 				out.Message = completed.Messages[0]
 			}
@@ -169,9 +174,6 @@ func (h *Handler) Post(ctx context.Context, r *pb.PostRequest) (*pb.PostResponse
 		}
 		e, _ = h.Registry.Lookup(id)
 		out := &pb.PostResponse{Thread: threadValue(*thread, e, k.Name), Position: position, Message: discord.Activity(sent, e, id)}
-		if err = h.publish(run, k, r.Nonce, out.Message, position); err != nil {
-			return nil, err
-		}
 		if forum && poll != nil {
 			pollMessage := d.MessageCreate{Poll: poll, Nonce: discord.Nonce(h.fingerprints[k.Name], r.Nonce+":poll"), EnforceNonce: true, AllowedMentions: message.AllowedMentions}
 			sentPoll, err := client.Send(restCtx, id, pollMessage)
@@ -179,10 +181,21 @@ func (h *Handler) Post(ctx context.Context, r *pb.PostRequest) (*pb.PostResponse
 				out.PollError = status.Convert(discord.Error(err)).Message()
 			} else {
 				out.PollMessage = discord.Activity(sentPoll, e, id)
-				if err = h.publish(run, k, r.Nonce, out.PollMessage, position); err != nil {
-					return nil, err
-				}
+				out.Thread.LastMessageId = out.PollMessage.Id
 			}
+		}
+		if err = h.publish(run, k, r.Nonce, out.Message, position, activity.SendMetadata{PollError: out.PollError}); err != nil {
+			return nil, err
+		}
+		messages := []*pb.Activity{out.Message}
+		if out.PollMessage != nil {
+			if err = h.publish(run, k, r.Nonce, out.PollMessage, position); err != nil {
+				return nil, err
+			}
+			messages = append(messages, out.PollMessage)
+		}
+		if err = h.Index.Confirm(run, &CompletedSend{Thread: out.Thread, Messages: messages, Position: position, PollError: out.PollError}); err != nil {
+			return nil, unavailable()
 		}
 		return out, nil
 	})
@@ -222,7 +235,11 @@ func (h *Handler) Reply(ctx context.Context, r *pb.ReplyRequest) (*pb.ReplyRespo
 			return nil, unavailable()
 		}
 		if completed != nil && len(completed.Messages) > 0 {
-			return &pb.ReplyResponse{Thread: completed.Thread, Message: completed.Messages[0], Position: completed.Position}, nil
+			thread, err := h.completedThread(run, k, completed)
+			if err != nil {
+				return nil, err
+			}
+			return &pb.ReplyResponse{Thread: thread, Message: completed.Messages[0], Position: completed.Position}, nil
 		}
 		if err = h.Registry.BeginReply(run, id, e, k.Name); err != nil {
 			return nil, unavailable()
@@ -251,6 +268,9 @@ func (h *Handler) Reply(ctx context.Context, r *pb.ReplyRequest) (*pb.ReplyRespo
 		out.Thread.Archived = false
 		if err = h.publish(run, k, r.Nonce, out.Message, position); err != nil {
 			return nil, err
+		}
+		if err = h.Index.Confirm(run, &CompletedSend{Thread: out.Thread, Messages: []*pb.Activity{out.Message}, Position: position}); err != nil {
+			return nil, unavailable()
 		}
 		return out, nil
 	})

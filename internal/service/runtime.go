@@ -174,3 +174,5 @@ func (i *bootstrapIndex) Position(ctx context.Context) (*pb.StreamPosition, erro
 		return &pb.StreamPosition{Epoch: generation.Epoch, Sequence: info.State.LastSeq}, nil
 	}
 }
+
+func (i *bootstrapIndex) Confirm(context.Context, *CompletedSend) error { return nil }

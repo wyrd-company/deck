@@ -501,3 +501,5 @@ func TestCallerCancellationDoesNotCancelSend(t *testing.T) {
 		t.Fatal("client cancellation cancelled the send")
 	}
 }
+
+func (fixedIndex) Confirm(context.Context, *CompletedSend) error { return nil }

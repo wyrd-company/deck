@@ -36,11 +36,14 @@ import (
 type SendIndex interface {
 	Position(context.Context) (*pb.StreamPosition, error)
 	Completed(context.Context, string, string) (*CompletedSend, error)
+	// Confirm waits for every message in send to be discoverable by Completed.
+	Confirm(context.Context, *CompletedSend) error
 }
 type CompletedSend struct {
-	Thread   *pb.Thread
-	Messages []*pb.Activity
-	Position *pb.StreamPosition
+	PollError string
+	Thread    *pb.Thread
+	Messages  []*pb.Activity
+	Position  *pb.StreamPosition
 }
 type Dependencies struct {
 	Context   context.Context
@@ -392,4 +395,17 @@ func resolveTags(ch d.GuildChannel, names []string) ([]snowflake.ID, error) {
 		return nil, status.Error(codes.InvalidArgument, "tags: forum requires at least one tag")
 	}
 	return ids, nil
+}
+
+func (h *Handler) completedThread(ctx context.Context, k config.Key, c *CompletedSend) (*pb.Thread, error) {
+	if c.Thread == nil {
+		return nil, status.Error(codes.Internal, "completed send has no thread")
+	}
+	_, ch, e, err := h.target(ctx, k, c.Thread.Bot, c.Thread.ThreadId, true)
+	if err != nil {
+		return nil, err
+	}
+	t := threadValue(ch, e, k.Name)
+	t.CreatedByDeck = t.CreatedByDeck || c.Thread.CreatedByDeck
+	return t, nil
 }

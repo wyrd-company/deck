@@ -76,7 +76,11 @@ func Error(err error) error {
 			}
 			walk(fields, "")
 			sort.Strings(paths)
-			return status.Error(codes.InvalidArgument, "Discord validation failed: "+strings.Join(paths, ", "))
+			detail := "Discord validation failed"
+			if len(paths) > 0 {
+				detail += ": " + strings.Join(paths, ", ")
+			}
+			return status.Error(codes.InvalidArgument, detail)
 		case 50013:
 			names := []string{}
 			for _, name := range []string{"View Channel", "Send Messages in Threads", "Send Messages", "Create Public Threads", "Create Private Threads", "Attach Files", "Embed Links", "Send Polls", "Read Message History"} {

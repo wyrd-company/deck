@@ -65,7 +65,11 @@ description: >-
   Discord message type, on messages only. `Deck-Sent-By` is the client key's
   name, `Deck-Sender-Key` its fingerprint, `Deck-Nonce` the client's nonce
   and `Deck-Send-Start` the stream position the send started at, as
-  `<epoch>:<sequence>`, on messages deck sent only. `Deck-Schema` is
+  `<epoch>:<sequence>`, on messages deck sent only. `Deck-Poll-Error`, on a
+  forum starter whose
+  separate poll failed, preserves the safe `poll_error` returned for that
+  send so a repeat after restart returns the same partial outcome.
+  `Deck-Schema` is
   `deck.v1.Activity`. The headers carry everything the service's activity
   index needs, so the index replays the stream headers only.
 
