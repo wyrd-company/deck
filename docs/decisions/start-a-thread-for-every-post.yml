@@ -1,0 +1,42 @@
+$schema: https://refinery.systems/ontology/decision-record
+relationships:
+  contextualizes:
+    - discord-conversations
+    - service
+    - command-line-interface
+  shaped-by:
+    - discord-forum-post-and-gateway-reply
+description: >-
+  The issue names two operations, a forum post and a reply in a thread, and
+  the event subject names a thread. A client configured with a text channel as
+  its default, as the test server's TEST_CHANNEL is, needs `deck post` to mean
+  something there too.
+considered-options:
+  "1": >-
+    Post only to forum and media channels, and refuse text and announcement
+    channels.
+  "2": >-
+    In a text or announcement channel, send the message and start a public
+    thread from it with the post's title, so that every post is a thread whose
+    snowflake is its first message's.
+  "3": >-
+    In a text or announcement channel, send a plain message and treat the
+    channel itself as the conversation.
+decision-outcome:
+  chosen-option: 2
+  justification: >-
+    The spike showed a thread started from a message has the message's
+    snowflake, as a forum post has its starter message's, so one model covers
+    all four channel types: every conversation is a thread, every subject names
+    one, and replies and reads work the same. Option 3 breaks the subject and
+    the touched-thread rule, since the channel would carry everyone's
+    messages. Option 1 leaves text channels unusable for no gain.
+expected-outcomes:
+  positive:
+    - post, reply, read, listen and events behave the same in every channel
+      type that takes posts.
+  negative:
+    - In a text channel, a post leaves its first message in the channel with a
+      thread on it, which is how Discord shows any thread there.
+    - Starting a thread needs the bot's Create Public Threads permission in
+      text and announcement channels.

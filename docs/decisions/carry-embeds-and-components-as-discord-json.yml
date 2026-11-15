@@ -1,0 +1,40 @@
+$schema: https://refinery.systems/ontology/decision-record
+relationships:
+  contextualizes:
+    - grpc-api
+    - service
+description: >-
+  Posts and replies carry embeds and components, which Discord defines in
+  large and changing JSON schemas (Components V2 added layout components in
+  2025). The API must carry them from the client to the service and back in
+  activity, and agents write them by hand.
+considered-options:
+  "1": >-
+    Mirror Discord's embed and component objects as protobuf messages.
+  "2": >-
+    Carry each embed and component as a `google.protobuf.Struct` holding
+    Discord's own JSON object, decoded into disgo's types on the service.
+  "3": >-
+    Carry each as raw JSON bytes.
+decision-outcome:
+  chosen-option: 2
+  justification: >-
+    Discord's documentation and examples are the reference agents already
+    write from, and option 2 lets them write exactly that JSON. disgo's types
+    and Discord's own validation check it on the service. A Struct is a JSON
+    object in protojson, so events carry embeds and components as plain JSON
+    objects. Option 1 copies a schema deck does not own and falls behind each
+    Discord change. Option 3 is the same on the wire but appears as base64
+    strings in protojson and therefore in every event.
+expected-outcomes:
+  positive:
+    - A new Discord embed or component field works as soon as disgo knows it,
+      with no API change.
+    - Events show embeds and components in the form Discord documents.
+  negative:
+    - The API cannot type-check embeds and components; errors come from disgo
+      decoding and from Discord's validation, which the service returns with
+      field paths.
+    - Struct numbers are doubles, so an integer in an embed or component above
+      2^53 loses precision; Discord sends snowflakes in these objects as
+      strings.

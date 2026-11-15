@@ -1,0 +1,35 @@
+$schema: https://refinery.systems/ontology/decision-record
+relationships:
+  contextualizes:
+    - client
+    - grpc-api
+    - discord-conversations
+description: >-
+  Unread is per session, and session affinity is stored only on the client's
+  machine. Read state could still be kept on the service, keyed by something
+  the client sends, or on the client with the service only counting.
+considered-options:
+  "1": >-
+    Cursors and the session's own message snowflakes in the client's store;
+    every unread call sends them and the service counts.
+  "2": >-
+    Read state on the service, keyed by client key and an opaque session token
+    the client derives from its identifiers.
+  "3": >-
+    Read state on the service per client key, shared by every session on that
+    key.
+decision-outcome:
+  chosen-option: 1
+  justification: >-
+    The invariant keeps session affinity off the service, and an opaque session
+    token in option 2 is affinity under another name. Option 3 lets one
+    session's read hide activity from another session on the same machine.
+    Option 1 costs a few snowflakes per thread in each request and keeps the
+    service free of per-session state.
+expected-outcomes:
+  positive:
+    - The service holds no session state of any kind.
+    - Two sessions on one machine have independent read state.
+  negative:
+    - Read state does not follow a session to another machine.
+    - Each unread call carries one cursor per thread of the session.

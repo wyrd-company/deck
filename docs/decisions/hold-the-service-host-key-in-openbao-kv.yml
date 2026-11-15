@@ -1,0 +1,33 @@
+$schema: https://refinery.systems/ontology/decision-record
+relationships:
+  contextualizes:
+    - transport
+    - configuration
+description: >-
+  The service needs an SSH host key that clients pin. Secrets and keys come
+  from OpenBao or Vault, and the client key is a Transit key that never leaves
+  OpenBao. The host key could follow the same path or be read once.
+considered-options:
+  "1": >-
+    An OpenSSH ed25519 private key in a KV v2 field, read once at start.
+  "2": >-
+    A Transit ed25519 key that signs every host-key proof, so the private key
+    never leaves OpenBao.
+  "3": >-
+    A key the service generates on first start and keeps on a volume.
+decision-outcome:
+  chosen-option: 1
+  justification: >-
+    With option 1 the service reads OpenBao or Vault only at start, so a
+    running service keeps accepting connections when OpenBao is unreachable,
+    and its healthcheck depends on the gateway and NATS alone, as the issue
+    asks. Option 2 makes every client connection depend on OpenBao. Option 3
+    needs a volume and changes the key whenever the volume is lost, which
+    breaks every client's pin.
+expected-outcomes:
+  positive:
+    - Rotating the host key is a KV write and a restart, and clients update
+      one configuration value.
+  negative:
+    - The host private key is in the service's memory for as long as it runs,
+      as the bot tokens are.

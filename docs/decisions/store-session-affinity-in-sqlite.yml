@@ -1,0 +1,40 @@
+$schema: https://refinery.systems/ontology/decision-record
+relationships:
+  contextualizes:
+    - client
+description: >-
+  Session affinity, cursors and sent messages live on the client's machine,
+  where several agents run deck at once and a relay runs deck resolve beside
+  them. The store must take concurrent writers from separate processes, answer
+  a lookup by thread and by session, and build into a client compiled with
+  CGO_ENABLED=0 for Linux and macOS.
+considered-options:
+  "1": >-
+    SQLite through the pure-Go `modernc.org/sqlite` driver, in WAL mode with a
+    busy timeout.
+  "2": >-
+    bbolt, a pure-Go key-value file with one writer at a time under a file
+    lock.
+  "3": >-
+    One small file per session and thread under a state directory, each
+    written atomically by rename.
+decision-outcome:
+  chosen-option: 1
+  justification: >-
+    SQLite gives transactions across the four related records a post writes,
+    lookups in both directions through indexes, and a cursor update that never
+    moves back in one statement. WAL mode lets the many readers run while one
+    writer commits. bbolt holds an exclusive lock for the whole time a process
+    has the file open for writing, so concurrent commands queue behind each
+    other, and every query in two directions needs a second bucket kept in
+    step by hand. Files per record have no transaction across records and
+    answer "which sessions touched this thread" only by scanning.
+expected-outcomes:
+  positive:
+    - Concurrent deck commands on one machine commit independently.
+    - The relay's resolve is one indexed query.
+  negative:
+    - The pure-Go driver is larger and slower than the C library, which a
+      command-line client does not feel.
+    - The store is a binary file a person inspects with sqlite3, not a text
+      editor.

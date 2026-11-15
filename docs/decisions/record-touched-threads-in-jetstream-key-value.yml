@@ -1,0 +1,38 @@
+$schema: https://refinery.systems/ontology/decision-record
+relationships:
+  contextualizes:
+    - service
+    - discord-conversations
+description: >-
+  The service must know, for every gateway event, whether its thread is
+  touched, and for every call whether the calling key touched the thread. The
+  record must outlive restarts, and the service runs as a container where NATS
+  JetStream is assumed and no volume is.
+considered-options:
+  "1": >-
+    A JetStream key-value bucket with one entry per thread, loaded and watched
+    into memory.
+  "2": >-
+    A SQLite file on a volume mounted into the container.
+  "3": >-
+    Markers in Discord itself, such as a forum tag or a pinned message per
+    touched thread, read back from Discord at start.
+decision-outcome:
+  chosen-option: 1
+  justification: >-
+    JetStream is already a dependency, so the bucket adds no new system, no
+    volume and no backup of its own, and a watch keeps every instance's
+    in-memory map current. Option 2 needs a volume and makes the container
+    stateful. Option 3 shows deck's bookkeeping to every member of the server,
+    needs permissions to manage tags or pins, and cannot record which key
+    touched a thread without exposing key names.
+expected-outcomes:
+  positive:
+    - The service keeps no local state; its registry survives restarts and
+      redeployments.
+    - Revision-checked writes let two touches of one thread both land.
+  negative:
+    - Deployers configure JetStream permissions for the bucket as well as the
+      stream.
+    - Without `nats.threads.max_age` the registry grows by one small entry per
+      thread for as long as the bucket lives.
