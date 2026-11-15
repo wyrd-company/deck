@@ -154,6 +154,9 @@ func (i *invocation) send(ctx context.Context) error {
 		threadID = thread.ThreadId
 	}
 	if err = i.client.Store.Pending(i.client.Session, i.client.Fingerprint, nonce, i.flags.command, threadID); err != nil {
+		if errors.Is(err, store.ErrNonceConflict) {
+			return invalid("%v", err)
+		}
 		return fmt.Errorf("record pending send: %w", err)
 	}
 	var t *pb.Thread
@@ -193,8 +196,12 @@ func (i *invocation) send(ctx context.Context) error {
 		return err
 	}
 	if t == nil || message == nil || position == nil {
-		i.client.Store.SendState(i.client.Fingerprint, nonce, "unknown")
-		return &failure{4, "outcome unknown: incomplete service result; inspect Discord before repeating: " + repeatCommand(i.flags, nonce)}
+		recordErr := i.client.Store.SendState(i.client.Fingerprint, nonce, "unknown")
+		msg := "outcome unknown: incomplete service result; inspect Discord before repeating: " + repeatCommand(i.flags, nonce)
+		if recordErr != nil {
+			msg += "; could not record send outcome: " + recordErr.Error()
+		}
+		return &failure{4, msg}
 	}
 	i.result["thread"] = apiJSON(t)
 	i.result["message"] = apiJSON(message)

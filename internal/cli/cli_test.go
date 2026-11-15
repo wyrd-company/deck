@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -1422,5 +1423,96 @@ func TestReadCommitFailureAfterOutput(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// Fault injection only: production packages use Store rather than SQL directly.
+func installStoreFailure(t *testing.T, path, trigger string) {
+	t.Helper()
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err = db.Exec(trigger); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestNonceConflictIsUsageError(t *testing.T) {
+	for _, scenario := range []string{"session", "kind", "target", "store failure"} {
+		for _, jsonMode := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/json=%v", scenario, jsonMode), func(t *testing.T) {
+				f := setup(t)
+				f.result("reply", "10", "--text", "original", "--nonce", "owned")
+				args := []string{"reply", "10", "--text", "repeat", "--nonce", "owned"}
+				want := 2
+				switch scenario {
+				case "session":
+					args = append(args, "--session", "DECK_TEST_SESSION=two")
+				case "kind":
+					args = []string{"post", "--title", "Q", "--text", "repeat", "--nonce", "owned"}
+				case "target":
+					args[1] = "11"
+					f.fake.get = func(context.Context, *pb.GetThreadRequest) (*pb.GetThreadResponse, error) {
+						th := proto.Clone(baseThread).(*pb.Thread)
+						th.ThreadId = 11
+						return &pb.GetThreadResponse{Thread: th}, nil
+					}
+				case "store failure":
+					installStoreFailure(t, f.db, `CREATE TRIGGER fail_pending BEFORE INSERT ON sends BEGIN SELECT RAISE(ABORT, 'injected pending failure'); END`)
+					args[len(args)-1] = "newNonce"
+					want = 1
+				}
+				if jsonMode {
+					args = append(args, "--json")
+				}
+				calls := 0
+				f.fake.post = func(context.Context, *pb.PostRequest) (*pb.PostResponse, error) {
+					calls++
+					return nil, status.Error(codes.Internal, "should not call")
+				}
+				f.fake.reply = func(context.Context, *pb.ReplyRequest) (*pb.ReplyResponse, error) {
+					calls++
+					return nil, status.Error(codes.Internal, "should not call")
+				}
+				code, out, stderr := f.run(args...)
+				if code != want || calls != 0 {
+					t.Fatalf("exit=%d want=%d calls=%d out=%s err=%s", code, want, calls, out, stderr)
+				}
+				needle := "nonce already belongs"
+				if want == 1 {
+					needle = "record pending send"
+				}
+				if !strings.Contains(out+stderr, needle) {
+					t.Fatal(code, out, stderr)
+				}
+			})
+		}
+	}
+}
+
+func TestIncompleteResultReportsOutcomeWriteFailure(t *testing.T) {
+	for _, jsonMode := range []bool{false, true} {
+		t.Run(fmt.Sprint(jsonMode), func(t *testing.T) {
+			f := setup(t)
+			s := f.open()
+			f.fake.post = func(_ context.Context, r *pb.PostRequest) (*pb.PostResponse, error) {
+				installStoreFailure(t, f.db, `CREATE TRIGGER fail_outcome BEFORE UPDATE OF state ON sends BEGIN SELECT RAISE(ABORT, 'injected outcome failure'); END`)
+				return &pb.PostResponse{}, nil
+			}
+			args := []string{"post", "--title", "Q", "--text", "hello", "--nonce", "broken"}
+			if jsonMode {
+				args = append(args, "--json")
+			}
+			code, out, stderr := f.run(args...)
+			if code != 4 || !strings.Contains(out+stderr, "outcome unknown") || !strings.Contains(out+stderr, "could not record send outcome") || !strings.Contains(out+stderr, "injected outcome failure") {
+				t.Fatal(code, out, stderr)
+			}
+			record, err := s.SendRecord(keyA, "broken")
+			if err != nil || record.State != "pending" {
+				t.Fatalf("failed state update: %v %v", record, err)
+			}
+		})
 	}
 }

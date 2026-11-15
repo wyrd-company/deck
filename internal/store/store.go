@@ -190,6 +190,9 @@ func (s *Store) write(fn func(*sql.Tx) error) error {
 	return tx.Commit()
 }
 
+// ErrNonceConflict means an explicit repeat would change its session or target.
+var ErrNonceConflict = errors.New("nonce already belongs to another session or target; use the original session and command")
+
 // Pending is committed before the RPC, so relays can suppress an event even
 // while its sending command is still waiting for a response. A nonce belongs
 // to its original session and kind; repeats cannot steal another send.
@@ -203,7 +206,7 @@ func (s *Store) Pending(ss session.Session, key, nonce, kind string, thread uint
 		err := tx.QueryRow(`SELECT session_key,kind,thread_id FROM sends WHERE key_fingerprint=? AND nonce=?`, key, nonce).Scan(&owner, &previousKind, &previousThread)
 		if err == nil {
 			if owner != ss.Key() || kind != previousKind || (kind == "reply" && uint64(previousThread.Int64) != thread) {
-				return errors.New("nonce already belongs to another session or target; use the original session and command")
+				return ErrNonceConflict
 			}
 			return nil
 		}
