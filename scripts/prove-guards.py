@@ -56,6 +56,12 @@ def main():
          'if err := compiled[name].Validate(raw); err != nil {',
          'if err := compiled[name].Validate(raw); false {',
          ['go', 'test', '-count=1', '-run', '^TestContractFixtures$', './internal/config']),
+        ('unevaluated sibling filtering', 'internal/config/load.go',
+         'if !declaresProperty(schema, e.InstanceLocation) {', 'if true {',
+         ['go', 'test', '-count=1', '-run', '^TestExactInvalidFieldPaths$', './internal/config']),
+        ('default home ignores environment', 'internal/config/path_linux.go',
+         'func userHome() (string, error) {', 'func userHome() (string, error) { return os.Getenv("HOME"),nil',
+         ['go', 'test', '-count=1', '-run', '^TestDefaultClientPathIgnoresEnvironment$', './internal/config']),
         ('grant bot reference', 'internal/config/validate.go', '!bots[bot]', 'false',
          ['go', 'test', '-count=1', '-run', '^TestServiceReportsAllCrossFields$', './internal/config']),
         ('HTTP proxy isolation', 'internal/vault/client.go', 'Proxy: nil,', 'Proxy: http.ProxyFromEnvironment,',
@@ -64,14 +70,28 @@ def main():
          'MinVersion: tls.VersionTLS12, RootCAs: roots',
          'MinVersion: tls.VersionTLS12, RootCAs: roots, InsecureSkipVerify: true',
          ['go', 'test', '-count=1', '-run', '^TestHTTPSRejectsUntrustedCA$', './internal/vault']),
-        ('KV reads once per path' , 'internal/vault/kv.go', 'c.cache[path] = data', '// mutation: do not cache',
+        ('typed unavailable errors', 'internal/vault/client.go',
+         'return nil, fmt.Errorf("%w: check address, CA and timeout", ErrUnavailable)',
+         'return nil, errors.New("untyped dial failure")',
+         ['go', 'test', '-count=1', '-run', '^TestClassifiedErrors$', './internal/vault']),
+        ('Transit signature verification', 'internal/vault/transit.go',
+         'if !ed25519.Verify(key.PublicKey, data, signature) {', 'if false {',
+         ['go', 'test', '-count=1', '-run', '^TestSignTransitRejectsWrongKey$', './internal/vault']),
+        ('KV reads once per path'  , 'internal/vault/kv.go', 'c.cache[path] = data', '// mutation: do not cache',
          ['go', 'test', '-count=1', '-run', '^TestLiveAddressForms/unix-agent$', './internal/vault']),
         ('KV concurrent cold-cache fills', 'internal/vault/kv.go',
          'c.mu.Lock()\n\tdefer c.mu.Unlock()', '// mutation: no serialization',
          ['go', 'test', '-count=1', '-run', '^TestLiveAddressForms/unix-agent$', './internal/vault']),
         ('AppRole token revocation' , 'internal/vault/client.go', 'if !c.issued {', 'if true {',
          ['go', 'test', '-count=1', '-run', '^TestLiveAppRoleAndFailures$', './internal/vault']),
-        ('missing identity stays empty', 'internal/transport/identity.go', '\n\treturn ""\n}', '\n\treturn "attacker"\n}',
+        ('peer identity precedence', 'internal/transport/identity.go',
+         'if p, ok := peer.FromContext(ctx); ok {',
+         'if name,ok:=ctx.Value(keyContext{}).(string);ok{return name}; if p, ok := peer.FromContext(ctx); ok {',
+         ['go', 'test', '-count=1', '-run', '^TestCallingKey$', './internal/transport']),
+        ('CI compiler module coverage', '.github/workflows/ci.yml',
+         'go-version: "1.27.3"', 'go-version: "1.27.1"',
+         ['python3', 'scripts/check-ci-go.py'], 'CI Go 1.27.1 is older'),
+        ('missing identity stays empty' , 'internal/transport/identity.go', '\n\treturn ""\n}', '\n\treturn "attacker"\n}',
          ['go', 'test', '-count=1', '-run', '^TestCallingKey$', './internal/transport']),
     ]
     for probe in probes:
@@ -99,7 +119,17 @@ def main():
             env.pop('DECK_BAO', None)
             require_failure(['task', 'ci'], 'CI requires the OpenBao tests', env)
         print('PASS guard: task ci rejects skipped real OpenBao tests', flush=True)
-    print(f'PASS all {len(probes) + (3 if args.integration else 0)} requested guard probes completed')
+        for name,output in [('empty run', ''), ('arbitrary skip', '--- SKIP: TestNewReason (0.00s)\n--- PASS: TestLiveAddressForms (0.00s)\n')]:
+            with tempfile.TemporaryDirectory(prefix='deck-ci-output-') as directory:
+                shim = Path(directory) / 'go'
+                # A controlled go process reports successful exit but produces
+                # no live-test completion, or a skip with an unrelated reason.
+                shim.write_text('#!/bin/sh\ncat <<' + "'EOF'" + '\n' + output + 'EOF\n')
+                shim.chmod(0o755)
+                env = dict(os.environ, PATH=directory + os.pathsep + os.environ['PATH'])
+                require_failure(['bash', 'scripts/test-ci.sh'], 'CI requires the OpenBao tests', env)
+            print(f'PASS guard: task ci rejects {name}', flush=True)
+    print(f'PASS all {len(probes) + (5 if args.integration else 0)} requested guard probes completed')
 
 
 if __name__ == '__main__':

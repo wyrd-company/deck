@@ -194,6 +194,12 @@ func (c *Client) request(ctx context.Context, method, path string, body any) (ma
 	const maxResponse = 16 << 20
 	raw, err := io.ReadAll(io.LimitReader(response.Body, maxResponse+1))
 	if err != nil {
+		if ctx.Err() != nil {
+			return nil, fmt.Errorf("%w: response interrupted: %w", ErrUnavailable, ctx.Err())
+		}
+		if errors.Is(err, context.DeadlineExceeded) {
+			return nil, fmt.Errorf("%w: response timed out: %w", ErrUnavailable, context.DeadlineExceeded)
+		}
 		return nil, fmt.Errorf("%w: cannot read API response", ErrUnavailable)
 	}
 	if len(raw) > maxResponse {

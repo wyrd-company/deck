@@ -485,3 +485,22 @@ func TestSignTransitRejectsWrongKey(t *testing.T) {
 		t.Fatal("accepted a well-formed signature from a different key")
 	}
 }
+
+func TestBodyTimeoutClassification(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", "100")
+		w.WriteHeader(200)
+		w.(http.Flusher).Flush()
+		<-r.Context().Done()
+	}))
+	defer server.Close()
+	c, err := New(context.Background(), config.Vault{Address: server.URL, Timeout: 20 * time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close(context.Background())
+	_, err = c.ReadSecret(context.Background(), "host_key", config.SecretRef{Mount: "secret", Path: "x", Field: "key"})
+	if !errors.Is(err, ErrUnavailable) || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("body timeout classification: %v", err)
+	}
+}
