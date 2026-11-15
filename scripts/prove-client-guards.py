@@ -9,7 +9,7 @@ import runpy
 
 helpers = runpy.run_path(str(Path(__file__).with_name('prove-guards.py')))
 mutate = helpers['mutate']
-helpers['require_pass'](['go', 'test', '-count=1', './internal/cli', './internal/store'])
+helpers['require_pass'](['go', 'test', '-count=1', './internal/cli', './internal/store', './cmd/deck'])
 probes = [
     ('pre-RPC durable send record', 'internal/cli/commands.go',
      'if err = i.client.Store.Pending(i.client.Session, i.client.Fingerprint, nonce, i.flags.command, threadID, channel); err != nil {',
@@ -167,6 +167,17 @@ probes.extend([
     ('non touched threads add nothing to count', 'internal/client/client.go',
      'n = 0', '_ = n',
      ['go', 'test', '-count=1', '-run', '^TestNonTouchedThreadsContributeNothing$', './internal/client']),
+])
+probes.extend([
+    ('production dial records server-authenticated identity', 'cmd/deck/client_connection.go',
+     'Fingerprint: c.Fingerprint,', 'Fingerprint: "wrong-key",',
+     ['go', 'test', '-count=1', '-run', '^TestDefaultDialRecordsServerAuthenticatedKey$', './cmd/deck'],
+     'pre-RPC identity differs from server-authenticated key'),
+    ('real dial errors discard secret-bearing Vault bodies', 'internal/vault/client.go',
+     'return nil, &StatusError{Code: response.StatusCode}',
+     'body, _ := io.ReadAll(response.Body); return nil, fmt.Errorf("unsafe upstream: %s", body)',
+     ['go', 'test', '-count=1', '-run', '^TestDefaultDialErrorsDoNotExposeCredentials/transit_sign_failure', './cmd/deck'],
+     'real dial error/output exposed token or signature'),
 ])
 for probe in probes:
     mutate(*probe)
