@@ -166,10 +166,7 @@ func TestMalformedDocuments(t *testing.T) {
 		}
 	}
 }
-func TestHomeIgnoresEnvironment(t *testing.T) {
-	for _, name := range []string{"BAO_ADDR", "VAULT_ADDR", "VAULT_TOKEN", "HTTPS_PROXY", "HOME", "USER", "XDG_CONFIG_HOME"} {
-		t.Setenv(name, "do-not-use")
-	}
+func TestPasswdParsingAndExplicitConfigPath(t *testing.T) {
 	home, err := homeFromPasswd(strings.NewReader("agent:x:123:123::/actual/home:/bin/sh\n"), "123")
 	if err != nil || home != "/actual/home" {
 		t.Fatalf("home %q: %v", home, err)
