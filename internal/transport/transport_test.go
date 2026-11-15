@@ -176,41 +176,22 @@ func serveTest(t *testing.T, keys []config.Key, host ssh.Signer, handler deckv1.
 	return l.Addr().String()
 }
 
-type grantHandler struct {
+type identityHandler struct {
 	deckv1.UnimplementedDeckServiceServer
-	metadataReads atomic.Int32
-	calls         sync.Map
+	calls sync.Map
 }
 
-func (h *grantHandler) ListChannels(ctx context.Context, _ *deckv1.ListChannelsRequest) (*deckv1.ListChannelsResponse, error) {
+func (h *identityHandler) ListChannels(ctx context.Context, _ *deckv1.ListChannelsRequest) (*deckv1.ListChannelsResponse, error) {
 	h.calls.Store(KeyName(ctx)+":ListChannels", true)
-	out := &deckv1.ListChannelsResponse{}
-	for _, channel := range []*deckv1.Channel{{Bot: "helper", ServerId: 10, ChannelId: 11, Name: KeyName(ctx)}, {Bot: "helper", ServerId: 20, ChannelId: 21, Name: KeyName(ctx)}} {
-		if CheckTarget(ctx, channel.Bot, channel.ServerId, channel.ChannelId) == nil {
-			out.Channels = append(out.Channels, channel)
-		}
-	}
-	return out, nil
+	return &deckv1.ListChannelsResponse{Channels: []*deckv1.Channel{{Name: KeyName(ctx)}}}, nil
 }
-func (h *grantHandler) GetThread(ctx context.Context, req *deckv1.GetThreadRequest) (*deckv1.GetThreadResponse, error) {
+func (h *identityHandler) GetThread(ctx context.Context, req *deckv1.GetThreadRequest) (*deckv1.GetThreadResponse, error) {
 	h.calls.Store(KeyName(ctx)+":GetThread", true)
-	ref := req.GetThread()
-	if err := CheckBot(ctx, ref.GetBot()); err != nil {
-		return nil, err
-	}
-	h.metadataReads.Add(1)
-	server, channel := uint64(10), uint64(11)
-	if ref.GetThreadId() == 22 {
-		server, channel = 20, 21
-	}
-	if err := CheckTarget(ctx, ref.Bot, server, channel); err != nil {
-		return nil, err
-	}
-	return &deckv1.GetThreadResponse{Thread: &deckv1.Thread{Bot: ref.Bot, ThreadId: ref.ThreadId, ServerId: server, ChannelId: channel, Name: KeyName(ctx)}}, nil
+	return &deckv1.GetThreadResponse{Thread: &deckv1.Thread{Name: KeyName(ctx)}}, nil
 }
-func (h *grantHandler) Listen(req *deckv1.ListenRequest, stream grpc.ServerStreamingServer[deckv1.ListenResponse]) error {
+func (h *identityHandler) Listen(req *deckv1.ListenRequest, stream grpc.ServerStreamingServer[deckv1.ListenResponse]) error {
 	h.calls.Store(KeyName(stream.Context())+":Listen", true)
-	if len(Grants(stream.Context())) != 1 || KeyName(stream.Context()) == "" {
+	if KeyName(stream.Context()) == "" {
 		return status.Error(codes.Internal, "missing stream identity")
 	}
 	if err := stream.Send(&deckv1.ListenResponse{Through: &deckv1.StreamPosition{Epoch: uint64(KeyName(stream.Context())[0])}}); err != nil {
@@ -226,22 +207,21 @@ func requireCode(t *testing.T, err error, code codes.Code) {
 	}
 }
 
-func TestLiveSSHGrants(t *testing.T) {
+func TestLiveSSHIdentities(t *testing.T) {
 	b := transportBao(t)
 	a := b.signer(t, "a")
 	bb := b.signer(t, "b")
 	_ = b.signer(t, "unknown")
 	host := testHost(t)
-	handler := &grantHandler{}
-	keys := []config.Key{{Name: "A", PublicKey: DescribeKey(a.PublicKey(), "").PublicKey, Grants: []config.Grant{{Bot: "helper", Server: "10", Channels: []string{"*"}}}}, {Name: "B", PublicKey: DescribeKey(bb.PublicKey(), "").PublicKey, Grants: []config.Grant{{Bot: "helper", Server: "20", Channels: []string{"21"}}}}}
+	handler := &identityHandler{}
+	keys := []config.Key{{Name: "A", PublicKey: DescribeKey(a.PublicKey(), "").PublicKey}, {Name: "B", PublicKey: DescribeKey(bb.PublicKey(), "").PublicKey}}
 	address := serveTest(t, keys, host, handler)
-	// Mutating the original config after startup must not widen grants.
-	keys[0].Grants[0].Channels[0] = "99"
+	// The configured identity snapshot must survive caller-side config changes.
+	keys[0].Name = "changed"
 	cfg := &config.Client{Vault: b.cfg, Service: config.ServiceEndpoint{Address: address, HostKey: DescribeKey(host.PublicKey(), "").PublicKey, Timeout: 3 * time.Second}, Key: config.TransitKey{Mount: "identities", Name: "a"}}
 	for _, test := range []struct {
 		name, key string
-		channel   uint64
-	}{{"A", "a", 11}, {"B", "b", 21}} {
+	}{{"A", "a"}, {"B", "b"}} {
 		t.Run(test.name, func(t *testing.T) {
 			cfg.Key.Name = test.key
 			before := b.signs.Load()
@@ -271,8 +251,8 @@ func TestLiveSSHGrants(t *testing.T) {
 						t.Error(err)
 						return
 					}
-					if len(result.Channels) != 1 || result.Channels[0].ChannelId != test.channel || result.Channels[0].Name != test.name {
-						t.Errorf("wrong grant or identity: %v", result)
+					if len(result.Channels) != 1 || result.Channels[0].Name != test.name {
+						t.Errorf("wrong identity: %v", result)
 					}
 				}()
 			}
@@ -289,17 +269,6 @@ func TestLiveSSHGrants(t *testing.T) {
 			cancel()
 			_, err = stream.Recv()
 			requireCode(t, err, codes.Canceled)
-			if test.key == "a" {
-				_, err = conn.API.GetThread(ctx, &deckv1.GetThreadRequest{Thread: &deckv1.ThreadRef{Bot: "helper", ThreadId: 22}})
-				requireCode(t, err, codes.PermissionDenied)
-				before := handler.metadataReads.Load()
-				_, err = conn.API.GetThread(ctx, &deckv1.GetThreadRequest{Thread: &deckv1.ThreadRef{Bot: "not-granted", ThreadId: 12}})
-				requireCode(t, err, codes.PermissionDenied)
-				if handler.metadataReads.Load() != before {
-					t.Fatal("bot authorization followed metadata read")
-				}
-			}
-
 			if _, err := conn.API.GetThread(ctx, &deckv1.GetThreadRequest{Thread: &deckv1.ThreadRef{Bot: "helper", ThreadId: map[string]uint64{"a": 12, "b": 22}[test.key]}}); err != nil {
 				t.Fatal(err)
 			}
@@ -350,7 +319,8 @@ func TestLiveSSHGrants(t *testing.T) {
 
 // An offered key can differ from the subsequently signed key: the first two
 // marshals are the unsigned query and its acknowledgement, then the signature
-// packet contains B. This reproduces the callback-cache identity confusion.
+// packet contains B. This checks an offered key followed by another signed key;
+// TestLivePublicKeyCallbackCache exercises the distinct A/B/A cache regression.
 type offeredKey struct {
 	ssh.PublicKey
 	signed   ssh.PublicKey
@@ -376,8 +346,8 @@ func TestLiveOfferedAndSignedKeys(t *testing.T) {
 	a := b.signer(t, "offer")
 	bb := b.signer(t, "sign")
 	host := testHost(t)
-	keys := []config.Key{{Name: "offered", PublicKey: DescribeKey(a.PublicKey(), "").PublicKey, Grants: []config.Grant{{Bot: "helper", Server: "10", Channels: []string{"*"}}}}, {Name: "signed", PublicKey: DescribeKey(bb.PublicKey(), "").PublicKey, Grants: []config.Grant{{Bot: "helper", Server: "20", Channels: []string{"*"}}}}}
-	address := serveTest(t, keys, host, &grantHandler{})
+	keys := []config.Key{{Name: "offered", PublicKey: DescribeKey(a.PublicKey(), "").PublicKey}, {Name: "signed", PublicKey: DescribeKey(bb.PublicKey(), "").PublicKey}}
+	address := serveTest(t, keys, host, &identityHandler{})
 	cfg := &config.Client{Service: config.ServiceEndpoint{Address: address, HostKey: DescribeKey(host.PublicKey(), "").PublicKey}}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
@@ -391,7 +361,7 @@ func TestLiveOfferedAndSignedKeys(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if switching.marshals.Load() < 3 || len(result.Channels) != 1 || result.Channels[0].Name != "signed" || result.Channels[0].ChannelId != 21 {
+	if switching.marshals.Load() < 3 || len(result.Channels) != 1 || result.Channels[0].Name != "signed" {
 		t.Fatalf("offered key became handler identity: %v (%d marshals)", result, switching.marshals.Load())
 	}
 	// Actually signing A's packet with B is a forgery, and is always refused.
@@ -400,7 +370,7 @@ func TestLiveOfferedAndSignedKeys(t *testing.T) {
 		t.Fatal("signature for a different public key authenticated")
 	}
 	// When only the offered identity is configured, signing as B is refused.
-	cfg.Service.Address = serveTest(t, keys[:1], host, &grantHandler{})
+	cfg.Service.Address = serveTest(t, keys[:1], host, &identityHandler{})
 	_, err = dialSigner(ctx, cfg, alternateSigner{Signer: bb, offered: &offeredKey{PublicKey: a.PublicKey(), signed: bb.PublicKey()}}, time.Second)
 	if err == nil {
 		t.Fatal("unconfigured signed key authenticated")
@@ -737,31 +707,31 @@ func TestKeepaliveHoldsQuietListen(t *testing.T) {
 
 // The API probes below verify identity propagation for every generated method.
 // Domain send/read semantics are exercised by task 6's Handler tests.
-func (h *grantHandler) noteIdentity(ctx context.Context, method string) error {
-	if KeyName(ctx) == "" || len(Grants(ctx)) != 1 {
-		return status.Error(codes.Unauthenticated, "missing identity or grants")
+func (h *identityHandler) noteIdentity(ctx context.Context, method string) error {
+	if KeyName(ctx) == "" {
+		return status.Error(codes.Unauthenticated, "missing identity")
 	}
 	h.calls.Store(KeyName(ctx)+":"+method, true)
 	return nil
 }
-func (h *grantHandler) Post(ctx context.Context, _ *deckv1.PostRequest) (*deckv1.PostResponse, error) {
+func (h *identityHandler) Post(ctx context.Context, _ *deckv1.PostRequest) (*deckv1.PostResponse, error) {
 	return &deckv1.PostResponse{}, h.noteIdentity(ctx, "Post")
 }
-func (h *grantHandler) Reply(ctx context.Context, _ *deckv1.ReplyRequest) (*deckv1.ReplyResponse, error) {
+func (h *identityHandler) Reply(ctx context.Context, _ *deckv1.ReplyRequest) (*deckv1.ReplyResponse, error) {
 	return &deckv1.ReplyResponse{}, h.noteIdentity(ctx, "Reply")
 }
-func (h *grantHandler) ListHistory(ctx context.Context, _ *deckv1.ListHistoryRequest) (*deckv1.ListHistoryResponse, error) {
+func (h *identityHandler) ListHistory(ctx context.Context, _ *deckv1.ListHistoryRequest) (*deckv1.ListHistoryResponse, error) {
 	return &deckv1.ListHistoryResponse{}, h.noteIdentity(ctx, "ListHistory")
 }
-func (h *grantHandler) CountUnread(ctx context.Context, _ *deckv1.CountUnreadRequest) (*deckv1.CountUnreadResponse, error) {
+func (h *identityHandler) CountUnread(ctx context.Context, _ *deckv1.CountUnreadRequest) (*deckv1.CountUnreadResponse, error) {
 	return &deckv1.CountUnreadResponse{}, h.noteIdentity(ctx, "CountUnread")
 }
-func (h *grantHandler) ListUnread(ctx context.Context, _ *deckv1.ListUnreadRequest) (*deckv1.ListUnreadResponse, error) {
+func (h *identityHandler) ListUnread(ctx context.Context, _ *deckv1.ListUnreadRequest) (*deckv1.ListUnreadResponse, error) {
 	return &deckv1.ListUnreadResponse{}, h.noteIdentity(ctx, "ListUnread")
 }
 
 func TestInterceptorsRequireAuthenticatedKey(t *testing.T) {
-	unary, stream := grantInterceptors([]config.Key{{Name: "known"}})
+	unary, stream := identityInterceptors([]config.Key{{Name: "known"}})
 	for _, ctx := range []context.Context{context.Background(), WithKeyName(context.Background(), "unknown")} {
 		called := false
 		_, err := unary(ctx, nil, &grpc.UnaryServerInfo{}, func(context.Context, any) (any, error) { called = true; return nil, nil })

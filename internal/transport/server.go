@@ -41,7 +41,7 @@ type Server struct {
 	closeErr  error
 }
 
-// NewServer snapshots keys and grants; callers register the service handler
+// NewServer snapshots configured keys; callers register the service handler
 // without giving it access to the SSH listener or the host private key.
 func NewServer(keys []config.Key, host ssh.Signer, handler deckv1.DeckServiceServer) (*Server, error) {
 	if host == nil || host.PublicKey().Type() != ssh.KeyAlgoED25519 {
@@ -62,7 +62,7 @@ func NewServer(keys []config.Key, host ssh.Signer, handler deckv1.DeckServiceSer
 		names[key.Name] = true
 	}
 	channels := &channelListener{conns: make(chan net.Conn), closed: make(chan struct{})}
-	unary, stream := grantInterceptors(keys)
+	unary, stream := identityInterceptors(keys)
 	grpcServer := grpc.NewServer(grpc.WaitForHandlers(true), grpc.MaxConcurrentStreams(maxConcurrentStreams), grpc.Creds(sshCredentials{}), grpc.UnaryInterceptor(unary), grpc.StreamInterceptor(stream), grpc.MaxRecvMsgSize(maxMessageSize), grpc.MaxSendMsgSize(maxMessageSize), grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{MinTime: 15 * time.Second, PermitWithoutStream: true}))
 	deckv1.RegisterDeckServiceServer(grpcServer, handler)
 	sshServer, err := wish.NewServer(

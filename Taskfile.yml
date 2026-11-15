@@ -79,7 +79,7 @@ tasks:
     cmds:
       - python3 scripts/prove-guards.py --integration
   transport:guards:check:
-    desc: Prove transport authorization and carried Vault guards
+    desc: Prove transport authentication and carried Vault guards
     cmds:
       - python3 scripts/prove-transport-guards.py
   config:home:check:

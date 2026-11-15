@@ -80,7 +80,7 @@ proposed-design:
     exclusively from `session.PublicKey()`, which charm.land/ssh takes from
     the successful authentication's Permissions, and never from callback
     context. A transport test queries A, queries B with an invalid signature
-    format, then authenticates as A and verifies A's name and grants. A proving
+    format, then authenticates as A and verifies A's key name. A proving
     script repeats it against an isolated x/crypto copy with an eight-entry
     callback cache to reproduce CVE-2024-45337 without trusting the cache's
     present single-entry behavior. Missing or unconfigured signed keys are
@@ -96,21 +96,13 @@ proposed-design:
     ClientHandshake passes the channel through. gRPC's own TLS is not used:
     SSH encrypts and authenticates the channel.
   grants: >-
-    A unary and a stream interceptor read the key name from the call's peer
-    AuthInfo and put the key's grants on the call context; a call with no key
-    name ends with UNAUTHENTICATED, which no SSH-authenticated call can reach.
-    Grants are immutable after start. Every call that names a channel or
-    thread checks it in the order the gRPC API specifies, before it sends a
-    message, reads messages or reads the stream: the bot must be named by some
-    grant of the key, before any Discord request through it; the target's
-    server and parent channel come from the thread registry for a touched
-    thread, and otherwise from that bot's Discord metadata (cache, or a REST
-    read, cached for 10 minutes), never from the request or a grant; then some
-    grant must name that bot, that server and the channel or `*`. Every
-    failure, including a target the bot cannot see, is PERMISSION_DENIED with
-    one message. Lists filter by the same check. A key granted `*` on one
-    server of a bot is therefore refused a channel of another server of the
-    same bot, which a test shows.
+    Unary and stream interceptors admit only configured key names from the
+    call's authenticated identity; a missing or unconfigured name ends with
+    UNAUTHENTICATED. The service API is the sole grant authority and applies
+    that key's immutable configured grants in the order grpc-api.yml specifies:
+    check the bot before any Discord request, resolve trusted server and
+    channel metadata, then check the target. Lists apply the same grants.
+    Transport carries identity and does not duplicate these grant checks.
   limits: >-
     The gRPC server and client each accept and send messages up to 64 MiB;
     grpc-go's client default of 4 MiB would refuse a long ListUnread.

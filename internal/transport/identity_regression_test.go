@@ -35,8 +35,8 @@ func TestLivePublicKeyCallbackCache(t *testing.T) {
 	b := transportBao(t)
 	a, bb := b.signer(t, "cache-a"), b.signer(t, "cache-b")
 	host := testHost(t)
-	keys := []config.Key{{Name: "A", PublicKey: DescribeKey(a.PublicKey(), "").PublicKey, Grants: []config.Grant{{Bot: "helper", Server: "10", Channels: []string{"*"}}}}, {Name: "B", PublicKey: DescribeKey(bb.PublicKey(), "").PublicKey, Grants: []config.Grant{{Bot: "helper", Server: "20", Channels: []string{"21"}}}}}
-	address := serveTest(t, keys, host, &grantHandler{})
+	keys := []config.Key{{Name: "A", PublicKey: DescribeKey(a.PublicKey(), "").PublicKey}, {Name: "B", PublicKey: DescribeKey(bb.PublicKey(), "").PublicKey}}
+	address := serveTest(t, keys, host, &identityHandler{})
 	badA, badB := &badFormatSigner{Signer: a}, &badFormatSigner{Signer: bb}
 	raw, err := ssh.Dial("tcp", address, &ssh.ClientConfig{User: "deck", Auth: []ssh.AuthMethod{ssh.PublicKeys(badA, badB, a)}, HostKeyCallback: ssh.FixedHostKey(host.PublicKey()), Timeout: 3 * time.Second})
 	if err != nil {
@@ -67,7 +67,7 @@ func TestLivePublicKeyCallbackCache(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(result.Channels) != 1 || result.Channels[0].Name != "A" || result.Channels[0].ChannelId != 11 {
+	if len(result.Channels) != 1 || result.Channels[0].Name != "A" {
 		t.Fatalf("queried B replaced signed A: %v", result)
 	}
 	if b.signs.Load() != 3 {
