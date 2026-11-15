@@ -44,7 +44,10 @@ echo 'PASS skill prints embedded instructions with no passwd entry or configurat
 
 probe "$proof/with-passwd" skill > "$proof/session-skill" 2> "$proof/session-stderr"
 cmp internal/skill/SKILL.md "$proof/session-skill"
-test "$(cat "$proof/session-stderr")" = 'unread: none'
+if test "$(cat "$proof/session-stderr")" != 'unread: none'; then
+  echo 'FAIL session command did not load passwd-home config' >&2
+  exit 1
+fi
 echo 'PASS session command loads passwd-home config despite hostile HOME/USER/XDG_CONFIG_HOME'
 
 set +e
