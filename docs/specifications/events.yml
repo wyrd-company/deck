@@ -10,7 +10,11 @@ relationships:
 format: json-schema
 description: >-
   The service publishes one JetStream message, an event, for each activity in
-  a touched thread, and nothing for any other thread.
+  a touched thread, and nothing for any other thread. Only the thread's bot
+  publishes: when several of deck's bots can see a touched thread, the others
+  ignore it. Activity on the starter message of a thread started in a text or
+  announcement channel (a poll vote or component use on it, its poll result,
+  a reply to it in the channel) belongs to that thread.
 
 
   The subject is `<prefix>.<server id>.<channel id>.<thread id>`, with each
@@ -31,18 +35,22 @@ description: >-
   values such as snowflakes and sizes as decimal strings, writes timestamps as
   RFC 3339 in UTC, and varies insignificant whitespace between runs, so a
   consumer parses the JSON and never compares bytes. A message deck sent
-  carries `sent_by`, the name of the client key that sent it. The payload
-  never carries `sequence`; the stream's message metadata holds it. Attachment URLs
-  are the ones Discord gave when the message arrived, and Discord's CDN
-  expires them; the API returns current ones.
+  carries `sent_by`, the name of the client key that sent it, and `nonce`, the
+  sending client's identifier for that send. The payload never carries
+  `sequence`; the stream's message metadata holds it. Attachment URLs are the
+  ones Discord gave when the message arrived, and Discord's CDN expires them;
+  the API returns current ones.
 
 
-  Every event carries these headers. `Nats-Msg-Id` is `<kind>:<activity id>`,
-  so JetStream drops a repeat within the stream's duplicate window. `Deck-Kind`
-  is `message`, `component` or `poll_vote`. `Deck-Activity-Id` is the
-  activity's snowflake. `Deck-Message-Type` is the Discord message type, on
-  messages only. `Deck-Sent-By` is the client key's name, on messages deck sent
-  only. `Deck-Schema` is `deck.v1.Activity`. The headers carry everything the
+  Every event carries these headers. `Nats-Msg-Id` is `message:<id>` or
+  `component:<id>` with the Discord snowflake, and for a poll vote
+  `poll_vote:<message id>:<user id>:<answer id>:<add|remove>`, which does not
+  depend on the service's clock, so JetStream drops a repeat within the
+  stream's duplicate window from any publisher. `Deck-Kind` is `message`,
+  `component` or `poll_vote`. `Deck-Activity-Id` is the activity's snowflake.
+  `Deck-Message-Type` is the Discord message type, on messages only.
+  `Deck-Sent-By` is the client key's name and `Deck-Nonce` the client's nonce,
+  on messages deck sent only. `Deck-Schema` is `deck.v1.Activity`. The headers carry everything the
   service's activity index needs, so the index replays the stream headers
   only.
 
@@ -69,4 +77,11 @@ validation-criteria: >-
   Activity of each kind as the service publishes it and validates the bytes
   against the schema. An events test against an embedded JetStream server
   shows the subject, every header, de-duplication of a repeated activity, and
-  that activity in a thread nobody touched publishes nothing.
+  that activity in a thread nobody touched publishes nothing. Against a fake
+  Discord it also shows: two bots that see one touched thread publish each
+  message once, with `sent_by`, and one poll vote seen by both once; a poll
+  vote, a component use and a reply on a text channel post's starter message
+  published on the thread's subject; and recovery after a restart publishing,
+  once each, the messages sent while the service was down, in a thread that
+  stayed active and in one that archived again, with live messages during
+  recovery and a crash in the middle of it leaving none behind.

@@ -5,6 +5,7 @@ relationships:
     - events
     - discord-conversations
   shaped-by:
+    - give-each-thread-one-bot
     - carry-embeds-and-components-as-discord-json
     - define-events-as-the-api-activity
     - read-threads-by-id-in-granted-channels
@@ -19,10 +20,31 @@ description: >-
 
 
   Identifiers are Discord snowflakes in uint64 fields; zero means absent. A
-  bot is named by its name in the service configuration. A channel or thread
-  reference may leave the bot empty: for a touched thread the thread registry
-  supplies it, and otherwise the service uses the one bot the calling key's
-  grants name, or refuses with INVALID_ARGUMENT when the grants name several.
+  bot is named by its name in the service configuration. A touched thread has
+  one bot, the one that first touched it through deck, and every call on the
+  thread uses it: a reference may leave the bot empty, and a reference that
+  names another bot is INVALID_ARGUMENT naming the thread's bot. Keys share a
+  thread by holding grants on its bot. For a channel, or a thread not touched,
+  an empty bot means the one bot the calling key's grants name, and is
+  INVALID_ARGUMENT when they name several.
+
+
+  Every call that names a target checks it in this order, before it sends or
+  reads anything else: the bot is named in at least one of the key's grants;
+  the target's server and parent channel come from that bot's Discord
+  metadata (cache, or a REST read), never from the request or the grant; and
+  some grant names that bot, that server, and the channel or `*`. A target
+  that fails any step, including one the bot cannot see, is refused with
+  PERMISSION_DENIED and one message for every case, so a refusal does not tell
+  whether the target exists.
+
+
+  Post and Reply carry the client's `nonce`, an identifier for the send. The
+  service remembers each key's nonces for 10 minutes and answers a repeat with
+  the first call's result without sending again; Reply also sends the nonce to
+  Discord with enforce_nonce, so Discord drops a repeat across a service
+  restart. The nonce travels on the published message, and is how a client
+  recognises its own messages in counts, lists and events.
 
 
   Content carries embeds and components as `google.protobuf.Struct` values
@@ -40,34 +62,37 @@ description: >-
 
 
   Activity is the one shape for everything new in a thread. Post and Reply
-  return the message they created as an Activity, with the stream sequence
-  JetStream acknowledged for it, or zero when NATS could not take it within the
-  call's deadline. ListHistory returns messages in snowflake order, oldest
-  first; ListUnread and Listen return activity in stream order, the order the
-  service published it, with each activity's sequence; the event stream
-  carries one Activity per event in its protojson form, without the sequence.
-  An Activity's attachment URLs from the API are current: for unread messages
-  with attachments the service reads the thread's messages from Discord, 100
-  per request, and takes their URLs; when Discord no longer has a message, or
-  cannot be read within the deadline, it returns the URLs it published.
+  return the message they created as an Activity and a stream position for the
+  session's cursor to start at. ListHistory returns messages in snowflake
+  order, oldest first; ListUnread and Listen return activity in stream order,
+  the order the service published it, with each activity's sequence and the
+  response's epoch; the event stream carries one Activity per event in its
+  protojson form, without the sequence. An Activity's attachment URLs from the
+  API are current: for unread messages with attachments the service reads the
+  thread's messages from Discord after the snowflake one less than the oldest
+  of them, 100 per request, and takes their URLs; when Discord no longer has a
+  message, or cannot be read within the deadline, it returns the URLs it
+  published.
 
 
-  Unread is computed from cursors the client sends. A Cursor names a thread,
-  the newest activity the session was shown there by its stream sequence and
-  its snowflake, and the messages the session sent itself since, which are
-  never counted. Activity is after the cursor when its sequence is greater
-  than `after_sequence`, so activity published late, such as a held message
-  or a poll vote stamped by the service's clock, is still unread. A cursor
-  with no sequence compares by snowflake, and so does one whose sequence is
-  beyond the stream's last, which only a recreated stream causes. When the
-  stream no longer holds the cursor's activity, the Discord messages after
-  `after_id` that the stream does not hold count too. Messages whose type is
-  not 0, 19 or 46 are never counted. A thread that the calling key did not
-  touch answers with the state NOT_TOUCHED and no count, and one whose parent
-  is outside the grants with NOT_GRANTED; neither fails the call. ListUnread
-  returns at most its limit in stream order and sets `more` when activity
-  remains; a client that marks read moves each cursor only to the last
-  activity it received for that thread, sequence and snowflake together.
+  Unread is computed from the event stream and from cursors the client sends,
+  and never from Discord. A Cursor is a thread and a stream position; the
+  activity after it is the thread's activity at a later position in the same
+  epoch, or all of the thread's activity the stream holds when the cursor is
+  from another epoch. Activity that reaches the stream late, such as a held
+  message, a recovered message or a poll vote stamped by the service's clock,
+  is therefore still after a cursor that moved past it in snowflake terms.
+  Messages whose type is not 0, 19 or 46 are never counted. Each count
+  includes the calling key's own messages and lists them with their nonces in
+  `own`, and the client takes away those its session sent. A thread whose
+  stream history no longer reaches back to the cursor answers with
+  `horizon_passed`; what fell out of the stream is read with ListHistory. A
+  thread that the calling key did not touch answers with the state
+  NOT_TOUCHED and no count, and one whose parent is outside the grants with
+  NOT_GRANTED; neither fails the call. ListUnread returns at most its limit in
+  stream order and sets `more` when activity remains; a client that marks
+  read moves each cursor to the position of the last activity it received for
+  that thread, and never to an earlier position.
 
 
   Listen answers at once with each thread's state and any unread activity,
@@ -77,11 +102,11 @@ description: >-
 
 
   Errors are gRPC status codes. INVALID_ARGUMENT: a malformed request, an
-  ambiguous bot, content beyond a limit, a forum post without the tag its
-  forum requires, or Discord's validation error. PERMISSION_DENIED: the
-  channel, or the thread's parent channel, is outside the calling key's
-  grants. NOT_FOUND: the bot cannot see the channel, thread or message
-  (Discord codes 10003, 10008 and 50001). FAILED_PRECONDITION: the channel's
+  ambiguous bot, a bot other than a touched thread's, content beyond a limit,
+  a forum post without the tag its forum requires, or Discord's validation
+  error. PERMISSION_DENIED: a target that fails the grant check above.
+  NOT_FOUND: a message that `reply_to_message_id` names does not exist in the
+  granted thread (Discord code 10008). FAILED_PRECONDITION: the channel's
   type does not take posts, the thread is locked, or the bot lacks a Discord
   permission the call needs (Discord code 50013), with the permission named
   when Discord names it. RESOURCE_EXHAUSTED: Discord's rate limit would hold
@@ -97,6 +122,10 @@ validation-criteria: >-
   the proto generates, checked by `task check`. Service tests drive every call
   over a real SSH connection against a fake Discord REST API and an embedded
   JetStream server, and show each error code above for the case that causes
-  it. A contract test marshals Activity values of each kind with protojson
+  it, a same-bot wildcard grant on one server refusing a channel of another
+  server, an ungranted bot refused before any Discord request, a repeated
+  nonce returning the first result without a second send, a Post whose
+  registry bucket is unreachable creating nothing, and two concurrent replies
+  by one key, one failing, leaving the key's touch in place. A contract test marshals Activity values of each kind with protojson
   and proto field names and validates them against
   `assets/events/activity.schema.json`.

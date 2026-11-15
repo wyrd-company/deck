@@ -52,9 +52,9 @@ properties:
       deck refuses everything else.
   thread-registry:
     >-
-      The service's record of each touched thread: its bot, server and channel
-      and the names of the client keys that touched it. It lives in a JetStream
-      key-value bucket.
+      The service's record of each touched thread: its one bot, its server and
+      channel, the names of the client keys that touched it, and the newest
+      message published for it. It lives in a JetStream key-value bucket.
   event-stream:
     >-
       The JetStream stream that holds every published activity for a configured
@@ -62,9 +62,9 @@ properties:
   local-store:
     >-
       A SQLite database on the client's machine. It records, for each session,
-      the threads the session touched, the cursor up to which it has read each
-      one, and the messages it sent. It is the only place session affinity
-      exists.
+      the threads the session touched, the stream position up to which it has
+      read each one, and every send it made, by a nonce recorded before the
+      send. It is the only place session affinity exists.
   session:
     >-
       The program the client runs for, identified by the ambient environment

@@ -2,12 +2,12 @@ $schema: https://refinery.systems/ontology/term
 title: Cursor
 description: >-
   A session's read position in one thread, kept in the client's local store:
-  the newest activity the session has been shown there, as its stream sequence
-  and its snowflake. Activity the service published after that activity is
-  after the cursor, so activity that reaches the stream late is still unread.
-  A post or a session's first reply sets the cursor to the session's own
-  message; reading without keeping unread moves it to the last activity read,
-  and it never moves back.
+  a position in the event stream, its epoch and sequence. Activity published
+  at a later position is after the cursor, so activity that reaches the stream
+  late is still unread. A post or a session's first reply starts the cursor at
+  the position the service returns for that message. Reading without keeping
+  unread moves it to the position of the last activity read, and it never
+  moves to an earlier position.
 terms:
   - activity
   - unread

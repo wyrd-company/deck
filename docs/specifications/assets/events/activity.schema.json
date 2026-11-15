@@ -20,6 +20,7 @@
     "thread_id": {"$ref": "#/$defs/snowflake"},
     "author": {"$ref": "#/$defs/user"},
     "sent_by": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,62}$", "description": "The name of the client key that sent the message through deck."},
+    "nonce": {"type": "string", "pattern": "^[A-Za-z0-9]{1,25}$", "description": "The client's nonce for a message deck sent, by which the sending session recognises its own message."},
     "message": {"$ref": "#/$defs/message"},
     "component": {"$ref": "#/$defs/component"},
     "poll_vote": {"$ref": "#/$defs/poll_vote"}

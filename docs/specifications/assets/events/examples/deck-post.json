@@ -11,6 +11,7 @@
     "bot": true
   },
   "sent_by": "agents-laptop",
+  "nonce": "k7q2m9x4c1v8b3n6",
   "message": {
     "content": "<@1100000000000000003>",
     "mention_user_ids": ["1100000000000000003"],
