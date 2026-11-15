@@ -247,4 +247,7 @@ probe('bucket errors remain failures after a concurrent stop', 'registry/registr
 probe('bucket errors retain deadline identity', 'registry/registry.go',
       'if errors.Is(cause, context.DeadlineExceeded) {', 'if false {',
       './internal/service/registry', 'TestOpenStartupErrors')
+probe('real Run-path secret failures remain failures after a stop', 'runtime.go',
+      'if errors.Is(cause, context.Canceled) {', 'if true {',
+      './internal/service', 'TestServiceStartupIndependentFailure')
 print(f'PASS all {completed} targeted service mutation probes completed', flush=True)

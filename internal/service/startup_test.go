@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -325,4 +326,52 @@ type startupSecretFunc func(context.Context, string, config.SecretRef) (string, 
 
 func (f startupSecretFunc) ReadSecret(ctx context.Context, where string, ref config.SecretRef) (string, error) {
 	return f(ctx, where, ref)
+}
+
+// Exercise Run -> Open -> startupFailure, not vault.New. The secret reader
+// returns a genuine failure only after observing the stop; that failure must
+// stay distinct from cancellation and must not expose its upstream body.
+func TestServiceStartupIndependentFailure(t *testing.T) {
+	natsServer, credentials := testutil.JWTNATS(t)
+	for _, where := range []string{"nats.creds", "bots[0].token"} {
+		for _, stop := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/stop=%t", where, stop), func(t *testing.T) {
+				ctx, cancel := context.WithCancel(context.Background())
+				defer cancel()
+				entered := make(chan struct{})
+				reader := startupSecretFunc(func(ctx context.Context, step string, _ config.SecretRef) (string, error) {
+					if step != where {
+						return credentials, nil
+					}
+					close(entered)
+					if stop {
+						<-ctx.Done()
+					}
+					return "", errors.New("private upstream secret body")
+				})
+				cfg := &config.Service{Listen: config.Listen{SSH: "127.0.0.1:0"}, NATS: config.NATS{Servers: []string{natsServer.ClientURL()}, Timeout: time.Second, SubjectPrefix: "deck", Stream: config.Stream{Name: "failure", Manage: true, MaxAge: time.Hour, DuplicateWindow: time.Minute, Replicas: 1}, Threads: config.Threads{Bucket: "failure", Manage: true, Replicas: 1}}, Bots: []config.Bot{{Name: "a"}}}
+				done := make(chan error, 1)
+				go func() { done <- Run(ctx, cfg, reader) }()
+				select {
+				case <-entered:
+				case <-time.After(2 * time.Second):
+					t.Fatal("startup did not reach failing read")
+				}
+				if stop {
+					cancel()
+				}
+				select {
+				case err := <-done:
+					if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+						t.Fatalf("independent failure misclassified: %v", err)
+					}
+					if want := where + ": cannot read configured secret"; err.Error() != want {
+						t.Fatalf("unsafe/wrong startup message: %q; want %q", err, want)
+					}
+				case <-time.After(2 * time.Second):
+					t.Fatal("startup failed to return its real error")
+				}
+			})
+		}
+	}
 }
