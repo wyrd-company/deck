@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -194,5 +195,50 @@ func TestAliasNamedTimeout(t *testing.T) {
 	})
 	if _, err := ParseClient(raw, "/tmp/config.yml"); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestExactInvalidFieldPaths(t *testing.T) {
+	tests := []struct {
+		name, kind string
+		change     func(map[string]any)
+		want       []string
+	}{
+		{"vault sibling stays valid", "client", func(m map[string]any) { object(m["vault"])["timeout"] = "ten" }, []string{"vault.timeout"}},
+		{"unknown vault field", "client", func(m map[string]any) { object(m["vault"])["bogus"] = "private" }, []string{"vault.bogus"}},
+		{"service vault sibling stays valid", "service", func(m map[string]any) { object(m["vault"])["timeout"] = "ten" }, []string{"vault.timeout"}},
+		{"service wrapper property stays valid", "service", func(m map[string]any) { object(m["vault"])["bogus"] = "private" }, []string{"vault.bogus"}},
+		{"one line per bad field", "client", func(m map[string]any) {
+			object(m["service"])["address"] = "bad"
+			object(m["vault"])["address"] = "http://bad.invalid"
+		}, []string{"service.address", "vault.address"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			raw := mutate(t, tt.kind, tt.change)
+			var err error
+			if tt.kind == "client" {
+				_, err = ParseClient(raw, "/tmp/config.yml")
+			} else {
+				_, err = ParseService(raw)
+			}
+			var fields Errors
+			if !errors.As(err, &fields) {
+				t.Fatal(err)
+			}
+			var got []string
+			for _, field := range fields {
+				got = append(got, field.Path)
+				if strings.Contains(field.Reason, "satisfy  ") {
+					t.Errorf("empty reason: %v", field)
+				}
+				if strings.HasSuffix(field.Path, "bogus") && field.Reason != "unknown field" {
+					t.Errorf("unknown field reason: %v", field)
+				}
+			}
+			if !slices.Equal(got, tt.want) {
+				t.Fatalf("paths %v, want exactly %v", got, tt.want)
+			}
+		})
 	}
 }

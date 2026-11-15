@@ -167,21 +167,16 @@ func validate(data []byte, name string) error {
 		if !errors.As(err, &ve) {
 			return err
 		}
-		schemaErrors(&problems, ve, raw)
+		schemaErrors(&problems, ve, raw, compiled[name])
 	}
 	semantic(&problems, raw, name)
 	if len(problems) == 0 {
 		return nil
 	}
-	sort.Slice(problems, func(i, j int) bool {
-		if problems[i].Path == problems[j].Path {
-			return problems[i].Reason < problems[j].Reason
-		}
-		return problems[i].Path < problems[j].Path
-	})
+	sort.SliceStable(problems, func(i, j int) bool { return problems[i].Path < problems[j].Path })
 	unique := problems[:0]
 	for _, p := range problems {
-		if len(unique) == 0 || unique[len(unique)-1] != p {
+		if len(unique) == 0 || unique[len(unique)-1].Path != p.Path {
 			unique = append(unique, p)
 		}
 	}
@@ -210,9 +205,19 @@ func fieldPath(tokens []string, raw any) string {
 	}
 	return out
 }
-func schemaErrors(problems *Errors, e *jsonschema.ValidationError, raw any) {
+func schemaErrors(problems *Errors, e *jsonschema.ValidationError, raw any, schema *jsonschema.Schema) {
 	path := fieldPath(e.InstanceLocation, raw)
 	switch k := e.ErrorKind.(type) {
+	case *kind.FalseSchema:
+		// v6.0.2 reports unevaluatedProperties:false as a FalseSchema at each
+		// property. A failing $ref also leaves its valid siblings unevaluated.
+		// Filter these artifacts against declarations in the compiled schema.
+		if strings.HasSuffix(e.SchemaURL, "/unevaluatedProperties") {
+			if !declaresProperty(schema, e.InstanceLocation) {
+				problems.add(path, "unknown field")
+			}
+			return
+		}
 	case *kind.Required:
 		for _, name := range k.Missing {
 			problems.add(join(path, name), "required field is missing")
@@ -226,12 +231,15 @@ func schemaErrors(problems *Errors, e *jsonschema.ValidationError, raw any) {
 	}
 	if len(e.Causes) > 0 {
 		for _, cause := range e.Causes {
-			schemaErrors(problems, cause, raw)
+			schemaErrors(problems, cause, raw, schema)
 		}
 		return
 	}
 	// Schema diagnostics must never echo a rejected value (it may be a secret).
 	keyword := strings.Join(e.ErrorKind.KeywordPath(), ".")
+	if keyword == "" {
+		keyword = "field constraints"
+	}
 	problems.add(path, "does not satisfy "+keyword+" in the configuration schema")
 }
 func join(a, b string) string {
@@ -239,4 +247,18 @@ func join(a, b string) string {
 		return b
 	}
 	return a + "." + b
+}
+
+// declarations may live beside a $ref, as vault.kv_mount does on the service.
+func declaresProperty(schema *jsonschema.Schema, tokens []string) bool {
+	if schema == nil {
+		return false
+	}
+	if len(tokens) == 0 {
+		return true
+	}
+	if declaresProperty(schema.Properties[tokens[0]], tokens[1:]) {
+		return true
+	}
+	return declaresProperty(schema.Ref, tokens)
 }
