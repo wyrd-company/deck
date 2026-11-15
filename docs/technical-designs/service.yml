@@ -52,22 +52,29 @@ design-challenges:
   events-before-registration: >-
     The gateway can deliver an event for a thread before deck knows the thread
     is touched, and can deliver deck's own message before the REST call that
-    sent it returns. Deck's own messages are recognised by their nonce: the
-    service records each send's nonce and key before it calls Discord and
-    keeps them for 10 minutes, and a message sent with a nonce carries it back
-    on its gateway event (measured by discord-forum-post-and-gateway-reply),
-    so a gateway copy of a reply or of a text channel post's message is
-    published with that key and nonce, the same event the REST path publishes,
-    and whichever reaches JetStream first stands. A forum post's starter
-    carries no nonce (measured), and its thread is not registered until
-    Discord answers, so a settling buffer holds every event whose thread is
-    not registered and whose thread snowflake is less than 10 seconds old. A
-    hold ends when the thread registers; the REST path publishes the starter
-    first and the held copy is then dropped as a duplicate. After 10 seconds a
-    held event whose thread is still not registered is dropped. The buffer
-    holds at most 10,000 events and drops the oldest beyond that, with a log
-    line. Held events reach the stream after events with greater snowflakes,
-    which is why cursors follow stream positions.
+    sent it returns. Three rules settle them. First, the service records the
+    snowflake of every message it sends as soon as Discord answers, before it
+    registers a thread or publishes, and keeps it for 10 minutes; a gateway
+    copy of a recorded message is never published, because the REST path
+    publishes it with `sent_by` and nonce. Second, a reply's gateway copy that
+    arrives before Discord's answer is recognised by its nonce: the service
+    sends Discord a nonce for each reply and text channel post, records it
+    with the send's key before the call, and a message sent with a nonce
+    carries it back on its gateway event (measured by
+    discord-forum-post-and-gateway-reply), so that copy is published with the
+    send's key and client nonce, the same event the REST path publishes, and
+    whichever reaches JetStream first stands. A text channel post's message
+    lives in the parent channel, outside every thread, so only the REST path
+    publishes it. Third, a settling buffer holds every event in a thread
+    channel (types 10, 11 and 12) that is not registered and whose snowflake
+    is less than 10 seconds old; events in other channels are never held. A
+    hold ends when the thread registers, and the held events then pass the two
+    rules above, so a forum post's starter, which carries no nonce (measured),
+    is dropped as the service's own and the REST path's copy stands. After 10
+    seconds a held event whose thread is still not registered is dropped. The
+    buffer holds at most 10,000 events and drops the oldest beyond that, with
+    a log line. Held events reach the stream after events with greater
+    snowflakes, which is why cursors follow stream positions.
   acknowledgement-deadline: >-
     The handler for a component interaction responds with a deferred message
     update (interaction response type 6) before it does anything else, and
@@ -78,31 +85,33 @@ design-challenges:
     disgo resumes a dropped gateway session, and Discord replays the events
     missed while resuming. When a session cannot resume and a new one starts,
     or the service was not running, events in between are lost, and recovery
-    reads the messages among them back from Discord. Recovery runs for a bot
-    on every READY, the first after a start included, once the activity index
-    has replayed. In the READY handler, before it handles any later event of
-    that session (disgo dispatches a session's events in order), the service
-    snapshots each of the bot's registered threads' boundary, the registry
-    entry's last_message_id, and the bot's heartbeat, so live traffic moves
-    neither. The threads to visit are the registered ones GUILD_CREATE lists
-    as active with a last_message_id beyond their boundary, and the registered
-    ones archived since the cutoff: for each parent channel holding registered
-    threads of the bot, the service lists public archived threads and joined
-    private archived threads, newest archive first, until their
-    archive_timestamp is older than the cutoff. The cutoff is the snapshotted
-    heartbeat minus one minute, or, when the bot has no heartbeat, the
-    earliest touch among those threads' registry entries. A thread that got a
-    reply and archived again while deck was down is found that way. For each
-    thread it reads the messages after the boundary from Discord, 100 per
-    request, publishes each one the index does not hold, and only then raises
-    the entry's last_message_id; while a thread's recovery is pending, live
-    publishes do not raise it. The heartbeat is written only once the bot's
-    recovery has finished, so a crash during recovery leaves both the
-    boundaries and the cutoff where they were. A thread Discord reports as
-    deleted (code 10003) leaves the registry; one the bot can no longer read
-    (code 50001) is logged and kept. Component uses and poll votes in the gap,
-    and a poll result posted in a text channel for a post's starter, cannot be
-    recovered; the risk gateway-gap-loses-interactions covers them.
+    reads the messages among them back from Discord. In the READY handler,
+    before it handles any later event of that session (disgo dispatches a
+    session's events in order), the service snapshots each of the bot's
+    registered threads' boundary, the registry entry's last_message_id, and
+    the bot's heartbeat, so live traffic moves neither. Recovery for that
+    session starts when disgo reports every server of the session ready
+    (GuildsReady, after each GUILD_CREATE) and the activity index has
+    replayed, and finishes when every thread it visits is done. The threads to
+    visit are the registered ones GUILD_CREATE listed as active with a
+    last_message_id beyond their boundary, and the registered ones archived
+    since the cutoff: for each parent channel holding registered threads of
+    the bot, the service lists public archived threads and joined private
+    archived threads, newest archive first, until their archive_timestamp is
+    older than the cutoff. The cutoff is the snapshotted heartbeat minus one
+    minute, or, when the bot has no heartbeat, the earliest touch among those
+    threads' registry entries. A thread that got a reply and archived again
+    while deck was down is found that way. For each thread it reads the
+    messages after the boundary from Discord, 100 per request, publishes each
+    one the index does not hold, and only then raises the entry's
+    last_message_id; while a thread's recovery is pending, live publishes do
+    not raise it. The heartbeat is written only once the session's recovery
+    has finished, so a crash during recovery leaves both the boundaries and
+    the cutoff where they were. A thread Discord reports as deleted (code
+    10003) leaves the registry; one the bot can no longer read (code 50001) is
+    logged and kept, and counts as done. Component uses and poll votes in the
+    gap, and a poll result posted in a text channel for a post's starter,
+    cannot be recovered; the risk gateway-gap-loses-interactions covers them.
   cheap-unread: >-
     Unread counts come from an in-memory activity index that follows the event
     stream, so a count costs no Discord or NATS request, whatever the cursor.
@@ -120,39 +129,54 @@ design-challenges:
     share a thread through grants on its bot. Every bot acknowledges every
     component interaction it receives, and publishes it only when the
     interaction's thread is registered to that bot. A thread whose registry
-    bot is no longer configured, or can no longer see it, produces no events
-    and refuses every call; its entry stays until it expires or the operator
+    bot is no longer configured is outside every grant, since grants name
+    configured bots only: calls on it are PERMISSION_DENIED and counts answer
+    NOT_GRANTED. A thread its bot can no longer see produces no events, and
+    calls that need Discord are PERMISSION_DENIED, while counts still answer
+    from the index. Either entry stays until it expires or the operator
     deletes `threads.<thread snowflake>` from the bucket, after which the next
     touch registers the thread with the touching bot.
   partial-sends: >-
     A send can fail after Discord acted on it, and a client can repeat a send
     whose outcome it did not learn. Every Post and Reply carries the client's
-    nonce. The service keeps each key's nonces from the start of a send until
-    10 minutes after it succeeds: a repeat while the first is in flight waits
-    for it and returns its result, a repeat of a success returns that result
-    without sending, and a repeat of a failure runs again. After a service
-    restart, a repeat whose nonce the activity index holds for that key
-    returns that message and its thread. Reply and a text channel post also
-    send the nonce to Discord with enforce_nonce, which answers a repeat with
-    the first message (measured); when starting a text channel post's thread
-    then fails because the message already has one (Discord code 160004), the
-    service takes that thread, and it deletes the message only when the thread
-    fails for another reason. A forum post gets no deduplication from Discord,
-    so a forum post whose first call created it and then died with the service
-    before publishing can be created again by a repeat; the risk
-    send-outcome-lost-in-a-service-crash records this. Post reads the registry
-    bucket's status before it calls Discord and returns UNAVAILABLE without
-    posting when the bucket cannot be reached; once Discord answers, it
-    registers the thread in memory at once and writes the entry within the
-    call's deadline, retrying in the background after the deadline and logging
-    a registration still unwritten when the service stops as lost. Reply
+    nonce, and the service keeps each key's sends by nonce from the start of a
+    send until 10 minutes after it ends. A send has one owner, the first call:
+    a repeat while it runs waits for it and returns its outcome, a repeat of a
+    success returns that result without sending, and a repeat of a failure
+    runs again. Once the service has called Discord, the send runs to its end
+    whatever happens to the client's call. The nonce the service gives Discord
+    is the first 25 characters of the base32 SHA-256 of `<key name>:<client
+    nonce>`, so two keys' nonces never meet in Discord. A reply or text
+    channel post sent again with that nonce and enforce_nonce returns the
+    first message (measured), and starting a text channel post's thread on a
+    message that already has one fails with code 160004 (measured), on which
+    the service takes that thread; it deletes the message only when the thread
+    fails for another reason. When Discord's answer to a forum post is lost,
+    the service looks for the post among the server's active threads: a thread
+    whose parent is the forum, whose owner is the bot, whose name is the title
+    and whose snowflake is later than the send's start is the post; with none,
+    the send failed. After a service restart, a repeat whose client nonce the
+    activity index holds for that key returns that message and its thread; a
+    forum post that Discord created and whose service died before publishing
+    it can be created again, as the risk send-outcome-lost-in-a-service-crash
+    records. Post reads the registry bucket's status before it calls Discord
+    and returns UNAVAILABLE without posting when the bucket cannot be reached;
+    once Discord answers, it registers the thread in memory at once and writes
+    the entry within the call's deadline, and the call succeeds whether or not
+    that write has landed: the service keeps retrying it in the background and
+    logs a registration still unwritten when the service stops as lost. Reply
     writes the key into the entry before it sends, and returns UNAVAILABLE
-    without sending when that write fails. A reply's key is marked `pending`
-    until its send succeeds and `sent` after; when a send fails, the service
-    removes the key only if it is still `pending` and no other send by that
-    key into that thread is in flight, and removes an entry left with no keys
-    that deck did not create, so a failed attempt touches nothing and a
-    concurrent success is never undone.
+    without sending when that write fails. A key absent from the entry is
+    written `pending` and marked `sent` when its send succeeds; a key already
+    `sent` stays `sent` through later replies. Both states count as touched.
+    When a send fails, the service removes the key only if it is still
+    `pending` and no other send by that key into that thread is in flight, and
+    removes an entry left with no keys that deck did not create, so a failed
+    attempt touches nothing and a concurrent success is never undone. After
+    recovery at start, a `pending` key with no message from that key in the
+    thread's index entries is removed the same way, so a crash leaves no
+    orphan; a client that repeats the lost reply with its nonce touches the
+    thread again.
 proposed-design:
   high-level-overview: >-
     One process holds: one disgo client per bot; one NATS connection with a
@@ -185,22 +209,23 @@ proposed-design:
     maps bot names to clients and is the only path to Discord.
   thread-registry: >-
     The bucket `nats.threads.bucket` holds, with history 1, one entry per
-    touched thread under `threads.<thread snowflake>` and one heartbeat per
-    bot under `bots.<bot name>`. A thread entry, which expires after
-    `nats.threads.max_age` without a write when that is set, is JSON: `bot`
-    (the thread's one bot), `server_id`, `channel_id` (the parent),
-    `created_by_deck`, `keys` (a map from key name to `{"touched_at": <RFC
-    3339>, "state": "pending" | "sent"}`), and `last_message_id`, the newest
-    message the service published for the thread, set at registration to the
-    post's or reply's own message and raised as the service publishes, at most
-    once a second per thread and on a clean stop. A heartbeat is `{"seen_at":
-    <RFC 3339>}`, written every 60 seconds while the bot's gateway session is
-    Ready and its recovery has finished. Writes use the entry's revision, so
-    concurrent writers retry; a writer whose retry finds the thread registered
-    to another bot applies the routing rule of overlapping-bots instead of
-    writing. The service loads every entry at start and watches the bucket,
-    and its in-memory map is what the gateway filter, routing and the grant
-    checks read; counts in flight per key and thread, used by partial-sends,
+    touched thread under `threads.<thread snowflake>`, one heartbeat per bot
+    under `bots.<bot name>`, and the stream's epoch under `stream.epoch`. A
+    thread entry, which expires after `nats.threads.max_age` without a write
+    when that is set, is JSON: `bot` (the thread's one bot), `server_id`,
+    `channel_id` (the parent), `created_by_deck`, `keys` (a map from key name
+    to `{"touched_at": <RFC 3339>, "state": "pending" | "sent"}`), and
+    `last_message_id`, the newest message the service published for the
+    thread, set at registration to the post's or reply's own message and
+    raised as the service publishes, at most once a second per thread and on a
+    clean stop. A heartbeat is `{"seen_at": <RFC 3339>}`, written every 60
+    seconds while the bot's gateway session is Ready and its recovery has
+    finished. Writes use the entry's revision, so concurrent writers retry; a
+    writer whose retry finds the thread registered to another bot applies the
+    routing rule of overlapping-bots instead of writing. The service loads
+    every entry at start and watches the bucket, and its in-memory map is what
+    the gateway filter, routing and the grant checks read; sends by nonce and
+    the count of sends in flight per key and thread, used by partial-sends,
     live only in memory.
   posting: >-
     Post checks the channel in the grant order the gRPC API specifies, taking
@@ -220,14 +245,14 @@ proposed-design:
     and tags, resolving tag names to the channel's available tags and
     requiring one when the channel's REQUIRE_TAG flag is set (INVALID_ARGUMENT
     without one). In a text or announcement channel it sends the message with
-    the nonce and enforce_nonce, then starts a thread from it with the title,
-    taking the existing thread on code 160004 as partial-sends describes.
-    Discord's error 50013 becomes FAILED_PRECONDITION naming the missing
-    permission. It then registers the thread, publishes the first message from
-    the REST response with `sent_by` and `nonce` set, waits for JetStream's
-    acknowledgement within the call's deadline, and returns the thread, the
-    message and a position: the message's own when acknowledged, otherwise the
-    index's newest, while the publisher keeps retrying.
+    the send's Discord nonce and enforce_nonce, then starts a thread from it
+    with the title, taking the existing thread on code 160004 as partial-sends
+    describes. Discord's error 50013 becomes FAILED_PRECONDITION naming the
+    missing permission. It then registers the thread, publishes the first
+    message from the REST response with `sent_by` and `nonce` set, waits for
+    JetStream's acknowledgement within the call's deadline, and returns the
+    thread, the message and a position: the message's own when acknowledged,
+    otherwise the index's newest, while the publisher keeps retrying.
   replying: >-
     Reply checks the thread in the grant order the gRPC API specifies. A
     touched thread's bot, server and parent come from the registry, and the
@@ -239,11 +264,11 @@ proposed-design:
     is not a thread (type 10, 11 or 12) and a locked thread, handles the nonce
     and the key's `pending` entry as partial-sends describes (registering the
     thread with this bot when it is not touched), sends the message built as
-    for a post with the nonce and enforce_nonce and a message reference when
-    `reply_to_message_id` is set, marks the key `sent`, and publishes the
-    message from the REST response with `sent_by` and `nonce` set, returning a
-    position as a post does. Discord unarchives an archived thread when the
-    message arrives.
+    for a post with the send's Discord nonce and enforce_nonce and a message
+    reference when `reply_to_message_id` is set, marks the key `sent`, and
+    publishes the message from the REST response with `sent_by` and `nonce`
+    set, returning a position as a post does. Discord unarchives an archived
+    thread when the message arrives.
   publishing: >-
     The publisher turns each activity into an event as the events
     specification defines (subject, headers, protojson payload) and publishes
@@ -256,12 +281,12 @@ proposed-design:
     parent is that channel (a poll vote or component use on the message, or a
     poll result whose message reference is the message), belongs to that
     thread, since a thread started from a message has the message's snowflake.
-    A message whose nonce is one of the service's recorded sends is published
-    with that send's key and nonce. A poll vote's snowflake is `(milliseconds
-    since 2015-01-01T00:00:00Z) << 22` plus a per-process counter modulo 2^22,
-    taken when the vote arrives. The author of a poll vote carries the
-    username when the bot's member cache has it and only the snowflake
-    otherwise.
+    A message whose Discord nonce is one of the service's recorded sends is
+    published with that send's key and client nonce. A poll vote's snowflake
+    is `(milliseconds since 2015-01-01T00:00:00Z) << 22` plus a per-process
+    counter modulo 2^22, taken when the vote arrives. The author of a poll
+    vote carries the username when the bot's member cache has it and only the
+    snowflake otherwise.
   activity-index: >-
     An ordered consumer with headers only and deliver policy all follows
     `<prefix>.>` from the stream's first message and stays live. For each
@@ -269,16 +294,21 @@ proposed-design:
     snowflake, kind, message type, `sent_by` and nonce from the headers, and
     the stream sequence and timestamp from the message's metadata. Entries per
     thread stay in sequence order, and entries older than the stream's maximum
-    age are pruned every minute. The index also holds the stream's epoch (its
-    creation time in Unix nanoseconds, from the stream's information) and its
-    first and last sequence. It reads the stream's information at start and
-    whenever its consumer ends, which deleting or recreating the stream
-    causes; when the epoch has changed it discards its entries and replays the
-    new stream, and until that replay ends, calls that read the index wait up
-    to their deadline and then return UNAVAILABLE, so no response pairs an old
-    epoch with new sequences. The index is the only source of unread counts,
-    lists and listens, and every instance of the service that follows the
-    stream holds the same index.
+    age are pruned every minute. The index also holds the stream's epoch and
+    its first and last sequence. The epoch is a counter in the registry bucket
+    under `stream.epoch`, `{"epoch": <n>, "created": <the stream's creation
+    time>}`: whenever the service finds that the stream it follows has another
+    creation time than the one recorded, because the stream was recreated or
+    restored, it raises the epoch by one with a revision-checked write, so
+    epochs only grow and every stream gets a new one. The index reads the
+    stream's information at start and whenever its consumer ends, which
+    deleting, recreating or restoring the stream causes; when the epoch has
+    changed it discards its entries and replays the stream, and until that
+    replay ends, calls that read the index wait up to their deadline and then
+    return UNAVAILABLE, so no response pairs an epoch with another stream's
+    sequences. The index is the only source of unread counts, lists and
+    listens, and every instance of the service that follows the stream holds
+    the same index.
   unread: >-
     CountUnread, for each cursor whose thread the calling key touched and
     whose parent is granted, takes the thread's index entries after the

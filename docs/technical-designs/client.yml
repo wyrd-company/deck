@@ -117,10 +117,10 @@ proposed-design:
     cursor to the position of the last activity it received for that thread,
     own messages included, with one `UPDATE session_threads SET cursor_epoch =
     ?, cursor_sequence = ? WHERE session_key = ? AND thread_id = ? AND
-    (cursor_epoch <> ? OR cursor_sequence < ?)`, so that within one epoch a
-    cursor never moves to an earlier position even when two processes read at
-    once, and a cursor moves to the positions of whatever stream now holds the
-    thread, recreated or restored. A thread whose count carries horizon_passed
+    (cursor_epoch < ? OR (cursor_epoch = ? AND cursor_sequence < ?))`, so that
+    a cursor never moves to an earlier position even when two processes read
+    at once, and moves to a recreated or restored stream's positions, whose
+    epoch the service has raised. A thread whose count carries horizon_passed
     is reported with a note that older activity may have left the stream,
     naming `deck history`.
   listen: >-

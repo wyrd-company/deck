@@ -10,7 +10,8 @@ description: >-
   the activity index and JetStream's deduplication are shared and stay
   correct with two instances; the in-memory rules are not. Proven by the
   deployment: the container runs as a single replica, which its operator
-  sets.
+  sets, and a redeploy stops the old container before it starts the new one
+  rather than overlapping them.
 end-descendant-type: technical-design
 evidence:
   - The operator's notes run the service as one docker container.

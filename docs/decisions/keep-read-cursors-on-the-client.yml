@@ -32,8 +32,9 @@ decision-outcome:
       activity is after it by position. A snowflake cursor would skip activity
       the stream receives late: a message held in the settling buffer, a
       recovered message, or a poll vote stamped by the service's clock. The
-      epoch is the stream's creation time, so a recreated stream's positions
-      are later than every position of the old one.
+      epoch is a counter the service raises whenever the stream is recreated
+      or restored, so a new stream's positions are later than every position
+      of the old one, and a cursor can always move on and never back.
     own-messages: >-
       A session's own messages are known by a nonce the client records before
       it sends. The service lists, within each count, the calling key's

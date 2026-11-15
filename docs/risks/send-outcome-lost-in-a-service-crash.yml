@@ -4,7 +4,7 @@ relationships:
     - service
     - client
 slug: send-outcome-lost-in-a-service-crash
-title: A send interrupted by a service crash can be repeated, untracked or unrecognised
+title: A send cut off by a service crash can repeat, go untracked or go unrecognised
 description: >-
   The service remembers sends in flight and recent successes in memory, so a
   crash between Discord acting on a send and the service publishing it and

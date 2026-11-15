@@ -177,9 +177,9 @@ message ReplyRequest {
   Content content = 2;
   // When set, the reply is a Discord reply to this message in the thread.
   uint64 reply_to_message_id = 3;
-  // As PostRequest.nonce. The service also sends it to Discord as the
-  // message nonce with enforce_nonce, so Discord answers a repeat with the
-  // first message.
+  // As PostRequest.nonce. The service also sends Discord a nonce derived
+  // from it and the key, with enforce_nonce, so Discord answers a repeat
+  // with the first message.
   string nonce = 4;
 }
 
@@ -190,10 +190,10 @@ message ReplyResponse {
   StreamPosition position = 3;
 }
 
-// StreamPosition is a place in the event stream. The epoch is the stream's
-// creation time in Unix nanoseconds, so a recreated stream has a greater
-// epoch and its sequences start again. Positions order by epoch, then by
-// sequence.
+// StreamPosition is a place in the event stream. The epoch is a counter the
+// service raises each time the stream it follows is recreated or restored,
+// so a new stream has a greater epoch and its sequences start again.
+// Positions order by epoch, then by sequence.
 message StreamPosition {
   uint64 epoch = 1;
   uint64 sequence = 2;

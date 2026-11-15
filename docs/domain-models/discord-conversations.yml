@@ -168,11 +168,11 @@ aggregates:
         every message, records its snowflake and the time.
       mark-read: >-
         Moves the cursor to the position of the last activity the session was
-        shown, never to an earlier one in the same stream.
+        shown, never to an earlier one.
       resolve: >-
         Returns the identifiers of every session related to a thread.
     invariants:
-      - Within one stream, a cursor never moves to an earlier position.
+      - A cursor never moves to an earlier position.
       - A message the session sent is never unread for that session, and never
         wakes it, whenever it reaches the stream.
       - Session affinity is stored only here, never on the service.
