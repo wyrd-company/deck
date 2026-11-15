@@ -166,7 +166,7 @@ tasks:
     cmds:
       - docker build --build-arg VERSION={{.VERSION}} -t {{.IMAGE}}:{{.VERSION}} .
   image:build:multiarch:
-    desc: Build a local multi-arch OCI archive without pushing (requires buildx)
+    desc: Build a local multi-arch OCI archive without pushing (requires buildx and foreign-CPU emulation)
     cmds:
       - mkdir -p dist
       - docker buildx build --platform linux/amd64,linux/arm64 --build-arg VERSION={{.VERSION}} --output type=oci,dest=dist/deck-image.tar .

@@ -85,7 +85,8 @@ that gate can pass; it is an external release prerequisite.
 
 `task image:build VERSION=dev` builds and loads the service image locally.
 `task image:build:multiarch` writes `dist/deck-image.tar` as a multi-arch OCI
-archive using Docker Buildx. Neither task pushes an image. The image's service
+archive using Docker Buildx; install QEMU/binfmt emulation when building for a
+foreign CPU. Neither task pushes an image. The image's service
 health command is implemented by the service/gateway work.
 
 CI builds the release snapshot without publishing and runs
