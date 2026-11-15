@@ -3,8 +3,11 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/ecdsa"
 	"crypto/ed25519"
+	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
@@ -68,9 +71,8 @@ func TestKeyCommands(t *testing.T) {
 				args = append(args, "--json")
 			}
 			code := run(args, &stdout, &stderr)
-			handled := true
-			if code != 0 || !handled || stderr.Len() != 0 {
-				t.Fatalf("%s: %d %v %s", command, code, handled, stderr.String())
+			if code != 0 || stderr.Len() != 0 {
+				t.Fatalf("%s: %d %s", command, code, stderr.String())
 			}
 			if strings.Contains(stdout.String(), "PRIVATE") || strings.Contains(stdout.String(), rawPrivate) {
 				t.Fatal("printed private key")
@@ -126,23 +128,124 @@ func keyConfig(t *testing.T, kind, address string) string {
 	return path
 }
 func TestKeyCommandFailures(t *testing.T) {
-	upstreamSecret := "DO-NOT-PRINT-SECRET-OR-RESPONSE"
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusForbidden)
-		_, _ = io.WriteString(w, upstreamSecret)
-	}))
-	path := keyConfig(t, "client", server.URL)
-	var stdout, stderr bytes.Buffer
-	code, _ := keyCommand(context.Background(), []string{"config", "key", "--config", path, "--json"}, &stdout, &stderr)
-	if code != 1 || !strings.Contains(stdout.String(), `"category":"failed"`) || strings.Contains(stdout.String()+stderr.String(), upstreamSecret) {
-		t.Fatalf("upstream error: %d %s %s", code, stdout.String(), stderr.String())
+	const secret = "DO-NOT-PRINT-SECRET-OR-RESPONSE"
+	_, private, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
 	}
-	server.Close()
-	stdout.Reset()
-	stderr.Reset()
-	code, _ = keyCommand(context.Background(), []string{"config", "key", "--config", path, "--json"}, &stdout, &stderr)
-	if code != 4 || !strings.Contains(stdout.String(), `"category":"unavailable"`) {
-		t.Fatalf("unavailable: %d %q", code, stdout.String())
+	encrypted, err := ssh.MarshalPrivateKeyWithPassphrase(private, "", []byte("test-passphrase"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherBlock, err := ssh.MarshalPrivateKey(other, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pkcs8, err := x509.MarshalPKCS8PrivateKey(private)
+	if err != nil {
+		t.Fatal(err)
+	}
+	invalidHosts := map[string]string{
+		"malformed-host":  secret,
+		"encrypted-host":  string(pem.EncodeToMemory(encrypted)),
+		"wrong-algorithm": string(pem.EncodeToMemory(otherBlock)),
+		"non-OpenSSH":     string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: pkcs8})),
+	}
+	for _, kind := range []string{"client", "service"} {
+		words := []string{"config", "key"}
+		if kind == "service" {
+			words = []string{"service", "host-key"}
+		}
+		cases := []string{"forbidden", "unreachable", "invalid-config", "invalid-key"}
+		if kind == "service" {
+			for name := range invalidHosts {
+				cases = append(cases, name)
+			}
+			cases = append(cases, "missing-host-field")
+		}
+		for _, name := range cases {
+			t.Run(kind+"/"+name, func(t *testing.T) {
+				body := invalidHosts[name]
+				if body == "" {
+					body = secret
+				}
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if name == "forbidden" {
+						w.WriteHeader(http.StatusForbidden)
+						_, _ = io.WriteString(w, secret)
+						return
+					}
+					if kind == "client" {
+						_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"type": secret}})
+						return
+					}
+					raw := body
+					data := map[string]any{"private": raw}
+					if name == "missing-host-field" {
+						data = map[string]any{"other": secret}
+					}
+					_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"data": data}})
+				}))
+				defer server.Close()
+				path := keyConfig(t, kind, server.URL)
+				code, category := 1, "failed"
+				if name == "unreachable" {
+					server.Close()
+					code, category = 4, "unavailable"
+				}
+				if name == "invalid-config" {
+					if err := os.WriteFile(path, []byte("unknown: "+secret+"\n"), 0600); err != nil {
+						t.Fatal(err)
+					}
+					code, category = 2, "invalid"
+				}
+				for _, jsonMode := range []bool{false, true} {
+					var stdout, stderr bytes.Buffer
+					args := append(append([]string{}, words...), "--config", path)
+					if jsonMode {
+						args = append(args, "--json")
+					}
+					got := run(args, &stdout, &stderr)
+					if got != code {
+						t.Fatalf("status %d want %d: %s%s", got, code, stdout.String(), stderr.String())
+					}
+					combined := stdout.String() + stderr.String()
+					for _, forbidden := range []string{secret, body, "PRIVATE KEY", "test-passphrase"} {
+						if forbidden != "" && strings.Contains(combined, forbidden) {
+							t.Fatal("failure output leaked upstream or key material")
+						}
+					}
+					if jsonMode {
+						if stderr.Len() != 0 {
+							t.Fatalf("JSON diagnostics on stderr: %q", stderr.String())
+						}
+						var object struct {
+							Error struct{ Category, Message string }
+						}
+						decoder := json.NewDecoder(&stdout)
+						if err := decoder.Decode(&object); err != nil || object.Error.Category != category || object.Error.Message == "" {
+							t.Fatalf("JSON failure: %+v %v", object, err)
+						}
+						if err := decoder.Decode(&object); !errors.Is(err, io.EOF) {
+							t.Fatal("more than one JSON object")
+						}
+					} else {
+						if stdout.Len() != 0 || stderr.Len() == 0 || !strings.HasSuffix(stderr.String(), "\n") {
+							t.Fatalf("text output streams: %q %q", stdout.String(), stderr.String())
+						}
+						for _, line := range strings.Split(strings.TrimSuffix(stderr.String(), "\n"), "\n") {
+							if !strings.HasPrefix(line, "deck: ") {
+								t.Fatalf("unprefixed diagnostic %q", line)
+							}
+						}
+					}
+				}
+			})
+		}
 	}
 	for _, test := range []struct {
 		err  error
@@ -151,5 +254,9 @@ func TestKeyCommandFailures(t *testing.T) {
 		if got := serviceExitCode(test.err); got != test.code {
 			t.Fatalf("exit code %v: %d", test.err, got)
 		}
+	}
+	var stdout, stderr bytes.Buffer
+	if _, handled := keyCommand(context.Background(), []string{"unknown"}, &stdout, &stderr); handled {
+		t.Fatal("key hook swallowed an unrelated command")
 	}
 }
