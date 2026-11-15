@@ -39,6 +39,10 @@ type Server struct {
 	closed    bool
 	closeOnce sync.Once
 	closeErr  error
+
+	// beforeSSHServe is a test hook for the unregistered-listener window.
+	// Set it before Serve; production leaves it nil.
+	beforeSSHServe func()
 }
 
 // NewServer snapshots configured keys; callers register the service handler
@@ -130,6 +134,9 @@ func (s *Server) Serve(listener net.Listener) error {
 	s.listener = listener
 	s.channels.addr = listener.Addr()
 	s.mu.Unlock()
+	if s.beforeSSHServe != nil {
+		s.beforeSSHServe()
+	}
 	grpcDone := make(chan error, 1)
 	go func() { grpcDone <- s.grpc.Serve(s.channels) }()
 	err := s.ssh.Serve(listener)

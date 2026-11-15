@@ -114,6 +114,46 @@ func TestCancellationBeforeServe(t *testing.T) {
 	}
 	requireClosedPort(t, listener.Addr().String())
 }
+
+// Close after Serve releases its lock but before Wish tracks the listener.
+// Only the direct listener close can end Accept once Serve resumes here.
+func TestCloseBeforeSSHRegistersListener(t *testing.T) {
+	server, err := NewServer(nil, testHost(t), &probeHandler{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	defer server.Close()
+	closed := make(chan error, 1)
+	server.beforeSSHServe = func() { closed <- server.Close() }
+	stopped := make(chan error, 1)
+	go func() { stopped <- server.Serve(listener) }()
+	select {
+	case err := <-closed:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Close did not finish in the unregistered-listener window")
+	}
+	select {
+	case err := <-stopped:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		// Join the mutant's blocked Serve before reporting an ordinary test failure.
+		_ = listener.Close()
+		<-stopped
+		t.Fatal("Serve blocked after Close before SSH listener registration")
+	}
+	requireClosedPort(t, listener.Addr().String())
+}
+
 func TestListenAndServeCancellation(t *testing.T) {
 	host, raw := startupMaterial(t)
 	signer := testHost(t)
