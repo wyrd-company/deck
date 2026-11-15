@@ -22,6 +22,9 @@ func ListenAndServe(ctx context.Context, cfg *config.Service, secrets SecretRead
 	if err != nil {
 		return err
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	server, err := NewServer(cfg.Keys, host, handler)
 	if err != nil {
 		return err
@@ -29,6 +32,9 @@ func ListenAndServe(ctx context.Context, cfg *config.Service, secrets SecretRead
 	listener, err := (&net.ListenConfig{}).Listen(ctx, "tcp", cfg.Listen.SSH)
 	if err != nil {
 		_ = server.Close()
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		return status.Error(codes.Unavailable, "cannot listen on listen.ssh")
 	}
 	return serveUntilCanceled(ctx, server, listener)

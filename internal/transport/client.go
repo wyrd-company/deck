@@ -36,7 +36,13 @@ type ClientConnection struct {
 }
 
 func (c *ClientConnection) Close() error {
-	c.once.Do(func() { c.err = errors.Join(c.grpc.Close(), c.ssh.Close()) })
+	c.once.Do(func() {
+		grpcErr, sshErr := c.grpc.Close(), c.ssh.Close()
+		if errors.Is(sshErr, net.ErrClosed) {
+			sshErr = nil
+		}
+		c.err = errors.Join(grpcErr, sshErr)
+	})
 	return c.err
 }
 

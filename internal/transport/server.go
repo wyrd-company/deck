@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"sync"
 	"time"
 
 	wishssh "charm.land/ssh"
@@ -25,14 +26,21 @@ import (
 
 const maxMessageSize = 64 << 20
 const subsystem = "deck"
+const maxSSHChannels = 4
+const maxConcurrentStreams = 32
 
 type authenticatedName struct{}
 
 // Server serves only the deck subsystem. Close cancels all outstanding calls.
 type Server struct {
-	ssh      *wishssh.Server
-	grpc     *grpc.Server
-	channels *channelListener
+	ssh       *wishssh.Server
+	grpc      *grpc.Server
+	channels  *channelListener
+	mu        sync.Mutex
+	listener  net.Listener
+	closed    bool
+	closeOnce sync.Once
+	closeErr  error
 }
 
 // NewServer snapshots keys and grants; callers register the service handler
@@ -57,7 +65,7 @@ func NewServer(keys []config.Key, host ssh.Signer, handler deckv1.DeckServiceSer
 	}
 	channels := &channelListener{conns: make(chan net.Conn), closed: make(chan struct{})}
 	unary, stream := grantInterceptors(keys)
-	grpcServer := grpc.NewServer(grpc.Creds(sshCredentials{}), grpc.UnaryInterceptor(unary), grpc.StreamInterceptor(stream), grpc.MaxRecvMsgSize(maxMessageSize), grpc.MaxSendMsgSize(maxMessageSize), grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{MinTime: 15 * time.Second, PermitWithoutStream: true}))
+	grpcServer := grpc.NewServer(grpc.WaitForHandlers(true), grpc.MaxConcurrentStreams(maxConcurrentStreams), grpc.Creds(sshCredentials{}), grpc.UnaryInterceptor(unary), grpc.StreamInterceptor(stream), grpc.MaxRecvMsgSize(maxMessageSize), grpc.MaxSendMsgSize(maxMessageSize), grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{MinTime: 15 * time.Second, PermitWithoutStream: true}))
 	deckv1.RegisterDeckServiceServer(grpcServer, handler)
 	sshServer, err := wish.NewServer(
 		wish.WithIdleTimeout(10*time.Minute),
@@ -94,6 +102,7 @@ func NewServer(keys []config.Key, host ssh.Signer, handler deckv1.DeckServiceSer
 		}),
 		func(s *wishssh.Server) error {
 			s.AddHostKey(host)
+			s.HandshakeTimeout = 30 * time.Second
 			s.Handler = nil
 			s.SessionRequestCallback = func(session wishssh.Session, request string) bool {
 				return request == "subsystem" && session.Subsystem() == subsystem
@@ -113,7 +122,20 @@ func NewServer(keys []config.Key, host ssh.Signer, handler deckv1.DeckServiceSer
 
 // Serve takes ownership of listener and blocks until it closes or fails.
 func (s *Server) Serve(listener net.Listener) error {
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		_ = listener.Close()
+		return nil
+	}
+	if s.listener != nil {
+		s.mu.Unlock()
+		_ = listener.Close()
+		return errors.New("SSH server is already serving")
+	}
+	s.listener = listener
 	s.channels.addr = listener.Addr()
+	s.mu.Unlock()
 	grpcDone := make(chan error, 1)
 	go func() { grpcDone <- s.grpc.Serve(s.channels) }()
 	err := s.ssh.Serve(listener)
@@ -122,18 +144,54 @@ func (s *Server) Serve(listener net.Listener) error {
 	if err != nil && !errors.Is(err, wishssh.ErrServerClosed) && !errors.Is(err, net.ErrClosed) {
 		return err
 	}
-	if grpcErr != nil && !errors.Is(grpcErr, grpc.ErrServerStopped) {
+	if grpcErr != nil && !errors.Is(grpcErr, grpc.ErrServerStopped) && !errors.Is(grpcErr, net.ErrClosed) {
 		return grpcErr
 	}
 	return nil
 }
-func (s *Server) Close() error { _ = s.channels.Close(); s.grpc.Stop(); return s.ssh.Close() }
+
+// Close is final even before Serve starts. Close the owned listener directly:
+// Wish may not have registered it yet, so ssh.Close alone is insufficient.
+func (s *Server) Close() error {
+	s.closeOnce.Do(func() {
+		s.mu.Lock()
+		s.closed = true
+		listener := s.listener
+		s.mu.Unlock()
+		if listener != nil {
+			_ = listener.Close()
+		}
+		s.grpc.Stop() // WaitForHandlers joins canceled handlers before shared resources close.
+		_ = s.channels.Close()
+		s.closeErr = s.ssh.Close()
+		if errors.Is(s.closeErr, net.ErrClosed) || errors.Is(s.closeErr, wishssh.ErrServerClosed) {
+			s.closeErr = nil
+		}
+	})
+	return s.closeErr
+}
 
 // Wish's default session accepts env and agent-forwarding requests. Filter the
 // request stream before Wish sees it so the only accepted request is deck.
 func deckSessionHandler(server *wishssh.Server, conn *ssh.ServerConn, channel ssh.NewChannel, ctx wishssh.Context) {
+	ctx.Lock()
+	slots, _ := ctx.Value(channelSlots{}).(chan struct{})
+	if slots == nil {
+		slots = make(chan struct{}, maxSSHChannels)
+		ctx.SetValue(channelSlots{}, slots)
+	}
+	ctx.Unlock()
+	select {
+	case slots <- struct{}{}:
+		defer func() { <-slots }()
+	default:
+		_ = channel.Reject(ssh.ResourceShortage, "SSH session limit reached")
+		return
+	}
 	wishssh.DefaultSessionHandler(server, conn, &subsystemChannel{NewChannel: channel, ctx: ctx}, ctx)
 }
+
+type channelSlots struct{}
 
 type subsystemChannel struct {
 	ssh.NewChannel
