@@ -122,6 +122,12 @@ func TestDiscordLive(t *testing.T) {
 	t.Log("PASS: repeated reply nonce returned one Discord message, confirmed by history")
 	textContent := proto.Clone(c).(*pb.Content)
 	textContent.Poll = nil
+	richReply, err := s.client.Reply(ctx, &pb.ReplyRequest{Thread: &pb.ThreadRef{ThreadId: post.Thread.ThreadId}, Content: textContent, Nonce: "C" + nonce})
+	if err != nil {
+		t.Fatal("rich live reply failed")
+	}
+	assertLiveContent(t, richReply.Message)
+	t.Log("PASS: reply persona, mentions, embeds, components and attachment returned by Discord")
 	textReq := &pb.PostRequest{Channel: &pb.ChannelRef{Bot: "b", ChannelId: channelID}, Title: "Deck text test " + nonce, Content: textContent, Nonce: "T" + nonce}
 	textPost, err := s.client.Post(ctx, textReq)
 	if err != nil {

@@ -13,9 +13,13 @@ mutate, require_pass = helpers['mutate'], helpers['require_pass']
 require_pass(['go', 'test', '-count=1', './internal/service/...'])
 
 
+completed = 0
+
 def probe(name, path, before, after, package, test):
+    global completed
     mutate(name, 'internal/service/' + path, before, after,
            ['go', 'test', '-count=1', '-timeout=20s', '-run', '^' + test + '$', package])
+    completed += 1
 
 
 probe('Discord nonce includes sending fingerprint', 'discord/content.go',
@@ -90,4 +94,29 @@ probe('text-channel post enforces derived nonce', 'send.go',
 probe('forum poll has separately derived nonce', 'send.go',
       'r.Nonce+":poll"', 'r.Nonce',
       './internal/service', 'TestForumPollAndHeaders')
-print('PASS all 22 service guard probes completed', flush=True)
+probe('unmapped REST errors never expose upstream messages', 'discord/errors.go',
+      'if r != nil {\n\t\treturn status.Error(codes.Internal, "Discord operation failed")',
+      'if r != nil {\n\t\treturn status.Error(codes.Internal, "Discord operation failed: "+r.Message)',
+      './internal/service/discord', 'TestSanitizedErrors')
+probe('registry durable sent touch wins over stale pending', 'registry/registry.go',
+      't.State == "sent" && current.State != "sent"',
+      't.State == "sent" && current.State != "sent" && false',
+      './internal/service/registry', 'TestDurableMergePrecedence')
+probe('registry durable higher boundary wins over stale local', 'registry/registry.go',
+      'if previous.LastMessageID > e.LastMessageID {', 'if false {',
+      './internal/service/registry', 'TestDurableMergePrecedence')
+probe('first-reply ownership race has a definitive refusal', 'send.go',
+      'if errors.As(err, &conflict) {', 'if errors.As(err, &conflict) && false {',
+      './internal/service', 'TestReplyBotOwnershipRace')
+probe('generic errors never expose underlying messages', 'discord/errors.go',
+      '\n\treturn status.Error(codes.Internal, "Discord operation failed")\n}',
+      '\n\treturn status.Error(codes.Internal, "Discord operation failed: "+err.Error())\n}',
+      './internal/service/discord', 'TestSanitizedErrors')
+probe('text-channel nonce enforcement cannot be omitted', 'send.go',
+      'message.EnforceNonce = true\n\t\t\tsent, err = client.Send',
+      'message.EnforceNonce = false\n\t\t\tsent, err = client.Send',
+      './internal/service', 'TestExistingTextThread')
+probe('forum poll nonce enforcement cannot be omitted', 'send.go',
+      'r.Nonce+":poll"), EnforceNonce: true', 'r.Nonce+":poll"), EnforceNonce: false',
+      './internal/service', 'TestForumPollAndHeaders')
+print(f'PASS all {completed} service guard probes completed', flush=True)

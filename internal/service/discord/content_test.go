@@ -2,6 +2,7 @@ package discord
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
@@ -57,12 +58,19 @@ func TestSanitizedErrors(t *testing.T) {
 		code int
 		http int
 		want codes.Code
-	}{{50013, 403, codes.FailedPrecondition}, {10008, 404, codes.NotFound}, {40005, 400, codes.InvalidArgument}, {0, 429, codes.ResourceExhausted}, {0, 403, codes.PermissionDenied}, {0, 404, codes.PermissionDenied}, {0, 503, codes.Unavailable}} {
+	}{{50013, 403, codes.FailedPrecondition}, {10008, 404, codes.NotFound}, {40005, 400, codes.InvalidArgument}, {0, 429, codes.ResourceExhausted}, {0, 403, codes.PermissionDenied}, {0, 404, codes.PermissionDenied}, {0, 503, codes.Unavailable}, {98765, 400, codes.Internal}, {50035, 400, codes.InvalidArgument}} {
 		err := &rest.Error{Code: rest.JSONErrorCode(tc.code), Message: "TOKEN-DO-NOT-LEAK", Response: &http.Response{StatusCode: tc.http}}
 		got := Error(err)
 		if status.Code(got) != tc.want || strings.Contains(got.Error(), "TOKEN-DO-NOT-LEAK") {
 			t.Fatal(got)
 		}
+	}
+	validation := &rest.Error{Code: 50035, Message: "TOKEN-DO-NOT-LEAK", Errors: json.RawMessage(`{"content":{"_errors":[{"message":"TOKEN-DO-NOT-LEAK"}]},"embeds":{"0":{"title":{"_errors":[{"message":"TOKEN-DO-NOT-LEAK"}]}}}}`)}
+	if got := Error(validation); status.Code(got) != codes.InvalidArgument || status.Convert(got).Message() != "Discord validation failed: content, embeds.0.title" {
+		t.Fatal(got)
+	}
+	if got := Error(errors.New("TOKEN-DO-NOT-LEAK")); status.Code(got) != codes.Internal || status.Convert(got).Message() != "Discord operation failed" {
+		t.Fatal(got)
 	}
 	preflight := &limiterError{context.DeadlineExceeded}
 	if Unknown(preflight) || status.Code(Error(preflight)) != codes.ResourceExhausted {

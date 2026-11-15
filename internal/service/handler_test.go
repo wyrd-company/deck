@@ -83,6 +83,8 @@ func (f *fakeDiscord) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			respond(map[string]any{"id": "20", "guild_id": "1", "type": 0, "name": "text"})
 		case "/channels/30":
 			respond(map[string]any{"id": "30", "guild_id": "2", "type": 0, "name": "outside"})
+		case "/guilds/1":
+			respond(map[string]any{"id": "1", "name": "Test server"})
 		case "/guilds/1/channels":
 			respond([]any{map[string]any{"id": "10", "guild_id": "1", "type": 15, "name": "forum"}, map[string]any{"id": "20", "guild_id": "1", "type": 0, "name": "text"}, map[string]any{"id": "30", "guild_id": "2", "type": 0, "name": "outside"}})
 		default:
@@ -415,6 +417,9 @@ func TestHistoryAndChannels(t *testing.T) {
 		t.Fatal(channels)
 	}
 	for _, ch := range channels.Channels {
+		if ch.ServerName != "Test server" {
+			t.Fatal("REST-only server name missing", ch)
+		}
 		if ch.ServerId != 1 {
 			t.Fatal("cross-server wildcard leaked")
 		}
@@ -565,5 +570,45 @@ func TestExplicitChannelRefusals(t *testing.T) {
 	}
 	if len(got) != 3 || !got["a:10"] || !got["a:20"] || !got["b:20"] || got["b:10"] {
 		t.Fatal("wrong granted channel identities", got)
+	}
+}
+
+type raceIndex struct {
+	fixedIndex
+	beforeBegin func()
+}
+
+func (i raceIndex) Completed(context.Context, string, string) (*CompletedSend, error) {
+	i.beforeBegin()
+	return nil, nil
+}
+
+func TestReplyBotOwnershipRace(t *testing.T) {
+	for _, server := range []uint64{1, 2} {
+		t.Run(fmt.Sprint(server), func(t *testing.T) {
+			s := setup(t)
+			s.h.Index = raceIndex{beforeBegin: func() {
+				if err := s.reg.RegisterPost(200, registry.Entry{Bot: "a", ServerID: server, ChannelID: 20}, "other"); err != nil {
+					t.Error(err)
+				}
+			}}
+			_, err := s.h.Reply(s.ctx, &pb.ReplyRequest{Thread: &pb.ThreadRef{Bot: "b", ThreadId: 200}, Content: content(), Nonce: "race"})
+			want := codes.InvalidArgument
+			if server == 2 {
+				want = codes.PermissionDenied
+			}
+			if status.Code(err) != want {
+				t.Fatal(err)
+			}
+			if server == 1 && status.Convert(err).Message() != "thread uses bot a" {
+				t.Fatal(err)
+			}
+			if server == 2 && strings.Contains(status.Convert(err).Message(), "bot a") {
+				t.Fatal("ungranted winner disclosed")
+			}
+			if len(s.fake.posts()) != 0 {
+				t.Fatal("losing reply sent")
+			}
+		})
 	}
 }

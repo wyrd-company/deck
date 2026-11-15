@@ -82,7 +82,8 @@ description: >-
   activity index held before the send called Discord, so activity published
   during the send is after it. A forum post's poll is the thread's second
   message, returned as `poll_message`; a post whose poll could not be sent
-  succeeds and says why in `poll_error`. ListHistory returns messages in
+  succeeds and says why in `poll_error`. A poll-only forum post uses its
+  required title as the starter message text. ListHistory returns messages in
   snowflake order, oldest first; ListUnread and Listen return activity in
   stream order, the order the service published it, with each activity's
   sequence, and the position `through` which the response is complete; the

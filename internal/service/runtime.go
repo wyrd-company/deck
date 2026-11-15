@@ -35,7 +35,8 @@ type Runtime struct {
 
 // Open prepares REST clients, NATS and service handlers. Task 7 installs gateway
 // listeners and replaces the bootstrap SendIndex before opening listeners.
-// The shared Vault client remains owned by the caller.
+// The shared Vault client remains owned by the caller. ctx owns the runtime
+// lifetime and must remain live until Close; do not pass a startup-only timeout.
 func Open(ctx context.Context, cfg *config.Service, secrets SecretReader) (runtime *Runtime, err error) {
 	return open(ctx, cfg, secrets, func(token string) (*discord.Client, error) { return discord.New(token) })
 }

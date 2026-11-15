@@ -39,6 +39,13 @@ type Entry struct {
 
 var ErrBotConflict = errors.New("thread belongs to another bot")
 
+// BotConflictError carries the winning route from the local lookup or KV CAS.
+// The handler must check grants before exposing any part of Owner.
+type BotConflictError struct{ Owner Entry }
+
+func (e *BotConflictError) Error() string { return ErrBotConflict.Error() }
+func (e *BotConflictError) Unwrap() error { return ErrBotConflict }
+
 type attempt struct {
 	count              int
 	removable, unknown bool
@@ -185,7 +192,7 @@ func (r *Registry) writeLocked(ctx context.Context, id uint64, e Entry) error {
 				return errors.New("invalid registry entry")
 			}
 			if previous.Bot != e.Bot {
-				return ErrBotConflict
+				return &BotConflictError{Owner: clone(previous)}
 			}
 			rev = old.Revision()
 			for k, t := range previous.Keys {
@@ -241,7 +248,7 @@ func (r *Registry) RegisterPost(id uint64, e Entry, keyName string) error {
 	defer r.mu.Unlock()
 	if old, ok := r.entries[id]; ok {
 		if old.Bot != e.Bot {
-			return ErrBotConflict
+			return &BotConflictError{Owner: clone(old)}
 		}
 		created := e.CreatedByDeck
 		e = clone(old)
@@ -266,7 +273,7 @@ func (r *Registry) BeginReply(ctx context.Context, id uint64, e Entry, name stri
 	defer r.mu.Unlock()
 	if old, ok := r.entries[id]; ok {
 		if old.Bot != e.Bot {
-			return ErrBotConflict
+			return &BotConflictError{Owner: clone(old)}
 		}
 		e = clone(old)
 	}

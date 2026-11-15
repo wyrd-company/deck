@@ -81,7 +81,7 @@ func TestReplyStatesAndBoundary(t *testing.T) {
 		t.Fatal("later known failure removed unknown touch")
 	}
 	e.Bot = "other"
-	if err = r.BeginReply(ctx, 100, e, "other"); err != ErrBotConflict {
+	if err = r.BeginReply(ctx, 100, e, "other"); !errors.Is(err, ErrBotConflict) {
 		t.Fatal("bot ownership changed", err)
 	}
 	r2, err := New(ctx, kv, 0)
@@ -185,5 +185,61 @@ func TestPersistenceRetryAndFailedBegin(t *testing.T) {
 	testutil.Until(t, func() bool { return r.Pending() == 0 })
 	if _, err = kv.Get(ctx, "threads.101"); !errors.Is(err, jetstream.ErrKeyNotFound) {
 		t.Fatal("cleanup did not persist", err)
+	}
+}
+
+func TestDurableMergePrecedence(t *testing.T) {
+	_, _, js := testutil.NATS(t)
+	ctx := context.Background()
+	kv, err := js.CreateKeyValue(ctx, jetstream.KeyValueConfig{Bucket: "merge"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stale := Entry{Bot: "bot", ServerID: 1, ChannelID: 2, LastMessageID: 50, Keys: map[string]Touch{"key": {State: "pending"}}}
+	durable := clone(stale)
+	durable.Keys["key"] = Touch{State: "sent"}
+	durable.LastMessageID = 90
+	raw, err := json.Marshal(durable)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = kv.Put(ctx, key(100), raw); err != nil {
+		t.Fatal(err)
+	}
+	// Deliberately omit the watcher so a stale local entry cannot be refreshed
+	// before BeginReply's CAS merge reads the real durable bucket.
+	r := &Registry{KV: kv, entries: map[uint64]Entry{100: stale}, revisions: map[uint64]uint64{}, dirty: map[uint64]bool{}, attempts: map[string]*attempt{}, cleanup: map[uint64]map[string]bool{}, ctx: ctx}
+	if err = r.BeginReply(ctx, 100, stale, "key"); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := r.Lookup(100)
+	if got.Keys["key"].State != "sent" || got.LastMessageID != 90 {
+		t.Fatal("durable merge lost sent state or higher boundary", got)
+	}
+	stored, err := kv.Get(ctx, key(100))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var saved Entry
+	if err = json.Unmarshal(stored.Value(), &saved); err != nil {
+		t.Fatal(err)
+	}
+	if saved.Keys["key"].State != "sent" || saved.LastMessageID != 90 {
+		t.Fatal("merge not durable", saved)
+	}
+	// A conflicting durable winner must be returned even if no watcher has
+	// updated the local route. The handler needs it for the definitive refusal.
+	durable.Bot = "other"
+	raw, err = json.Marshal(durable)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = kv.Put(ctx, key(100), raw); err != nil {
+		t.Fatal(err)
+	}
+	err = r.BeginReply(ctx, 100, stale, "second")
+	var conflict *BotConflictError
+	if !errors.Is(err, ErrBotConflict) || !errors.As(err, &conflict) || conflict.Owner.Bot != "other" {
+		t.Fatal("durable winner missing", err)
 	}
 }

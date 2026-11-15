@@ -22,7 +22,7 @@ import (
 type API interface {
 	Channel(context.Context, uint64) (d.GuildChannel, error)
 	Channels(context.Context, uint64) ([]d.GuildChannel, error)
-	ServerName(uint64) string
+	ServerName(context.Context, uint64) (string, error)
 	Send(context.Context, uint64, d.MessageCreate) (*d.Message, error)
 	Post(context.Context, uint64, d.ThreadChannelPostCreate) (*d.ThreadChannelPost, error)
 	StartThread(context.Context, uint64, uint64, string) (*d.GuildThread, error)
@@ -54,11 +54,15 @@ func (c *Client) Channel(ctx context.Context, id uint64) (d.GuildChannel, error)
 func (c *Client) Channels(ctx context.Context, id uint64) ([]d.GuildChannel, error) {
 	return c.Bot.Rest.GetGuildChannels(snowflake.ID(id), rest.WithCtx(ctx))
 }
-func (c *Client) ServerName(id uint64) string {
+func (c *Client) ServerName(ctx context.Context, id uint64) (string, error) {
 	if g, ok := c.Bot.Caches.Guild(snowflake.ID(id)); ok {
-		return g.Name
+		return g.Name, nil
 	}
-	return ""
+	g, err := c.Bot.Rest.GetGuild(snowflake.ID(id), false, rest.WithCtx(ctx))
+	if err != nil {
+		return "", err
+	}
+	return g.Name, nil
 }
 func (c *Client) Send(ctx context.Context, id uint64, m d.MessageCreate) (*d.Message, error) {
 	return c.Bot.Rest.CreateMessage(snowflake.ID(id), m, rest.WithCtx(ctx))

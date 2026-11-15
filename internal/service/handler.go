@@ -275,6 +275,10 @@ func (h *Handler) ListChannels(ctx context.Context, r *pb.ListChannelsRequest) (
 		if err != nil {
 			return nil, discord.Error(err)
 		}
+		serverName, err := client.ServerName(ctx, id)
+		if err != nil {
+			return nil, discord.Error(err)
+		}
 		for _, ch := range channels {
 			e := channelEntry(grant.Bot, ch)
 			if e.ServerID != id || !granted(k, e) {
@@ -283,7 +287,7 @@ func (h *Handler) ListChannels(ctx context.Context, r *pb.ListChannelsRequest) (
 			if ch.Type() != 0 && ch.Type() != 5 && ch.Type() != 15 && ch.Type() != 16 {
 				continue
 			}
-			c := &pb.Channel{Bot: e.Bot, ServerId: e.ServerID, ServerName: client.ServerName(id), ChannelId: uint64(ch.ID()), Name: ch.Name(), Type: uint32(ch.Type())}
+			c := &pb.Channel{Bot: e.Bot, ServerId: e.ServerID, ServerName: serverName, ChannelId: uint64(ch.ID()), Name: ch.Name(), Type: uint32(ch.Type())}
 			tags, requires := forumTags(ch)
 			c.RequiresTag = requires
 			for _, tag := range tags {

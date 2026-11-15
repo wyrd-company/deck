@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"unicode/utf16"
 
@@ -11,6 +12,7 @@ import (
 	"github.com/wyrd-company/deck/internal/config"
 	"github.com/wyrd-company/deck/internal/service/activity"
 	discord "github.com/wyrd-company/deck/internal/service/discord"
+	"github.com/wyrd-company/deck/internal/service/registry"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
@@ -242,6 +244,16 @@ func (h *Handler) Reply(ctx context.Context, r *pb.ReplyRequest) (*pb.ReplyRespo
 			return &pb.ReplyResponse{Thread: thread, Message: completed.Messages[0], Position: completed.Position}, nil
 		}
 		if err = h.Registry.BeginReply(run, id, e, k.Name); err != nil {
+			var conflict *registry.BotConflictError
+			if errors.As(err, &conflict) {
+				// The winning reply may have registered after target's initial lookup.
+				// Check its grants before disclosing its bot name, as target normally does.
+				winner := conflict.Owner
+				if !granted(k, winner) || h.bots[winner.Bot] == nil {
+					return nil, denied()
+				}
+				return nil, status.Error(codes.InvalidArgument, "thread uses bot "+winner.Bot)
+			}
 			return nil, unavailable()
 		}
 		position, err := h.Index.Position(run)
