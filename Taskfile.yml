@@ -5,7 +5,7 @@ vars:
   LDFLAGS: -s -w -X main.Version={{.VERSION}}
   IMAGE: ghcr.io/wyrd-company/deck
   GORELEASER: go run github.com/goreleaser/goreleaser/v2@v2.17.0
-  PUBLISHER_COMMIT: c973ba1080ab52a86cdd2a3108ad158e0f2386a7
+  PUBLISHER_COMMIT: aa6772776dbe03e974180d3057b5e8868fa3a095
   ACTIONLINT: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
 
 tasks:
