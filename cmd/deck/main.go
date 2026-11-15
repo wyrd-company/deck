@@ -54,6 +54,8 @@ func runContext(ctx context.Context, args []string, stdout, stderr io.Writer) in
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	// Let a second signal terminate even if cleanup ignores cancellation.
+	context.AfterFunc(ctx, stop)
 	code := runContext(ctx, os.Args[1:], os.Stdout, os.Stderr)
 	stop()
 	os.Exit(code)
