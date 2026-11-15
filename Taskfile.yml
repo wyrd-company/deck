@@ -26,9 +26,19 @@ tasks:
     desc: Vet and check formatting
     deps: [vet, format:check]
   test:
-    desc: Run tests
+    desc: Run tests (OpenBao tests skip without bao)
     cmds:
       - go test ./...
+  test:ci:
+    desc: Run uncached tests and fail when OpenBao tests skip
+    cmds:
+      - bash scripts/test-ci.sh
+  ci:
+    desc: Run repository checks with mandatory real OpenBao coverage
+    cmds:
+      - task: check
+        vars:
+          TEST_TASK: test:ci
   build:
     desc: Build deck into bin/
     cmds:
@@ -63,6 +73,22 @@ tasks:
     cmds:
       - go run ./cmd/deck config validate --config docs/specifications/assets/configuration/examples/client.yml
       - go run ./cmd/deck service validate --config docs/specifications/assets/configuration/examples/service.yml
+  guards:check:
+    desc: Prove validation, Vault and check-task guards with restored mutations
+    cmds:
+      - python3 scripts/prove-guards.py --integration
+  config:home:check:
+    desc: Prove passwd-home lookup with the real CLI in bubblewrap (Linux)
+    cmds:
+      - bash scripts/prove-config-home.sh
   check:
     desc: Run all repository checks
-    deps: [lint, build, test, generate:check, docs:check, config:check, workflows:check, intentional:check]
+    deps:
+      - lint
+      - build
+      - generate:check
+      - docs:check
+      - config:check
+      - workflows:check
+      - intentional:check
+      - task: '{{default "test" .TEST_TASK}}'

@@ -29,5 +29,11 @@ jobs:
         run: |
           go install github.com/go-task/task/v3/cmd/task@v3.52.0
           npm install --global @wyrd-company/intentional@0.4.0
+          python3 -m pip install uv==0.13.7
+          curl --fail --silent --show-error --location \
+            https://github.com/openbao/openbao/releases/download/v2.7.2/openbao_2.7.2_linux_amd64.tar.gz \
+            --output "$RUNNER_TEMP/openbao.tar.gz"
+          echo "582b1f3c2fdc5afd443b2d57a225ef654de75adea609fdb66731fd582a9cbc96  $RUNNER_TEMP/openbao.tar.gz" | sha256sum --check
+          tar -xzf "$RUNNER_TEMP/openbao.tar.gz" -C "$(go env GOPATH)/bin" bao
       - name: Validate repository
-        run: task check
+        run: task ci
