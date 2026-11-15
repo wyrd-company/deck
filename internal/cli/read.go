@@ -92,9 +92,10 @@ func (i *invocation) finishRead(ts []store.Thread, activity []*pb.Activity, thro
 	i.result["more"] = more
 	i.renderActivities(kept, metadata)
 	if !i.flags.has("keep-unread") && len(ids) > 0 {
-		if err = i.client.Store.Advance(i.client.Session, ids, through); err != nil {
-			return fmt.Errorf("mark read in local store: %w", err)
+		if through == nil {
+			return errors.New("service returned no through position")
 		}
+		i.readIDs, i.readThrough = ids, through
 	}
 	return nil
 }

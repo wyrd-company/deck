@@ -1309,3 +1309,118 @@ func TestRepeatCommandPreservesShellArguments(t *testing.T) {
 	}
 	runPrintedRepeat(t, f, repeat)
 }
+
+type writeFunc func([]byte) (int, error)
+
+func (f writeFunc) Write(p []byte) (int, error) { return f(p) }
+
+func TestReadOutputBeforeCursorCommit(t *testing.T) {
+	for _, command := range []string{"read", "listen"} {
+		for _, jsonMode := range []bool{false, true} {
+			for _, outcome := range []string{"success", "write error", "short write"} {
+				t.Run(fmt.Sprintf("%s/json=%v/%s", command, jsonMode, outcome), func(t *testing.T) {
+					f := setup(t)
+					f.seed()
+					s := f.open()
+					f.fake.list = func(context.Context, *pb.ListUnreadRequest) (*pb.ListUnreadResponse, error) {
+						return &pb.ListUnreadResponse{Threads: []*pb.ThreadCount{touched(1)}, Activity: []*pb.Activity{person(12, 9, "hello")}, Through: &pb.StreamPosition{Epoch: 100, Sequence: 9}}, nil
+					}
+					assertOld := func() {
+						t.Helper()
+						ts, err := s.Threads(ss())
+						if err != nil || ts[0].After.Sequence != 5 {
+							t.Errorf("cursor moved before output completed: %v %v", ts, err)
+						}
+					}
+					var output bytes.Buffer
+					counted := false
+					f.fake.count = func(_ context.Context, r *pb.CountUnreadRequest) (*pb.CountUnreadResponse, error) {
+						assertOld()
+						if output.Len() != 0 {
+							t.Error("count should precede result output")
+						}
+						if r.Cursors[0].After.Sequence != 9 {
+							t.Errorf("count did not use prospective cursor: %v", r)
+						}
+						counted = true
+						return &pb.CountUnreadResponse{Threads: []*pb.ThreadCount{touched(0)}}, nil
+					}
+					var stderr bytes.Buffer
+					out := writeFunc(func(p []byte) (int, error) {
+						assertOld()
+						if !counted {
+							t.Error("missing unread report")
+						}
+						if outcome == "write error" {
+							return 0, errors.New("broken output")
+						}
+						if outcome == "short write" {
+							return len(p) / 2, nil
+						}
+						return output.Write(p)
+					})
+					args := []string{"--config", f.path, command}
+					if jsonMode {
+						args = append(args, "--json")
+					}
+					code := f.app(out, &stderr).Run(context.Background(), args)
+					ts, err := s.Threads(ss())
+					if err != nil {
+						t.Fatal(err)
+					}
+					if outcome == "success" {
+						if code != 0 || ts[0].After.Sequence != 9 || !strings.Contains(output.String(), "hello") {
+							t.Fatalf("exit=%d after=%v out=%s err=%s", code, ts[0].After, &output, &stderr)
+						}
+						if jsonMode {
+							var result map[string]any
+							if err = json.Unmarshal(output.Bytes(), &result); err != nil {
+								t.Fatal(err)
+							}
+							assertUnread(t, result, 0)
+						}
+					} else if code != 1 || ts[0].After.Sequence != 5 || !strings.Contains(stderr.String(), "write output") {
+						t.Fatalf("failed write: exit=%d after=%v err=%s", code, ts[0].After, &stderr)
+					}
+				})
+			}
+		}
+	}
+}
+
+func TestReadCommitFailureAfterOutput(t *testing.T) {
+	for _, command := range []string{"read", "listen"} {
+		for _, jsonMode := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/json=%v", command, jsonMode), func(t *testing.T) {
+				f := setup(t)
+				f.seed()
+				s := f.open()
+				through := &pb.StreamPosition{Epoch: 1 << 63, Sequence: 9}
+				f.fake.list = func(context.Context, *pb.ListUnreadRequest) (*pb.ListUnreadResponse, error) {
+					return &pb.ListUnreadResponse{Threads: []*pb.ThreadCount{touched(1)}, Activity: []*pb.Activity{person(12, 9, "hello")}, Through: through}, nil
+				}
+				f.fake.listen = func(_ *pb.ListenRequest, stream grpc.ServerStreamingServer[pb.ListenResponse]) error {
+					return stream.Send(&pb.ListenResponse{Threads: []*pb.ThreadCount{touched(1)}, Activity: []*pb.Activity{person(12, 9, "hello")}, Through: through})
+				}
+				args := []string{command}
+				if jsonMode {
+					args = append(args, "--json")
+				}
+				code, out, stderr := f.run(args...)
+				if code != 1 || !strings.Contains(out, "hello") || !strings.Contains(stderr, "mark read in local store") {
+					t.Fatal(code, out, stderr)
+				}
+				ts, err := s.Threads(ss())
+				if err != nil || ts[0].After.Sequence != 5 {
+					t.Fatalf("cursor after failed commit: %v %v", ts, err)
+				}
+				if jsonMode {
+					var result map[string]any
+					if err = json.Unmarshal([]byte(out), &result); err != nil {
+						t.Fatal("expected single valid JSON object", err, out)
+					}
+				}
+			})
+		}
+	}
+}

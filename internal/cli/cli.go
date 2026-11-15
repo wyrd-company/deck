@@ -57,16 +57,18 @@ type App struct {
 	Stdout, Stderr io.Writer
 }
 type invocation struct {
-	app        App
-	flags      flags
-	client     *client.Client
-	connection *Connection
-	dialed     bool
-	dialErr    error
-	result     map[string]any
-	text       strings.Builder
-	count      *client.Unread
-	states     map[uint64]pb.ThreadState
+	app         App
+	flags       flags
+	client      *client.Client
+	connection  *Connection
+	dialed      bool
+	dialErr     error
+	result      map[string]any
+	text        strings.Builder
+	count       *client.Unread
+	states      map[uint64]pb.ThreadState
+	readIDs     []uint64
+	readThrough *pb.StreamPosition
 }
 
 func (a App) Run(ctx context.Context, args []string) int {
@@ -146,16 +148,34 @@ func (a App) Run(ctx context.Context, args []string) int {
 		}
 		return a.error(err, jsonMode)
 	}
-	if f.has("json") {
-		if err = json.NewEncoder(a.Stdout).Encode(inv.result); err != nil {
-			return 1
-		}
-	} else {
-		if _, err = fmt.Fprint(a.Stdout, inv.text.String()); err != nil {
-			return 1
+	if err = inv.writeOutput(); err != nil {
+		return a.error(fmt.Errorf("write output: %w", err), false)
+	}
+	// A failed or partial stdout write must leave the activity unread. JSON has
+	// already been emitted, so a subsequent store error is a stderr diagnostic.
+	if len(inv.readIDs) > 0 {
+		if err = inv.client.Store.Advance(ss, inv.readIDs, inv.readThrough); err != nil {
+			return a.error(fmt.Errorf("mark read in local store: %w", err), false)
 		}
 	}
 	return 0
+}
+
+func (i *invocation) writeOutput() error {
+	payload := []byte(i.text.String())
+	if i.flags.has("json") {
+		var err error
+		payload, err = json.Marshal(i.result)
+		if err != nil {
+			return err
+		}
+		payload = append(payload, '\n')
+	}
+	n, err := i.app.Stdout.Write(payload)
+	if err == nil && n != len(payload) {
+		return io.ErrShortWrite
+	}
+	return err
 }
 func (a App) error(err error, jsonMode bool) int {
 	code := exitCode(err)
@@ -217,7 +237,18 @@ func (i *invocation) reportUnread(ctx context.Context) {
 			defer cancel()
 			err = i.connect(call)
 			if err == nil {
-				report, err = i.client.Count(call)
+				// Count from the positions this invocation will commit only after
+				// output. Apply the same epoch/sequence guard as Store.Advance.
+				for n, t := range ts {
+					if slices.Contains(i.readIDs, t.Info.ThreadId) && (t.After.Epoch != i.readThrough.Epoch || t.After.Sequence < i.readThrough.Sequence) {
+						ts[n].After = i.readThrough
+					}
+				}
+				var response *pb.CountUnreadResponse
+				response, err = i.client.API.CountUnread(call, &pb.CountUnreadRequest{Cursors: client.Cursors(ts)})
+				if err == nil {
+					report, err = i.client.Counts(response.Threads)
+				}
 			}
 		}
 	}
