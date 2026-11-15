@@ -11,6 +11,7 @@
     "bot": true
   },
   "sent_by": "agents-laptop",
+  "sender_key": "SHA256:l/nv7oTOpsWFYW3nQ0DQ/9wU8fLohsqt66JjgrF00AA",
   "nonce": "k7q2m9x4c1v8b3n6",
   "message": {
     "content": "<@1100000000000000003>",

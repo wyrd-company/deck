@@ -154,10 +154,11 @@ message PostRequest {
   repeated string tags = 3;
   Content content = 4;
   // The client's identifier for this send: 1 to 25 letters and digits,
-  // unique per send. A repeat with the same nonce from the same key returns
-  // the first call's result when that call is in flight or succeeded, as the
-  // gRPC API specification sets out, and sends nothing. The nonce travels on
-  // the published message, so the client recognises its own messages by it.
+  // unique per send for its key. A repeat with the same key and nonce returns
+  // the first send's result, and sends nothing, while that send is in flight
+  // or the event stream holds a message it published; otherwise it sends.
+  // The nonce travels on the published messages with the key's fingerprint,
+  // so the client recognises its own messages by the two together.
   string nonce = 5;
 }
 
@@ -165,11 +166,15 @@ message PostResponse {
   Thread thread = 1;
   // The thread's first message, as published.
   Activity message = 2;
-  // Where a cursor starts for the session that posted: the message's own
-  // stream position when JetStream acknowledged it within the call's deadline,
-  // and otherwise the newest position the service's index held when the call
-  // returned.
+  // Where a cursor starts for the session that posted: the newest position
+  // the service's activity index held before the send called Discord, so
+  // everything published during the send is after it.
   StreamPosition position = 3;
+  // In a forum or media channel, the poll, sent as the thread's second
+  // message because Discord drops a poll from a forum post's starter.
+  Activity poll_message = 4;
+  // Set when the post succeeded and its poll could not be sent.
+  string poll_error = 5;
 }
 
 message ReplyRequest {
@@ -178,8 +183,8 @@ message ReplyRequest {
   // When set, the reply is a Discord reply to this message in the thread.
   uint64 reply_to_message_id = 3;
   // As PostRequest.nonce. The service also sends Discord a nonce derived
-  // from it and the key, with enforce_nonce, so Discord answers a repeat
-  // with the first message.
+  // from it and the key's fingerprint, with enforce_nonce, so a repeat that
+  // Discord still remembers returns the first message.
   string nonce = 4;
 }
 
@@ -190,10 +195,11 @@ message ReplyResponse {
   StreamPosition position = 3;
 }
 
-// StreamPosition is a place in the event stream. The epoch is a counter the
-// service raises each time the stream it follows is recreated or restored,
-// so a new stream has a greater epoch and its sequences start again.
-// Positions order by epoch, then by sequence.
+// StreamPosition is a place in the event stream. The epoch names the
+// stream's generation: Unix nanoseconds when the service began following it,
+// never lower than an earlier generation's, so a new generation has a greater
+// epoch and its sequences start again. Positions order by epoch, then by
+// sequence.
 message StreamPosition {
   uint64 epoch = 1;
   uint64 sequence = 2;
@@ -302,8 +308,12 @@ message ListUnreadResponse {
   repeated ThreadCount threads = 2;
   // Whether unread activity remains beyond the limit.
   bool more = 3;
-  // The epoch of every activity's sequence in this response.
-  uint64 epoch = 4;
+  // The position through which this response is complete for its threads:
+  // the last listed activity's when `more` is set, otherwise the stream's
+  // last position when the list was taken. Every activity's sequence in
+  // this response has this epoch. A client that marks read moves each
+  // cursor here.
+  StreamPosition through = 4;
 }
 
 message ListenRequest {
@@ -314,8 +324,8 @@ message ListenResponse {
   repeated Activity activity = 1;
   // Set on the first response only.
   repeated ThreadCount threads = 2;
-  // The epoch of every activity's sequence in this response.
-  uint64 epoch = 3;
+  // As ListUnreadResponse.through, for this response.
+  StreamPosition through = 3;
 }
 
 // Activity is one new thing in a touched thread, and the payload of every
@@ -335,6 +345,9 @@ message Activity {
   // The name of the client key that sent the message through deck; empty for
   // everything deck did not send.
   string sent_by = 8;
+  // The SHA256 fingerprint of that key, as `ssh-keygen -l` prints it, which
+  // the client computes from its own key before it sends.
+  string sender_key = 15;
   oneof kind {
     Message message = 10;
     ComponentUse component = 11;
@@ -345,6 +358,8 @@ message Activity {
   // the stream's own metadata carries it.
   uint64 sequence = 13;
   // The client's nonce for a message deck sent; empty for everything else.
+  // A message is a session's own when its sender_key and nonce match a send
+  // the session recorded.
   string nonce = 14;
 }
 

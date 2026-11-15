@@ -9,12 +9,21 @@ relationships:
     - keep-message-history-in-discord
 format: json-schema
 description: >-
-  The service publishes one JetStream message, an event, for each activity
-  in a touched thread, and nothing for any other thread. Only the thread's
-  bot publishes: when several of deck's bots can see a touched thread, the
-  others ignore it. Activity on the starter message of a thread started in a
-  text or announcement channel (a poll vote or component use on it, and its
-  poll result) belongs to that thread.
+  The service publishes JetStream messages, events, for the activity in
+  touched threads, under the publication guarantee of
+  deliver-activity-at-least-once: every message in a touched thread that the
+  thread's bot can read reaches the stream at least once, live or by
+  recovery, and may reach it twice; component uses and poll votes reach it
+  only when the gateway delivers them live; a thread that is not touched
+  produces nothing. Only the thread's bot publishes: when several of deck's
+  bots can see a touched thread, the others ignore it. A message deck sent
+  is published only by the send that sent it, with `sent_by`, `sender_key`
+  and `nonce`; the gateway's and recovery's copies of the thread's bot's
+  type 0 and 19 messages are dropped, and the bot's other messages, such as
+  type 46 poll results, are published like any other. Activity on the
+  starter message of a thread started in a text or announcement channel (a
+  poll vote or component use on it, and its poll result) belongs to that
+  thread.
 
 
   The subject is `<prefix>.<server id>.<channel id>.<thread id>`, with each
@@ -35,11 +44,13 @@ description: >-
   uint64 values such as snowflakes and sizes as decimal strings, writes
   timestamps as RFC 3339 in UTC, and varies insignificant whitespace between
   runs, so a consumer parses the JSON and never compares bytes. A message
-  deck sent carries `sent_by`, the name of the client key that sent it, and
-  `nonce`, the sending client's identifier for that send. The payload never
-  carries `sequence`; the stream's message metadata holds it. Attachment
-  URLs are the ones Discord gave when the message arrived, and Discord's CDN
-  expires them; the API returns current ones.
+  deck sent carries `sent_by`, the name of the client key that sent it,
+  `sender_key`, that key's SHA256 fingerprint, and `nonce`, the sending
+  client's identifier for that send; the sender key and nonce together
+  identify the send. The payload never carries `sequence`; the stream's
+  message metadata holds it. Attachment URLs are the ones Discord gave when
+  the message arrived, and Discord's CDN expires them; the API returns
+  current ones.
 
 
   Every event carries these headers. `Nats-Msg-Id` is `<kind>:<activity
@@ -51,10 +62,10 @@ description: >-
   identifiers. `Deck-Kind` is `message`, `component` or `poll_vote`.
   `Deck-Activity-Id` is the activity's snowflake. `Deck-Message-Type` is the
   Discord message type, on messages only. `Deck-Sent-By` is the client key's
-  name and `Deck-Nonce` the client's nonce, on messages deck sent only.
-  `Deck-Schema` is `deck.v1.Activity`. The headers carry everything the
-  service's activity index needs, so the index replays the stream headers
-  only.
+  name, `Deck-Sender-Key` its fingerprint and `Deck-Nonce` the client's
+  nonce, on messages deck sent only. `Deck-Schema` is `deck.v1.Activity`.
+  The headers carry everything the service's activity index needs, so the
+  index replays the stream headers only.
 
 
   The stream is `nats.stream.name` (default `DECK`) with the single subject
@@ -81,14 +92,16 @@ validation-criteria: >-
   JetStream server shows the subject, every header, de-duplication of a
   repeated activity, and that activity in a thread nobody touched publishes
   nothing. Against a fake Discord it also shows: two bots that see one
-  touched thread publish each message once, with `sent_by`, and one poll
-  vote seen by both once; a vote added, removed and added again within the
-  duplicate window as three events; a deck reply whose REST call outlasts
-  the settling buffer published with `sent_by` and nonce from its gateway
-  copy; a forum post's starter published once, with `sent_by`, whichever of
-  its copies reaches the service first; a poll vote and a component use on a
-  text channel post's starter message published on the thread's subject; and
-  recovery after a restart publishing, once each, the messages sent while
-  the service was down, in a thread that stayed active and in one that
-  archived again, with live messages during recovery and a crash in the
-  middle of it leaving none behind.
+  touched thread publish each message once; a vote added, removed and added
+  again within the duplicate window as three events; a deck reply and a
+  forum post's starter each published once, with `sent_by`, `sender_key` and
+  `nonce`, whether its gateway copy, a recovery read or the send's answer
+  reaches the service first; a forum post's poll published as the thread's
+  second message; a bot's type 46 poll result published; a person's reply
+  held while the post's call was in flight published once the thread
+  registers; a poll vote and a component use on a text channel post's
+  starter message published on the thread's subject; and recovery at READY
+  publishing the messages sent while the service was down, in an active
+  thread and in an archived one, public or private, with live messages
+  during recovery left behind none, and a thread whose read fails read again
+  at the next READY.
