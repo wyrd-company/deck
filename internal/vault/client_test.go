@@ -376,3 +376,21 @@ func TestHTTPSIgnoresProxyEnvironment(t *testing.T) {
 		t.Fatalf("direct request failed: %v", err)
 	}
 }
+
+func TestHTTPSRejectsUntrustedCA(t *testing.T) {
+	s := startBao(t, true)
+	cfg := s.cfg
+	cfg.CAFile = ""
+	// This dev CA is explicitly configured on the working root client. Without
+	// that setting it must remain untrusted, even if env tries to add it.
+	t.Setenv("SSL_CERT_FILE", s.cfg.CAFile)
+	t.Setenv("SSL_CERT_DIR", filepath.Dir(s.cfg.CAFile))
+	c, err := New(context.Background(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close(context.Background())
+	if _, err := c.request(context.Background(), "GET", "sys/health", nil); err == nil {
+		t.Fatal("trusted a private CA that was absent from configuration")
+	}
+}
