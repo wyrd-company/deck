@@ -1,10 +1,14 @@
 package store
 
 import (
+	"context"
+	"database/sql"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 
 	pb "github.com/wyrd-company/deck/internal/api/deckv1"
 	"github.com/wyrd-company/deck/internal/session"
@@ -153,24 +157,83 @@ func TestSchemaAndNonceOwnership(t *testing.T) {
 	}
 }
 func TestConcurrentCreation(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "deck.db")
-	var wg sync.WaitGroup
-	for range 6 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			s, err := Open(path)
-			if err != nil {
-				t.Error(err)
-				return
-			}
-			defer s.Close()
-			if err = s.Session(testSession()); err != nil {
-				t.Error(err)
-			}
-		}()
+	for trial := range 50 {
+		path := filepath.Join(t.TempDir(), "deck.db")
+		var wg sync.WaitGroup
+		start := make(chan struct{})
+		for range 6 {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				<-start
+				s, err := Open(path)
+				if err != nil {
+					t.Errorf("trial %d open: %v", trial, err)
+					return
+				}
+				defer s.Close()
+				if err = s.Session(testSession()); err != nil {
+					t.Errorf("trial %d session: %v", trial, err)
+				}
+				var mode string
+				var version int
+				if err = s.db.QueryRow("PRAGMA journal_mode").Scan(&mode); err != nil || mode != "wal" {
+					t.Errorf("mode %q: %v", mode, err)
+				}
+				if err = s.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 1 {
+					t.Errorf("version %d: %v", version, err)
+				}
+			}()
+		}
+		close(start)
+		wg.Wait()
+		if t.Failed() {
+			return
+		}
 	}
-	wg.Wait()
+}
+
+func TestOpenWaitsForCreationLock(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "deck.db")
+	blocker, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer blocker.Close()
+	conn, err := blocker.Conn(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if _, err = conn.ExecContext(context.Background(), "BEGIN IMMEDIATE"); err != nil {
+		t.Fatal(err)
+	}
+	defer conn.ExecContext(context.Background(), "ROLLBACK")
+	result := make(chan error, 1)
+	go func() {
+		s, err := Open(path)
+		if err == nil {
+			err = s.Session(testSession())
+			s.Close()
+		}
+		result <- err
+	}()
+	select {
+	case err = <-result:
+		t.Fatalf("open returned before creator released lock: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	if _, err = conn.ExecContext(context.Background(), "COMMIT"); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err = <-result:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(6 * time.Second):
+		t.Fatal(fmt.Errorf("open did not complete after creator committed"))
+	}
 }
 
 func TestResolveWhileStoreIsBeingCreated(t *testing.T) {

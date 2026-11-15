@@ -25,7 +25,7 @@ import (
 
 	pb "github.com/wyrd-company/deck/internal/api/deckv1"
 	"github.com/wyrd-company/deck/internal/session"
-	_ "modernc.org/sqlite"
+	"modernc.org/sqlite"
 )
 
 type Store struct {
@@ -88,8 +88,6 @@ func open(path string, readOnly bool) (*Store, error) {
 	q.Add("_pragma", "foreign_keys(1)")
 	if readOnly {
 		q.Set("mode", "ro")
-	} else {
-		q.Add("_pragma", "journal_mode(WAL)")
 	}
 	u.RawQuery = q.Encode()
 	db, err := sql.Open("sqlite", u.String())
@@ -107,6 +105,9 @@ func open(path string, readOnly bool) (*Store, error) {
 	}
 	defer conn.Close()
 	if !readOnly {
+		if err = enableWAL(conn); err != nil {
+			return fail(err)
+		}
 		if _, err = conn.ExecContext(context.Background(), "BEGIN IMMEDIATE"); err != nil {
 			return fail(err)
 		}
@@ -134,6 +135,35 @@ func open(path string, readOnly bool) (*Store, error) {
 		}
 	}
 	return s, nil
+}
+
+// Changing journal mode can return SQLITE_BUSY without invoking SQLite's busy
+// handler. Keep it out of the connection pragmas so a concurrent creator can
+// finish, and retry only that lock error within the same five-second bound.
+func enableWAL(conn *sql.Conn) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	for {
+		var mode string
+		err := conn.QueryRowContext(ctx, "PRAGMA journal_mode=WAL").Scan(&mode)
+		if err == nil {
+			if mode != "wal" {
+				return fmt.Errorf("local store journal mode is %q, expected wal", mode)
+			}
+			return nil
+		}
+		var sqliteErr *sqlite.Error
+		if !errors.As(err, &sqliteErr) || sqliteErr.Code()&0xff != 5 {
+			return err
+		}
+		timer := time.NewTimer(10 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return fmt.Errorf("enable local store WAL: %w", ctx.Err())
+		case <-timer.C:
+		}
+	}
 }
 func (s *Store) Close() error { return s.db.Close() }
 func now() string             { return time.Now().UTC().Format("2006-01-02T15:04:05.000000000Z") }
