@@ -217,6 +217,9 @@ probe('startup secret reads observe cancellation', 'startup.go',
       'stopStartup := context.AfterFunc(ctx, cancel)',
       'stopStartup := context.AfterFunc(context.Background(), cancel)',
       './internal/service', 'TestServiceStartupCancellation')
+probe('real SSH unlisted Post refuses before sending, independently', 'handler.go',
+      'ch == "*" || ch == strconv.FormatUint(e.ChannelID, 10)', 'ch == "*" || true',
+      './internal/service', 'TestSSHHandlerGrants/unlisted/Post')
 probe('bot-token startup read observes cancellation', 'runtime.go',
       'secrets.ReadSecret(ctx, where, b.Token)', 'secrets.ReadSecret(context.Background(), where, b.Token)',
       './internal/service', 'TestServiceStartupCancellation')

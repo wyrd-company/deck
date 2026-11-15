@@ -137,36 +137,42 @@ func TestSSHHandlerGrants(t *testing.T) {
 			}
 		}
 	}
-	for _, tc := range []struct {
-		client pb.DeckServiceClient
-		want   map[string]bool
-	}{{a, map[string]bool{"a:10": true}}, {b, map[string]bool{"b:10": true, "b:20": true}}} {
-		out, err := tc.client.ListChannels(ctx, &pb.ListChannelsRequest{})
-		if err != nil {
-			t.Fatal(err)
-		}
-		got := map[string]bool{}
-		for _, ch := range out.Channels {
-			got[fmt.Sprintf("%s:%d", ch.Bot, ch.ChannelId)] = true
-		}
-		if len(got) != len(tc.want) {
-			t.Fatal("listed channels crossed grants", got)
-		}
-		for id := range tc.want {
-			if !got[id] {
-				t.Fatal("missing own channel", id)
+	t.Run("ListChannels", func(t *testing.T) {
+		for _, tc := range []struct {
+			client pb.DeckServiceClient
+			want   map[string]bool
+		}{{a, map[string]bool{"a:10": true}}, {b, map[string]bool{"b:10": true, "b:20": true}}} {
+			out, err := tc.client.ListChannels(ctx, &pb.ListChannelsRequest{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := map[string]bool{}
+			for _, ch := range out.Channels {
+				got[fmt.Sprintf("%s:%d", ch.Bot, ch.ChannelId)] = true
+			}
+			if len(got) != len(tc.want) {
+				t.Fatal("listed channels crossed grants", got)
+			}
+			for id := range tc.want {
+				if !got[id] {
+					t.Fatal("missing own channel", id)
+				}
 			}
 		}
-	}
+	})
 	for _, op := range []string{"Post", "Reply", "GetThread", "ListHistory"} {
 		t.Run("unlisted/"+op, func(t *testing.T) {
-			if err := invokeSSH(a, ctx, op, "a", 20, 201); status.Code(err) != codes.PermissionDenied {
-				t.Fatal(err)
+			beforeA, beforeB := len(s.fakes["a"].posts()), len(s.fakes["b"].posts())
+			err := invokeSSH(a, ctx, op, "a", 20, 201)
+			if status.Code(err) != codes.PermissionDenied || len(s.fakes["a"].posts()) != beforeA || len(s.fakes["b"].posts()) != beforeB {
+				t.Fatal("unlisted target caused a Discord send", err)
 			}
 		})
 		t.Run("server-boundary/"+op, func(t *testing.T) {
-			if err := invokeSSH(b, ctx, op, "b", 30, 300); status.Code(err) != codes.PermissionDenied {
-				t.Fatal(err)
+			beforeA, beforeB := len(s.fakes["a"].posts()), len(s.fakes["b"].posts())
+			err := invokeSSH(b, ctx, op, "b", 30, 300)
+			if status.Code(err) != codes.PermissionDenied || len(s.fakes["a"].posts()) != beforeA || len(s.fakes["b"].posts()) != beforeB {
+				t.Fatal("cross-server target caused a Discord send", err)
 			}
 		})
 		t.Run("ungranted-bot/"+op, func(t *testing.T) {
