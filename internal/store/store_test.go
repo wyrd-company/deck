@@ -266,3 +266,44 @@ func TestResolveWhileStoreIsBeingCreated(t *testing.T) {
 		t.Fatalf("migrated store: %+v %v", rows, err)
 	}
 }
+
+func TestResolvePrimaryUsesFirstIdentifier(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "deck.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ss := session.Session{Identifiers: []session.Identifier{{Name: "FIRST", Value: "one"}, {Name: "SECOND", Value: "two"}}}
+	if err = s.Pending(ss, "K", "n", "post", 0); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.Sent(ss, "K", "n", "created", &pb.Thread{ThreadId: 10}, 11, &pb.StreamPosition{Epoch: 1, Sequence: 5}); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := s.Resolve(10, nil)
+	if err != nil || len(rows) != 1 || rows[0].Primary != "FIRST" || len(rows[0].Identifiers) != 2 || rows[0].Identifiers[1].Name != "SECOND" {
+		t.Fatalf("resolve primary/order: %v %v", rows, err)
+	}
+}
+
+func TestEnableWALRejectsNonBusyError(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "corrupt.db")
+	if err := os.WriteFile(path, []byte("not a SQLite database"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	conn, err := db.Conn(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	start := time.Now()
+	err = enableWAL(conn)
+	if err == nil || time.Since(start) > 2*time.Second {
+		t.Fatalf("non-busy error retried: elapsed=%v err=%v", time.Since(start), err)
+	}
+}

@@ -1,6 +1,7 @@
 package client
 
 import (
+	pb "github.com/wyrd-company/deck/internal/api/deckv1"
 	"github.com/wyrd-company/deck/internal/config"
 	"testing"
 )
@@ -27,5 +28,15 @@ func TestAllowedPolicy(t *testing.T) {
 				t.Fatalf("Allowed=%v want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestNonTouchedThreadsContributeNothing(t *testing.T) {
+	c := &Client{}
+	for _, state := range []pb.ThreadState{pb.ThreadState_THREAD_STATE_NOT_TOUCHED, pb.ThreadState_THREAD_STATE_NOT_GRANTED, pb.ThreadState_THREAD_STATE_UNSPECIFIED} {
+		result, err := c.Counts([]*pb.ThreadCount{{ThreadId: 10, State: state, Count: 2}})
+		if err != nil || result.Total != 0 || len(result.Threads) != 1 || result.Threads[0].Count != 0 || result.Threads[0].State != state.String() {
+			t.Fatalf("state=%v count=%v err=%v", state, result, err)
+		}
 	}
 }
