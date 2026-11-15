@@ -1497,9 +1497,8 @@ type ThreadCount struct {
 	// Activity after the cursor that counts, the calling key's own messages
 	// included; zero unless the state is touched.
 	Count uint32 `protobuf:"varint,3,opt,name=count,proto3" json:"count,omitempty"`
-	// Not yet specified: which messages within count this lists and what
-	// identifies the key each was sent with across a rotation of the calling
-	// key; open question Q01 in concepts/deck.yml.
+	// One entry per counted copy of a deck-sent message: every counted
+	// index entry with sender_key and nonce, whichever key or name sent it.
 	Own []*OwnMessage `protobuf:"bytes,4,rep,name=own,proto3" json:"own,omitempty"`
 	// Whether the stream no longer holds everything published after the
 	// cursor: the cursor is from another epoch, or the stream's oldest message
@@ -1574,13 +1573,16 @@ func (x *ThreadCount) GetHorizonPassed() bool {
 	return false
 }
 
-// OwnMessage is one entry of ThreadCount.own. Not yet specified: what
-// identifies the key it was sent with across a rotation of that key; open
-// question Q01 in concepts/deck.yml.
+// OwnMessage is one counted copy of a deck-sent message, from any key/name.
+// The client subtracts it when sender_key and nonce together match a send
+// recorded by the session, including a send made before rotation or rename.
 type OwnMessage struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Id            uint64                 `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
-	Nonce         string                 `protobuf:"bytes,2,opt,name=nonce,proto3" json:"nonce,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Id    uint64                 `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
+	Nonce string                 `protobuf:"bytes,2,opt,name=nonce,proto3" json:"nonce,omitempty"`
+	// The SHA256 fingerprint of the key that sent this message, as on
+	// Activity.sender_key; it is not the caller's current fingerprint.
+	SenderKey     string `protobuf:"bytes,3,opt,name=sender_key,json=senderKey,proto3" json:"sender_key,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1625,6 +1627,13 @@ func (x *OwnMessage) GetId() uint64 {
 func (x *OwnMessage) GetNonce() string {
 	if x != nil {
 		return x.Nonce
+	}
+	return ""
+}
+
+func (x *OwnMessage) GetSenderKey() string {
+	if x != nil {
+		return x.SenderKey
 	}
 	return ""
 }
@@ -2797,11 +2806,13 @@ const file_deck_v1_deck_proto_rawDesc = "" +
 	"\x05state\x18\x02 \x01(\x0e2\x14.deck.v1.ThreadStateR\x05state\x12\x14\n" +
 	"\x05count\x18\x03 \x01(\rR\x05count\x12%\n" +
 	"\x03own\x18\x04 \x03(\v2\x13.deck.v1.OwnMessageR\x03own\x12%\n" +
-	"\x0ehorizon_passed\x18\x05 \x01(\bR\rhorizonPassed\"2\n" +
+	"\x0ehorizon_passed\x18\x05 \x01(\bR\rhorizonPassed\"Q\n" +
 	"\n" +
 	"OwnMessage\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x04R\x02id\x12\x14\n" +
-	"\x05nonce\x18\x02 \x01(\tR\x05nonce\"?\n" +
+	"\x05nonce\x18\x02 \x01(\tR\x05nonce\x12\x1d\n" +
+	"\n" +
+	"sender_key\x18\x03 \x01(\tR\tsenderKey\"?\n" +
 	"\x12CountUnreadRequest\x12)\n" +
 	"\acursors\x18\x01 \x03(\v2\x0f.deck.v1.CursorR\acursors\"E\n" +
 	"\x13CountUnreadResponse\x12.\n" +
