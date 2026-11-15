@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/peer"
 )
@@ -40,5 +41,23 @@ func TestCallingKey(t *testing.T) {
 
 	if KeyName(ctx) != "" {
 		t.Fatal("identity leaked across contexts")
+	}
+}
+
+func TestNonKeyPeerHasNoIdentity(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		info credentials.AuthInfo
+	}{
+		{"TLS", credentials.TLSInfo{}},
+		{"nil auth", nil},
+		{"nil key pointer", (*KeyAuthInfo)(nil)},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := peer.NewContext(context.Background(), &peer.Peer{AuthInfo: tt.info})
+			if got := KeyName(WithKeyName(ctx, "attacker")); got != "" {
+				t.Fatalf("non-key peer used fallback identity %q", got)
+			}
+		})
 	}
 }
