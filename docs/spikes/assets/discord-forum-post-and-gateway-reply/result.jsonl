@@ -1,0 +1,14 @@
+{"step":"application","result":"pass","detail":{"bot_public":true,"message_content_intent":false,"message_content_intent_limited":true}}
+{"step":"gateway-open","result":"pass","detail":{"guilds_ready_after_ms":1337,"intents":16810497,"message_content_requested":true}}
+{"step":"forum-channel","result":"pass","detail":{"available_tags":0,"require_tag":false,"type":15}}
+{"step":"forum-post","result":"pass","detail":{"poll_in_starter":true,"rest_ms":307,"starter_id_is_thread":true,"thread_parent_is_forum":true}}
+{"step":"gateway-starter-message","result":"pass","detail":{"author_bot":true,"before_rest_returned":true,"has_content":true,"latency_ms":226}}
+{"step":"bot-reply","result":"pass","detail":{"author_bot":true,"has_content":true,"latency_ms":223,"n":1}}
+{"step":"bot-reply","result":"pass","detail":{"author_bot":true,"has_content":true,"latency_ms":170,"n":2}}
+{"step":"bot-reply","result":"pass","detail":{"author_bot":true,"has_content":true,"latency_ms":302,"n":3}}
+{"step":"webhook-reply","result":"fail","detail":{"code":50013,"message":"Missing Permissions","status":403}}
+{"step":"history-after-cursor","result":"pass","detail":{"count":3,"from_webhook":0,"newest_first":true,"oldest_first":false,"with_content":3}}
+{"step":"thread-metadata","result":"pass","detail":{"last_message_id_is_latest":true,"message_count":3,"total_message_sent":3}}
+{"step":"text-channel-thread","result":"pass","detail":{"latency_ms":303,"thread_id_is_starter_id":true}}
+{"step":"archive","result":"pass"}
+{"step":"done","result":"pass"}

@@ -1,0 +1,174 @@
+$schema: https://refinery.systems/ontology/spike
+title: A disgo bot creates a forum post and receives the reply from the gateway
+
+relationships:
+  references:
+    - service
+    - discord-conversations
+    - events
+  shapes:
+    - person-replies-arrive-with-content
+    - component-interactions-reach-the-gateway
+
+objective:
+  - Can a disgo bot create a forum post whose starter message carries text, an
+    embed with a persona author, a button and a poll, or does the poll have to
+    be a second message?
+  - Does the gateway deliver a reply in that post as a guild MESSAGE_CREATE,
+    with its content, and how long after the REST call that sent it?
+  - In what order does the gateway event for a new post arrive relative to the
+    REST response that creates the post?
+  - Does a REST read with an after-message-id cursor return the replies, in
+    which order, and with content?
+  - Is a thread's last_message_id usable as a cheap test for new messages?
+  - Does a message in a text channel become a thread whose identifier is the
+    message's own, as a forum post's is?
+  - May the test application request the privileged message content intent?
+
+background:
+  current-design: >-
+    deck's service holds the bot tokens, creates forum posts and replies over
+    Discord's REST API, and turns gateway events in the threads it touched into
+    JetStream events. No deck code exists yet; this spike is the first contact
+    between disgo and the test server.
+  problems:
+    - The service is only useful if a reply in a forum post reaches it as an
+      event that names the thread, with the reply's content.
+    - The acceptance scenario posts a poll with an @mention to a forum channel;
+      Discord's documentation of the forum post's starter message does not list
+      a poll field.
+    - Message content of other authors is a privileged gateway intent that an
+      application has to be granted.
+
+ideas:
+  - >-
+    Open one gateway session with the intents the service needs (guilds, guild
+    messages, message content when granted, guild message polls), create posts
+    and replies over REST, and match gateway events to them by message
+    identifier.
+  - >-
+    Record every guild MESSAGE_CREATE, tracked thread or not, so an event that
+    arrives before deck knows the thread's identifier is still seen.
+  - >-
+    Stand in for a person's reply with a webhook message in the thread, which
+    has another author.
+  - >-
+    Archive each thread the spike creates when it finishes.
+
+environment:
+  location: >-
+    Branch `task/2-design` in wyrd-company/deck,
+    `docs/spikes/assets/discord-forum-post-and-gateway-reply/main.go`, in the
+    standalone module `docs/spikes/assets` (not part of deck's build). Run with
+    `go run ./discord-forum-post-and-gateway-reply -env PATH` from
+    `docs/spikes/assets`, where PATH holds BOT_TOKEN, SERVER_ID, TEST_FORUM and
+    TEST_CHANNEL. It prints JSON lines with labels, flags and timings and never
+    a token or an identifier from the env file. The run below is
+    `result.jsonl` beside the program.
+  tools:
+    - Go 1.27.3, linux/amd64
+    - github.com/disgoorg/disgo v0.20.0
+    - Discord API v10, the test server and its bot
+  resources:
+    - The test server's forum channel (type 15, no required tags) and text
+      channel
+    - Three runs on 2026-11-15; the third added two more replies to show the
+      history order
+
+findings:
+  forum-post-carries-a-poll:
+    verdict: confirmed working
+    measurements:
+      rest-ms: 307
+    notes: >-
+      Measured: CreatePostInThreadChannel with a starter message holding text,
+      an embed whose author is a persona name and icon, an action row with one
+      button, and a two-answer poll succeeds. The poll needs no second message.
+      The post's thread identifier equals its starter message's identifier, and
+      the thread's parent is the forum.
+
+  reply-arrives-from-the-gateway:
+    verdict: confirmed working
+    measurements:
+      latency-ms: [223, 170, 302]
+    notes: >-
+      Measured: each reply sent over REST arrives as a guild MESSAGE_CREATE
+      whose channel is the thread, 170 to 302 ms after the REST call started,
+      with its content. The replies were the bot's own: a webhook stand-in for
+      another author failed with Discord error 50013, Missing Permissions,
+      because the test bot lacks Manage Webhooks. A person's reply was not
+      observed; the assumption person-replies-arrive-with-content records what
+      proves it.
+
+  starter-event-precedes-rest-response:
+    verdict: confirmed, needs design
+    measurements:
+      gateway-ms: 226
+      rest-ms: 307
+    notes: >-
+      Measured in two runs out of two: the MESSAGE_CREATE for a new post's
+      starter message arrives before the REST response that tells deck the
+      post's thread identifier. A service that drops events for threads it does
+      not yet know drops it: the first run, which did, never saw the starter
+      message. Inferred: any event in a new thread within the REST round trip
+      races registration the same way.
+
+  history-after-cursor:
+    verdict: confirmed working
+    measurements:
+      returned: 3
+    notes: >-
+      Measured: GetMessages with after set to the starter message's identifier
+      returns the three replies, newest first, each with content, in one call
+      with limit 100.
+
+  last-message-id-tracks-the-thread:
+    verdict: confirmed working
+    notes: >-
+      Measured: after the replies, the thread's last_message_id is the newest
+      reply's identifier. message_count is 3, counting the replies and not the
+      starter message.
+
+  text-channel-message-becomes-a-thread:
+    verdict: confirmed working
+    measurements:
+      latency-ms: 303
+    notes: >-
+      Measured: a message in the text channel, then CreateThreadFromMessage,
+      gives a thread whose identifier equals the message's. A reply in it
+      arrives from the gateway like a reply in a forum post.
+
+  message-content-intent:
+    verdict: confirmed available
+    notes: >-
+      Measured: the application's flags hold GATEWAY_MESSAGE_CONTENT_LIMITED
+      (granted while the application is in fewer than 100 servers) and not
+      GATEWAY_MESSAGE_CONTENT. The gateway accepted the session with the
+      message content intent requested (intents 16810497: guilds, guild
+      messages, message content, guild message polls).
+
+  interactions-not-exercised:
+    verdict: not measured
+    notes: >-
+      A bot cannot click its own button or vote in its own poll, and nobody
+      else was present. The assumption component-interactions-reach-the-gateway
+      records what proves component interactions and their acknowledgement.
+
+conclusion: >-
+  disgo covers what deck's service needs from Discord: forum posts with every
+  content type in the starter message, threads started from text channel
+  messages with the same identifier rule, gateway delivery of replies in a few
+  hundred milliseconds, and history reads with an after-message-id cursor. The
+  gateway can deliver an event for a new thread before the REST call that
+  created it returns, so the service publishes its own posts from the REST
+  response and holds gateway events for threads created in the last few seconds
+  until their registration settles. A person's reply and a component
+  interaction remain to be observed with a person present.
+
+next-steps:
+  - The service technical design publishes deck's own messages from the REST
+    response and holds events for new threads before registration.
+  - The domain model states that every post is a thread whose identifier is
+    its starter message's.
+  - The acceptance scenario, run with a person, proves the two assumptions this
+    spike leaves open.
