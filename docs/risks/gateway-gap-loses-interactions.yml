@@ -8,8 +8,9 @@ description: >-
   When a bot's gateway session drops and cannot resume, or the service is not
   running, Discord does not replay the events in between. Messages in that
   gap are recovered: on every READY, the first after a start included, the
-  service reads each active touched thread's messages after the newest one it
-  holds and publishes them.
+  service reads the messages after each registered thread's recorded
+  boundary, for threads active now and threads archived since the bot was
+  last seen, and publishes them.
   Component uses and poll votes in the gap cannot be read back from Discord,
   so they never reach the stream, and a person who pressed a button during
   the gap saw "This interaction failed". Mitigation: disgo resumes sessions

@@ -77,8 +77,14 @@ proposed-design:
     whose fingerprint is in the map and whose username is `deck`, stores the
     key's name on the context, and refuses everything else with the same
     failure, so an unknown key and a wrong username are indistinguishable.
-    Each SSH callback clears the stored name first, so the name on the
-    context is always the last key the client authenticated with.
+    Each SSH callback clears the stored name first. The handler also runs for
+    keys a client only offers without signing, so the name on the context is
+    the signed key's only because the SSH server calls the handler again for
+    the key that signs: golang.org/x/crypto v0.31.0 and later keep one cached
+    public-key result (maxCachedPubKeys = 1), and the service requires at
+    least that version. A transport test offers one configured key without
+    signing, then authenticates with another, and checks that calls carry the
+    second key's name.
   subsystem-to-grpc: >-
     The subsystem handler wraps the ssh.Session in a channel connection (a
     net.Conn whose Read, Write and Close are the channel's, whose addresses are
@@ -93,13 +99,18 @@ proposed-design:
     A unary and a stream interceptor read the key name from the call's peer
     AuthInfo and put the key's grants on the call context; a call with no key
     name ends with UNAUTHENTICATED, which no SSH-authenticated call can reach.
-    Grants are immutable after start. A grant check takes a bot, a server and a
-    channel and passes when some grant of the key names that bot and server and
-    either lists the channel or holds `*`. A thread is checked by its parent
-    channel, from the thread registry, or from Discord (cached for 10 minutes)
-    when the thread is not touched. Every call that names a channel or thread
-    checks before it sends a message, reads messages or reads the stream, and
-    lists filter by the same check.
+    Grants are immutable after start. Every call that names a channel or
+    thread checks it in the order the gRPC API specifies, before it sends a
+    message, reads messages or reads the stream: the bot must be named by some
+    grant of the key, before any Discord request through it; the target's
+    server and parent channel come from the thread registry for a touched
+    thread, and otherwise from that bot's Discord metadata (cache, or a REST
+    read, cached for 10 minutes), never from the request or a grant; then some
+    grant must name that bot, that server and the channel or `*`. Every
+    failure, including a target the bot cannot see, is PERMISSION_DENIED with
+    one message. Lists filter by the same check. A key granted `*` on one
+    server of a bot is therefore refused a channel of another server of the
+    same bot, which a test shows.
   limits: >-
     The gRPC server and client each accept and send messages up to 64 MiB;
     grpc-go's client default of 4 MiB would refuse a long ListUnread.

@@ -38,10 +38,14 @@ design-challenges:
     pure Go, because the client builds with CGO_ENABLED=0 for every platform
     it ships to.
   unread-without-state-on-the-service: >-
-    The service holds no read state, so the client sends, for each of the
-    session's threads, the cursor and the snowflakes of its own messages after
-    the cursor. The service counts from its index, and the client's store stays
-    the only place that knows which session read what.
+    The service holds no read state and knows no session, so the client sends,
+    for each of the session's threads, the cursor, a stream position. The
+    service counts from its index and lists, among what it counted, the
+    messages the calling key sent with their nonces; the client takes away the
+    ones its session sent. A session's own message is known by the nonce it
+    recorded before sending, so it is recognised whenever it reaches the
+    stream, late or early, and the client's store stays the only place that
+    knows which session read or sent what.
 proposed-design:
   high-level-overview: >-
     Each command loads the configuration, opens the store, detects the session,
@@ -71,54 +75,70 @@ proposed-design:
     INTEGER NOT NULL, channel_id INTEGER NOT NULL, title TEXT NOT NULL)`.
     `session_threads(session_key TEXT NOT NULL REFERENCES sessions(key),
     thread_id INTEGER NOT NULL REFERENCES threads(thread_id), role TEXT NOT
-    NULL CHECK (role IN ('created', 'replied')), cursor_id INTEGER NOT NULL,
-    cursor_sequence INTEGER NOT NULL, touched_at TEXT NOT NULL, PRIMARY KEY
-    (session_key, thread_id))`, where touched_at is when the session last sent
-    a message in the thread.
-    `sent_messages(message_id INTEGER PRIMARY KEY, thread_id INTEGER NOT NULL,
-    session_key TEXT NOT NULL, sent_at TEXT NOT NULL)` with an index on
-    `(session_key, thread_id)`. Snowflakes are stored as SQLite integers, which
-    hold any snowflake below 2^63. Times are RFC 3339 in UTC.
+    NULL CHECK (role IN ('created', 'replied')), cursor_epoch INTEGER NOT
+    NULL, cursor_sequence INTEGER NOT NULL, touched_at TEXT NOT NULL, PRIMARY
+    KEY (session_key, thread_id))`, where touched_at is when the session last
+    sent a message in the thread. `sends(nonce TEXT PRIMARY KEY, session_key
+    TEXT NOT NULL REFERENCES sessions(key), kind TEXT NOT NULL CHECK (kind IN
+    ('post', 'reply')), thread_id INTEGER, message_id INTEGER, state TEXT NOT
+    NULL CHECK (state IN ('pending', 'sent', 'failed')), sent_at TEXT NOT
+    NULL)`, with indexes on `(session_key, thread_id)` and `message_id`.
+    Snowflakes and stream positions are stored as SQLite integers, which hold
+    any value below 2^63. Times are RFC 3339 in UTC.
   recording: >-
-    After a successful post, one transaction upserts the session, inserts the
+    Before every post or reply, the client generates a nonce of 20 random
+    letters and digits and, in one transaction, upserts the session and
+    inserts a `pending` send with the nonce (and the thread for a reply). Only
+    then does it call the service, so any event of that message finds the send
+    already recorded. After a successful post, one transaction inserts the
     thread, inserts the session thread with role `created`, the cursor at the
-    new message (its snowflake, and its sequence from the response, which is
-    zero when NATS did not acknowledge it in time) and touched_at now, and
-    inserts the message into sent_messages. After a successful reply, one
-    transaction upserts the session and the thread, inserts the session thread
-    with role `replied` and the cursor at the reply when the session held none
-    for it, sets touched_at to now, and inserts the message. A post or
-    reply that the service performed but the store failed to record reports
-    the message and exits 1, naming the store failure.
+    position the response carries and touched_at now, and marks the send
+    `sent` with its thread and message. After a successful reply, one
+    transaction upserts the thread, inserts the session thread with role
+    `replied` and the cursor at the response's position when the session held
+    none for it, sets touched_at to now, and marks the send `sent`. A call
+    whose outcome is unknown (a lost connection or a deadline after the
+    request left) is sent once more with the same nonce, which the service and
+    Discord answer without a second send; if that also fails, the send stays
+    `pending`, and the command reports that the outcome is unknown and exits
+    4. A send the service refused is marked `failed`. A post or reply that the
+    service performed but the store failed to record reports the message and
+    exits 1, naming the store failure.
   cursors-and-unread: >-
-    For a set of threads, the client builds one Cursor per thread: the
-    session's cursor_id and cursor_sequence, and the sent_messages snowflakes
-    of that session in that thread that are greater than cursor_id. The unread report sends the session's
-    threads that the allow and deny lists keep to CountUnread. Read sends them
-    to ListUnread and, unless `--keep-unread`, moves each thread's cursor to
-    the last activity it received for that thread, in stream order, with one
-    `UPDATE ... SET cursor_sequence = ?, cursor_id = ? WHERE ... AND
-    cursor_sequence <= ?` so that a cursor never moves back even when two
-    processes read at once. A sent message stays in the store for resolve;
-    once the cursor's snowflake is past it, it is no longer sent in requests.
+    For a set of threads, the client builds one Cursor per thread from the
+    session's cursor_epoch and cursor_sequence. The unread report sends the
+    session's threads that the allow and deny lists keep to CountUnread, and
+    its count for each thread is the response's count less the entries of
+    `own` whose nonce is one of the session's sends. Read sends them to
+    ListUnread, leaves out of what it prints the activity whose nonce is one
+    of the session's sends, and, unless `--keep-unread`, moves each thread's
+    cursor to the position of the last activity it received for that thread,
+    own messages included, with one `UPDATE session_threads SET cursor_epoch =
+    ?, cursor_sequence = ? WHERE session_key = ? AND thread_id = ? AND
+    (cursor_epoch < ? OR (cursor_epoch = ? AND cursor_sequence < ?))`, so that
+    a cursor never moves to an earlier position even when two processes read
+    at once, and moves to a recreated stream's positions, whose epoch is
+    greater. A thread whose count carries horizon_passed is reported with a
+    note that older activity may have left the stream, naming `deck history`.
   listen: >-
     Listen sends the threads' cursors to the Listen call and reads responses
-    until one carries activity that is not the session's own: the exclusions
-    are a snapshot, so the client drops activity whose snowflake sent_messages
-    holds for the session by the time it arrives, which covers a reply the same
-    session sent from another process while listen waited. It prints what
-    remains, marks it read unless asked not to, and ends the call. When the first response shows none of the threads in
-    the touched state, nothing can arrive, and listen prints the states and
-    exits 3. Its timeout is a context deadline on the call; when it
-    passes, listen exits 5. An interrupt ends the call and exits 130.
+    until one carries activity whose nonce is not one of the session's sends,
+    which covers a reply the same session sent from another process while
+    listen waited, since that send was recorded before it left. It prints that
+    activity, marks what it received read unless asked not to, and ends the
+    call. When the first response shows none of the threads in the touched
+    state, nothing can arrive, and listen prints the states and exits 3. Its
+    timeout is a context deadline on the call; when it passes, listen exits 5.
+    An interrupt ends the call and exits 130.
   resolve: >-
     Resolve opens the store read-only and needs neither the service nor
     OpenBao. Given an event, it decodes the payload with protojson into an
     Activity, rejecting anything that is not one with exit status 2, and takes
     its thread. It returns every session thread of that thread whose session
-    has identifiers, leaving out the session whose
-    sent_messages hold the event's message snowflake when the event is a
-    message. Sessions are ordered by touched_at, the latest first.
+    has identifiers, leaving out the session whose sends hold the event's
+    nonce. The send was recorded before the message left the client, so a
+    relay cannot see the event before the exclusion exists. Sessions are
+    ordered by touched_at, the latest first.
   allow-and-deny: >-
     Channel references in the configuration resolve to `{bot?, channel}` at
     load. A target channel is allowed when `channels.allow` is absent or one
