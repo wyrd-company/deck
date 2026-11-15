@@ -2,6 +2,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,8 +17,14 @@ import (
 // Version is supplied at build time from the release version.
 var Version = "dev"
 
+// serviceCommand is wired by the service/transport command adapter.
+var serviceCommand = func(context.Context, []string, io.Writer, io.Writer) (int, bool) { return 0, false }
+
 func run(args []string, stdout, stderr io.Writer) int {
 	if code, handled := validateCommand(args, stdout, stderr); handled {
+		return code
+	}
+	if code, handled := serviceCommand(context.Background(), args, stdout, stderr); handled {
 		return code
 	}
 	if len(args) == 1 && args[0] == "--version" {

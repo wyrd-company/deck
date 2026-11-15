@@ -67,7 +67,8 @@ func TestKeyCommands(t *testing.T) {
 			if jsonMode {
 				args = append(args, "--json")
 			}
-			code, handled := keyCommand(context.Background(), args, &stdout, &stderr)
+			code := run(args, &stdout, &stderr)
+			handled := true
 			if code != 0 || !handled || stderr.Len() != 0 {
 				t.Fatalf("%s: %d %v %s", command, code, handled, stderr.String())
 			}

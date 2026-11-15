@@ -575,3 +575,73 @@ func TestCallLifetimeAndSize(t *testing.T) {
 		t.Fatal("unary timeout was not applied")
 	}
 }
+
+type fixedSecret struct {
+	raw   string
+	reads int
+}
+
+func (s *fixedSecret) ReadSecret(ctx context.Context, where string, ref config.SecretRef) (string, error) {
+	s.reads++
+	return s.raw, nil
+}
+func TestStartupAndShutdown(t *testing.T) {
+	signer, host := testHost(t), testHost(t)
+	key := config.Key{Name: "client", PublicKey: DescribeKey(signer.PublicKey(), "").PublicKey}
+	server, err := NewServer([]config.Key{key}, host, &probeHandler{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- serveUntilCanceled(ctx, server, listener) }()
+	defer server.Close()
+	cfg := &config.Client{Service: config.ServiceEndpoint{Address: listener.Addr().String(), HostKey: DescribeKey(host.PublicKey(), "").PublicKey}}
+	dialCtx, dialCancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer dialCancel()
+	conn, err := dialSigner(dialCtx, cfg, signer, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	stream, err := conn.API.Listen(context.Background(), &deckv1.ListenRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := stream.Recv(); err != nil {
+		t.Fatal(err)
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("startup did not stop")
+	}
+	if _, err := stream.Recv(); err == nil {
+		t.Fatal("shutdown left call open")
+	}
+	if raw, err := net.DialTimeout("tcp", listener.Addr().String(), time.Second); err == nil {
+		_ = raw.Close()
+		t.Fatal("shutdown left listener open")
+	}
+	// Invalid host material is rejected before binding the configured endpoint.
+	secret := &fixedSecret{raw: "not a private key"}
+	serviceCfg := &config.Service{Listen: config.Listen{SSH: "127.0.0.1:0"}}
+	if err := ListenAndServe(context.Background(), serviceCfg, secret, &probeHandler{}); err == nil || secret.reads != 1 {
+		t.Fatalf("invalid host: %v, %d reads", err, secret.reads)
+	}
+	ctx, cancel = context.WithCancel(context.Background())
+	cancel()
+	secret.reads = 0
+	if err := ListenAndServe(ctx, serviceCfg, secret, &probeHandler{}); !errors.Is(err, context.Canceled) || secret.reads != 0 {
+		t.Fatalf("canceled startup: %v, %d reads", err, secret.reads)
+	}
+}
