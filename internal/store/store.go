@@ -196,7 +196,7 @@ var ErrNonceConflict = errors.New("nonce already belongs to another session or t
 // Pending is committed before the RPC, so relays can suppress an event even
 // while its sending command is still waiting for a response. A nonce belongs
 // to its original session and kind; repeats cannot steal another send.
-func (s *Store) Pending(ss session.Session, key, nonce, kind string, thread uint64) error {
+func (s *Store) Pending(ss session.Session, key, nonce, kind string, thread uint64, channel ...*pb.ChannelRef) error {
 	return s.write(func(tx *sql.Tx) error {
 		if err := upsertSession(tx, ss); err != nil {
 			return err
@@ -207,6 +207,18 @@ func (s *Store) Pending(ss session.Session, key, nonce, kind string, thread uint
 		if err == nil {
 			if owner != ss.Key() || kind != previousKind || (kind == "reply" && uint64(previousThread.Int64) != thread) {
 				return ErrNonceConflict
+			}
+			// A completed post already identifies its original channel through
+			// the stored thread. Refuse retargeting before another RPC can send.
+			if kind == "post" && previousThread.Valid && len(channel) > 0 && channel[0] != nil {
+				var bot string
+				var id uint64
+				if err := tx.QueryRow(`SELECT bot,channel_id FROM threads WHERE thread_id=?`, previousThread.Int64).Scan(&bot, &id); err != nil {
+					return err
+				}
+				if channel[0].ChannelId != id || channel[0].Bot != "" && channel[0].Bot != bot {
+					return ErrNonceConflict
+				}
 			}
 			return nil
 		}

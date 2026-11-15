@@ -154,7 +154,7 @@ func (i *invocation) send(ctx context.Context) error {
 	if thread != nil {
 		threadID = thread.ThreadId
 	}
-	if err = i.client.Store.Pending(i.client.Session, i.client.Fingerprint, nonce, i.flags.command, threadID); err != nil {
+	if err = i.client.Store.Pending(i.client.Session, i.client.Fingerprint, nonce, i.flags.command, threadID, channel); err != nil {
 		if errors.Is(err, store.ErrNonceConflict) {
 			return invalid("%v", err)
 		}

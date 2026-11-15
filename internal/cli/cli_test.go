@@ -1784,3 +1784,41 @@ func TestNoPersonaOverridesDefault(t *testing.T) {
 		}
 	}
 }
+
+func TestCompletedPostNonceCannotChangeChannel(t *testing.T) {
+	f := setup(t)
+	s := f.open()
+	f.result("post", "helper/2", "--title", "original", "--text", "hello", "--nonce", "boundPost")
+	original, err := s.SendRecord(keyA, "boundPost")
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	f.fake.post = func(_ context.Context, r *pb.PostRequest) (*pb.PostResponse, error) {
+		calls++
+		if r.Channel.ChannelId != 2 {
+			t.Errorf("post retargeted: %v", r)
+		}
+		return &pb.PostResponse{Thread: baseThread, Message: person(107, 7, "sent"), Position: &pb.StreamPosition{Epoch: 100, Sequence: 5}}, nil
+	}
+	for _, target := range []string{"helper/3", "other/2"} {
+		for _, jsonMode := range []bool{false, true} {
+			args := []string{"post", target, "--title", "repeat", "--text", "hello", "--nonce", "boundPost"}
+			if jsonMode {
+				args = append(args, "--json")
+			}
+			code, out, stderr := f.run(args...)
+			if code != 2 || calls != 0 {
+				t.Fatal(code, calls, out, stderr)
+			}
+			got, err := s.SendRecord(keyA, "boundPost")
+			if err != nil || got != original {
+				t.Fatalf("retarget rewrote original: %v want %v %v", got, original, err)
+			}
+		}
+	}
+	f.result("post", "2", "--title", "repeat", "--text", "hello", "--nonce", "boundPost")
+	if calls != 1 {
+		t.Fatal("same channel repeat refused", calls)
+	}
+}
