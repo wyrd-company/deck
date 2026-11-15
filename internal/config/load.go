@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
 	"github.com/santhosh-tekuri/jsonschema/v6/kind"
@@ -194,10 +195,7 @@ func fieldPath(tokens []string, raw any) string {
 				raw = nil
 			}
 		} else {
-			if out != "" {
-				out += "."
-			}
-			out += token
+			out = join(out, token)
 			if m, ok := raw.(map[string]any); ok {
 				raw = m[token]
 			}
@@ -242,7 +240,19 @@ func schemaErrors(problems *Errors, e *jsonschema.ValidationError, raw any, sche
 	}
 	problems.add(path, "does not satisfy "+keyword+" in the configuration schema")
 }
+
+// pathToken escapes terminal controls in configuration-supplied field names.
+// Ordinary field paths keep their documented dot/index notation.
+func pathToken(token string) string {
+	for _, r := range token {
+		if !unicode.IsPrint(r) {
+			return strconv.QuoteToASCII(token)
+		}
+	}
+	return token
+}
 func join(a, b string) string {
+	b = pathToken(b)
 	if a == "" {
 		return b
 	}

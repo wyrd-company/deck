@@ -267,3 +267,32 @@ func TestVaultAddressRejectsQueryAndFragment(t *testing.T) {
 		}
 	}
 }
+
+func TestFieldPathsEscapeControls(t *testing.T) {
+	for _, tt := range []struct{ key, token string }{
+		{"\x1b[31mEVIL", `"\x1b[31mEVIL"`},
+		{"line\nfeed", `"line\nfeed"`},
+		{"tab\tkey", `"tab\tkey"`},
+		{"bidi\u202e", `"bidi\u202e"`},
+	} {
+		for _, kind := range []string{"client", "service"} {
+			t.Run(kind+"/"+tt.token, func(t *testing.T) {
+				raw := mutate(t, kind, func(m map[string]any) { object(m["vault"])[tt.key] = "private" })
+				var err error
+				if kind == "client" {
+					_, err = ParseClient(raw, "/tmp/config.yml")
+				} else {
+					_, err = ParseService(raw)
+				}
+				var fields Errors
+				want := Errors{{Path: "vault." + tt.token, Reason: "unknown field"}}
+				if !errors.As(err, &fields) || !slices.Equal(fields, want) {
+					t.Fatalf("fields %#v; want %#v", fields, want)
+				}
+				if got := fields.Error(); strings.ContainsAny(got, "\x1b\n\t\u202e") || strings.Contains(got, "private") {
+					t.Fatalf("unsafe diagnostic %q", got)
+				}
+			})
+		}
+	}
+}
