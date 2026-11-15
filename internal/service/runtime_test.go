@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -32,14 +33,17 @@ func TestRuntimeVaultPathsAndSecretIsolation(t *testing.T) {
 	s := setup(t)
 	natsServer, creds := testutil.JWTNATS(t)
 	var reads atomic.Int64
+	var paths []string
+	var factoryTokens []string
 	tokens := []string{"MTIz.fake-bot-token.signature", "MTI0.second-private-bot.signature"}
 	vaultServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/private/data/deck/runtime" || r.Header.Get("X-Vault-Token") != "vault-test-secret" {
+		if !slices.Contains([]string{"/v1/private/data/deck/runtime", "/v1/private/data/deck/first", "/v1/private/data/deck/second"}, r.URL.Path) || r.Header.Get("X-Vault-Token") != "vault-test-secret" {
 			t.Error("unexpected configured Vault request")
 			w.WriteHeader(403)
 			return
 		}
 		reads.Add(1)
+		paths = append(paths, r.URL.Path)
 		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"data": map[string]string{"nats": creds, "first": tokens[0], "second": tokens[1]}}})
 	}))
 	defer vaultServer.Close()
@@ -61,7 +65,10 @@ func TestRuntimeVaultPathsAndSecretIsolation(t *testing.T) {
 	cfg.NATS.Timeout = time.Second
 	cfg.NATS.Creds = ref("nats")
 	cfg.NATS.Threads = config.Threads{Bucket: "runtime", Manage: true, Replicas: 1}
-	cfg.Bots = []config.Bot{{Name: "a", Token: ref("first")}, {Name: "b", Token: ref("second")}}
+	first, second := ref("first"), ref("second")
+	first.Path = "deck/first"
+	second.Path = "deck/second"
+	cfg.Bots = []config.Bot{{Name: "a", Token: first}, {Name: "b", Token: second}}
 	server := httptest.NewServer(s.fake)
 	defer server.Close()
 	var logs bytes.Buffer
@@ -69,6 +76,7 @@ func TestRuntimeVaultPathsAndSecretIsolation(t *testing.T) {
 	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
 	defer slog.SetDefault(old)
 	r, err := open(s.ctx, &cfg, vc, func(token string) (*discord.Client, error) {
+		factoryTokens = append(factoryTokens, token)
 		if token != tokens[0] && token != tokens[1] {
 			return nil, errors.New("unexpected token")
 		}
@@ -83,8 +91,11 @@ func TestRuntimeVaultPathsAndSecretIsolation(t *testing.T) {
 	}
 	raw, _ := protojson.Marshal(result)
 	r.Close()
-	if reads.Load() != 1 {
-		t.Fatal("configured shared secret path not cached", reads.Load())
+	if reads.Load() != 3 || !slices.Equal(paths, []string{"/v1/private/data/deck/runtime", "/v1/private/data/deck/first", "/v1/private/data/deck/second"}) {
+		t.Fatal("wrong secret paths or caching", paths)
+	}
+	if !slices.Equal(factoryTokens, tokens) {
+		t.Fatal("per-bot token mapping changed")
 	}
 	visible := logs.String() + string(raw) + fmt.Sprint(r.Handler)
 	for _, secret := range append(tokens, creds, "vault-test-secret") {

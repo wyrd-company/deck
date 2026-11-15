@@ -61,4 +61,33 @@ probe('partial poll failures survive event replay', 'activity/publisher.go',
 probe('completed sends refresh metadata and recheck their own grants', 'handler.go',
       'if c.Thread == nil {', 'return c.Thread,nil; if c.Thread == nil {',
       './internal/service', 'TestRepeatWaitsForIndexAndRestoresPollFailure')
-print('PASS all 14 service guard probes completed', flush=True)
+
+probe('configured ungranted bot is refused before metadata', 'handler.go',
+      'func botGranted(k config.Key, bot string) bool {',
+      'func botGranted(k config.Key, bot string) bool { return true;',
+      './internal/service', 'TestConfiguredUngrantedBotBeforeMetadata')
+probe('metadata never precedes bot selection', 'handler.go',
+      'var existing registry.Entry',
+      'if client:=h.bots[bot];client!=nil { _,_=client.Channel(ctx,id) }; var existing registry.Entry',
+      './internal/service', 'TestConfiguredUngrantedBotBeforeMetadata')
+probe('explicit channel grants refuse sibling channels', 'handler.go',
+      'ch == "*" || ch == strconv.FormatUint(e.ChannelID, 10)', 'ch == "*" || true',
+      './internal/service', 'TestExplicitChannelRefusals')
+probe('separate known failure retains earlier unknown touch', 'registry/registry.go',
+      '!success && !a.unknown && a.removable', '!success && !a.unknown',
+      './internal/service/registry', 'TestReplyStatesAndBoundary')
+probe('each bot reads its configured token reference', 'runtime.go',
+      'secrets.ReadSecret(ctx, where, b.Token)', 'secrets.ReadSecret(ctx, where, cfg.Bots[0].Token)',
+      './internal/service', 'TestRuntimeVaultPathsAndSecretIsolation')
+probe('publisher retries its own returned publish errors', 'activity/publisher.go',
+      'if delay < 2*time.Second {',
+      'p.mu.Lock();p.queue=p.queue[1:];p.mu.Unlock();break; if delay < 2*time.Second {',
+      './internal/service/activity', 'TestPublishRetryAndEnvelope')
+probe('text-channel post enforces derived nonce', 'send.go',
+      'message.Nonce = discord.Nonce(h.fingerprints[k.Name], r.Nonce)\n\t\t\tmessage.EnforceNonce = true',
+      '// mutation: omit text-channel nonce',
+      './internal/service', 'TestExistingTextThread')
+probe('forum poll has separately derived nonce', 'send.go',
+      'r.Nonce+":poll"', 'r.Nonce',
+      './internal/service', 'TestForumPollAndHeaders')
+print('PASS all 22 service guard probes completed', flush=True)

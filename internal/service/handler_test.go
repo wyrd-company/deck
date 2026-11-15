@@ -253,6 +253,9 @@ func TestForumPollAndHeaders(t *testing.T) {
 	if m.Header.Get("Deck-Send-Start") != "42:7" || m.Header.Get("Deck-Sent-By") != "key" || m.Header.Get("Deck-Sender-Key") != s.h.fingerprints["key"] {
 		t.Fatal(m.Header)
 	}
+	if posts[1].body["nonce"] != discord.Nonce(s.h.fingerprints["key"], "N1:poll") || posts[1].body["enforce_nonce"] != true {
+		t.Fatal("poll nonce not separately enforced")
+	}
 	if r.Thread.Touched != true || !r.Thread.CreatedByDeck {
 		t.Fatal(r.Thread)
 	}
@@ -260,7 +263,7 @@ func TestForumPollAndHeaders(t *testing.T) {
 	s.fake.pollFail = true
 	s.fake.mu.Unlock()
 	r, err = s.client.Post(s.ctx, &pb.PostRequest{Channel: &pb.ChannelRef{Bot: "a", ChannelId: 10}, Title: "post", Content: c, Nonce: "N2"})
-	if err != nil || r.PollError == "" || r.PollMessage != nil {
+	if err != nil || r.PollError != "Discord validation failed" || r.PollMessage != nil {
 		t.Fatal("missing partial poll failure", r, err)
 	}
 }
@@ -344,6 +347,10 @@ func TestExistingTextThread(t *testing.T) {
 	r, err := s.h.Post(s.ctx, &pb.PostRequest{Channel: &pb.ChannelRef{Bot: "a", ChannelId: 20}, Title: "title", Content: content(), Nonce: "existing"})
 	if err != nil || r.Thread.ThreadId != 200 {
 		t.Fatal(r, err)
+	}
+	posts := s.fake.posts()
+	if posts[0].body["nonce"] != discord.Nonce(s.h.fingerprints["key"], "existing") || posts[0].body["enforce_nonce"] != true {
+		t.Fatal("text post nonce not enforced")
 	}
 	s.fake.mu.Lock()
 	defer s.fake.mu.Unlock()
@@ -503,3 +510,60 @@ func TestCallerCancellationDoesNotCancelSend(t *testing.T) {
 }
 
 func (fixedIndex) Confirm(context.Context, *CompletedSend) error { return nil }
+
+func TestConfiguredUngrantedBotBeforeMetadata(t *testing.T) {
+	for _, operation := range []string{"Post", "Reply", "GetThread", "ListHistory"} {
+		t.Run(operation, func(t *testing.T) {
+			s := setup(t)
+			ctx := transport.WithKeyName(context.Background(), "other")
+			var err error
+			switch operation {
+			case "Post":
+				_, err = s.h.Post(ctx, &pb.PostRequest{Channel: &pb.ChannelRef{Bot: "a", ChannelId: 10}, Title: "test", Content: content(), Nonce: "deny"})
+			case "Reply":
+				_, err = s.h.Reply(ctx, &pb.ReplyRequest{Thread: &pb.ThreadRef{Bot: "a", ThreadId: 101}, Content: content(), Nonce: "deny"})
+			case "GetThread":
+				_, err = s.h.GetThread(ctx, &pb.GetThreadRequest{Thread: &pb.ThreadRef{Bot: "a", ThreadId: 101}})
+			case "ListHistory":
+				_, err = s.h.ListHistory(ctx, &pb.ListHistoryRequest{Thread: &pb.ThreadRef{Bot: "a", ThreadId: 101}})
+			}
+			s.fake.mu.Lock()
+			defer s.fake.mu.Unlock()
+			if status.Code(err) != codes.PermissionDenied || len(s.fake.requests) != 0 {
+				t.Fatalf("ungranted configured bot: err=%v Discord requests=%d", err, len(s.fake.requests))
+			}
+		})
+	}
+}
+func TestExplicitChannelRefusals(t *testing.T) {
+	s := setup(t)
+	for _, op := range []string{"Post", "Reply", "GetThread", "ListHistory"} {
+		t.Run(op, func(t *testing.T) {
+			var err error
+			switch op {
+			case "Post":
+				_, err = s.h.Post(s.ctx, &pb.PostRequest{Channel: &pb.ChannelRef{Bot: "b", ChannelId: 10}, Title: "test", Content: content(), Nonce: "deny"})
+			case "Reply":
+				_, err = s.h.Reply(s.ctx, &pb.ReplyRequest{Thread: &pb.ThreadRef{Bot: "b", ThreadId: 101}, Content: content(), Nonce: "deny"})
+			case "GetThread":
+				_, err = s.h.GetThread(s.ctx, &pb.GetThreadRequest{Thread: &pb.ThreadRef{Bot: "b", ThreadId: 101}})
+			case "ListHistory":
+				_, err = s.h.ListHistory(s.ctx, &pb.ListHistoryRequest{Thread: &pb.ThreadRef{Bot: "b", ThreadId: 101}})
+			}
+			if status.Code(err) != codes.PermissionDenied {
+				t.Fatal(err)
+			}
+		})
+	}
+	channels, err := s.h.ListChannels(s.ctx, &pb.ListChannelsRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, ch := range channels.Channels {
+		got[fmt.Sprintf("%s:%d", ch.Bot, ch.ChannelId)] = true
+	}
+	if len(got) != 3 || !got["a:10"] || !got["a:20"] || !got["b:20"] || got["b:10"] {
+		t.Fatal("wrong granted channel identities", got)
+	}
+}

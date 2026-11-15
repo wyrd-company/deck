@@ -67,6 +67,19 @@ func TestReplyStatesAndBoundary(t *testing.T) {
 	if got.Keys["key"].State != "pending" {
 		t.Fatal("unknown outcome lost touch")
 	}
+	// A later known failure must preserve an earlier unknown outcome too.
+	if err = r.BeginReply(ctx, 103, e, "key"); err != nil {
+		t.Fatal(err)
+	}
+	r.FinishReply(103, "key", false, true)
+	if err = r.BeginReply(ctx, 103, e, "key"); err != nil {
+		t.Fatal(err)
+	}
+	r.FinishReply(103, "key", false, false)
+	got, ok := r.Lookup(103)
+	if !ok || got.Keys["key"].State != "pending" {
+		t.Fatal("later known failure removed unknown touch")
+	}
 	e.Bot = "other"
 	if err = r.BeginReply(ctx, 100, e, "other"); err != ErrBotConflict {
 		t.Fatal("bot ownership changed", err)

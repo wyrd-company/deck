@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"github.com/nats-io/nats.go"
+	"github.com/nats-io/nats.go/jetstream"
 	"github.com/santhosh-tekuri/jsonschema/v6"
 	"os"
 	"sync/atomic"
@@ -16,11 +17,26 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
+// Observe failures returned by the real JetStream client, after its internal retries.
+type observedPublisher struct {
+	jetstream.JetStream
+	failures atomic.Int64
+}
+
+func (j *observedPublisher) PublishMsg(ctx context.Context, m *nats.Msg, opts ...jetstream.PublishOpt) (*jetstream.PubAck, error) {
+	ack, err := j.JetStream.PublishMsg(ctx, m, opts...)
+	if err != nil {
+		j.failures.Add(1)
+	}
+	return ack, err
+}
+
 func TestPublishRetryAndEnvelope(t *testing.T) {
 	_, _, js := testutil.NATS(t)
 	ctx := context.Background()
 	cfg := config.NATS{SubjectPrefix: "deck", Stream: config.Stream{Name: "DECK", Manage: true, MaxAge: time.Hour, DuplicateWindow: time.Minute, Replicas: 1}}
-	p := New(ctx, js, "deck")
+	observed := &observedPublisher{JetStream: js}
+	p := New(ctx, observed, "deck")
 	defer p.Close()
 	a := &pb.Activity{Id: 123, Time: timestamppb.Now(), Bot: "bot", ServerId: 1, ChannelId: 2, ThreadId: 3, SentBy: "key", SenderKey: "SHA256:key", Nonce: "N1", Sequence: 99, Kind: &pb.Activity_Message{Message: &pb.Message{Content: "hello"}}}
 	start := &pb.StreamPosition{Epoch: 42, Sequence: 7}
@@ -32,15 +48,16 @@ func TestPublishRetryAndEnvelope(t *testing.T) {
 	if p.Pending() != 1 {
 		t.Fatal("deadline dropped accepted publish")
 	}
+	testutil.Until(t, func() bool { return observed.failures.Load() > 0 })
+	if p.Pending() != 1 {
+		t.Fatal("publisher dropped queue head after its own publish error")
+	}
 	stream, err := EnsureStream(ctx, js, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
 	testutil.Until(t, func() bool { return p.Pending() == 0 })
-	seq, err := p.Publish(ctx, a, start)
-	if err != nil || seq != 1 {
-		t.Fatal(seq, err)
-	}
+	// Read the original accepted publication before a second Publish can mask a drop.
 	raw, err := stream.GetMsg(ctx, 1)
 	if err != nil {
 		t.Fatal(err)
@@ -62,6 +79,10 @@ func TestPublishRetryAndEnvelope(t *testing.T) {
 	}
 	if body["sender_key"] != "SHA256:key" {
 		t.Fatal(body)
+	}
+	seq, err := p.Publish(ctx, a, start)
+	if err != nil || seq != 1 {
+		t.Fatal(seq, err)
 	}
 	info, _ := stream.Info(ctx)
 	if info.State.Msgs != 1 {
