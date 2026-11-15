@@ -1,0 +1,8 @@
+$schema: https://refinery.systems/ontology/term
+title: Persona
+description: >-
+  A display name and an icon URL, configured on the client under a persona
+  name, that a post or reply shows as the author of its leading embed. The
+  message's text becomes that embed's description, and the message's mentions
+  stay in its content, where Discord notifies them. The message's author in
+  Discord is still the bot.

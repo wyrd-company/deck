@@ -1,0 +1,12 @@
+$schema: https://refinery.systems/ontology/term
+title: Unread
+description: >-
+  For a session and one of its threads: every activity whose snowflake is
+  greater than the session's cursor, except messages the session sent itself
+  and messages whose Discord type is not 0 (default), 19 (reply) or 46 (poll
+  result). Other deck clients' messages, and other sessions' on the same
+  machine, are unread like a person's. The unread count is the sum over the
+  session's threads.
+terms:
+  - activity
+  - cursor

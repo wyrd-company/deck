@@ -1,0 +1,8 @@
+$schema: https://refinery.systems/ontology/term
+title: Touched thread
+description: >-
+  A Discord thread that a client key posted or replied in through deck, and
+  that the service's thread registry therefore holds. Only touched threads
+  produce events, and a client key is told only about the threads it touched
+  itself. Nothing else touches a thread: not a mention of a bot, not a thread a
+  person creates in a granted channel, and not reading its history.

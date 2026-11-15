@@ -1,0 +1,152 @@
+$schema: https://refinery.systems/ontology/domain-model
+relationships:
+  references:
+    - deck
+    - events
+    - grpc-api
+  shaped-by:
+    - discord-forum-post-and-gateway-reply
+    - start-a-thread-for-every-post
+    - read-threads-by-id-in-granted-channels
+    - keep-read-cursors-on-the-client
+  terms:
+    - activity
+    - touched-thread
+    - cursor
+    - unread
+    - persona
+description: >-
+  deck's domain is conversations held in Discord threads by programs that act
+  through deck's bots. The service owns the bots, the grants, the thread
+  registry and the activity in touched threads. The client owns sessions and
+  their read state. Every identifier is a Discord snowflake: a 64-bit integer
+  whose high 42 bits are milliseconds since 2015-01-01T00:00:00Z, so
+  identifiers sort in creation order and a cursor is one identifier. Every
+  conversation is a thread, and a thread's identifier is its starter message's
+  identifier.
+aggregates:
+  bot:
+    description: >-
+      A Discord application's bot user that the service connects as. The
+      service configuration names it and locates its token in OpenBao or
+      Vault. Each bot keeps one gateway session with the intents guilds,
+      guild messages, message content and guild message polls (16810497), and
+      receives the interactions on the messages it sent. A bot is in some
+      servers; deck reaches a server only through a bot that is in it.
+    identity: The bot's name in the service configuration.
+    invariants:
+      - A bot token is read by the service only and never crosses the API, an
+        event or a log.
+      - Each bot has exactly one gateway session while the service runs.
+  channel:
+    description: >-
+      A channel in a server that a grant covers. A forum channel (type 15) or
+      media channel (type 16) takes posts as forum posts: a thread with a
+      name, optional tags and a starter message. A text channel (type 0) or
+      announcement channel (type 5) takes a post as a message followed by a
+      thread started from it with the post's title, so a post in any of these
+      four types is a thread whose identifier is its first message's. Replies
+      go to threads (types 10, 11 and 12) whose parent is a granted channel.
+    identity: The channel's snowflake, with the bot that reaches it.
+    invariants:
+      - A channel outside every grant of the calling key does not exist for
+        that key: it is neither listed, posted to, nor read.
+      - Posts go only to channel types 0, 5, 15 and 16.
+  client-key:
+    description: >-
+      A client's identity on the service: a name and an ed25519 public key in
+      the service configuration, and its grants. A grant is a bot, a server,
+      and either a list of channel snowflakes or every channel of that server.
+      A thread is covered by a grant when its parent channel is.
+    identity: The key's name. A rotated key keeps its name and its touched
+      threads; a renamed key is a new client.
+    commands:
+      authenticate: >-
+        An SSH handshake signed by the private half. The service accepts only
+        configured public keys and resolves the key to its name for every call.
+    invariants:
+      - Every call acts with exactly the grants of the key that signed the
+        connection.
+  thread:
+    description: >-
+      A Discord thread that deck has touched, recorded in the thread registry
+      with its bot, server, parent channel, whether deck created it, and the
+      names of the client keys that touched it. A thread becomes touched when
+      a client key posts it or replies in it, and stays touched while its
+      registry entry exists.
+    identity: The thread's snowflake.
+    commands:
+      post: >-
+        Creates the thread in a granted channel with a title and a first
+        message. The service records the thread with the posting key, then
+        publishes the first message.
+      reply: >-
+        Sends a message into a thread whose parent is granted. The service adds
+        the replying key to the thread's entry before it sends the message, so
+        nothing after the reply can go unpublished.
+      read-history: >-
+        Returns messages from Discord with an after or before message
+        snowflake. Any thread whose parent is granted can be read by its
+        snowflake; reading does not touch it.
+    events:
+      thread-touched: >-
+        The registry entry was created, or a key was added to it.
+    invariants:
+      - Only a post or a reply touches a thread. A mention of a bot, a person's
+        new thread, or a read does not.
+      - A key is told about a thread (counts, lists, listen) only when that key
+        touched it. Events on the stream cover every touched thread, and who
+        may subscribe to them is NATS authorization.
+      - A message's content is text, user and role mentions, embeds,
+        components, a poll and files, in Discord's limits; an optional persona
+        sets the author of a leading embed that holds the text, and mentions
+        stay in the message content so that they notify. A message never
+        mentions everyone or here.
+  activity:
+    description: >-
+      Something new in a touched thread: a message (any author, deck's own
+      included), a component use (a person pressed a button or chose from a
+      select menu on a message deck sent), or a poll vote (added or removed).
+      Each activity has a snowflake: the message's or the interaction's own,
+      or, for a poll vote, one the service makes from the moment it received
+      the vote. Each is published once to the event stream, which holds it for
+      the stream's maximum age.
+    identity: The activity's snowflake.
+    commands:
+      acknowledge: >-
+        The service answers each component interaction on its bots with a
+        deferred message update (interaction response type 6) as soon as it
+        arrives and before it publishes, inside Discord's three-second
+        deadline. The message does not change and the person sees no failure.
+        The component's custom identifier, type and chosen values travel in the
+        activity; the program that posted the component decides what they mean.
+    events:
+      activity-published: >-
+        The activity is on the event stream, on its thread's subject.
+    invariants:
+      - Activity in a thread that is not touched is never published.
+      - An activity is published once per snowflake; a repeat within the
+        stream's duplicate window is dropped by JetStream.
+      - A message deck sent carries the name of the key that sent it.
+  session-thread:
+    description: >-
+      One session's relation to one thread, in the client's local store: the
+      session's identifiers, the thread, its bot, server and channel, the
+      cursor, and the snowflakes of the messages the session sent there. The
+      session's unread activity in the thread is every activity after the
+      cursor except the messages the session sent and system messages.
+    identity: The session's primary identifier (the first configured variable
+      that is set) and the thread's snowflake.
+    commands:
+      record: >-
+        On a post or the session's first reply in a thread, records the thread
+        with the cursor at the session's own message; on every message it
+        sends, records the message's snowflake.
+      mark-read: >-
+        Moves the cursor to the newest activity the session was shown.
+      resolve: >-
+        Returns the identifiers of every session related to a thread.
+    invariants:
+      - A cursor never moves back.
+      - A message the session sent is never unread for that session.
+      - Session affinity is stored only here, never on the service.

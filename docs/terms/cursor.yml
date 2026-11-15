@@ -1,0 +1,10 @@
+$schema: https://refinery.systems/ontology/term
+title: Cursor
+description: >-
+  The snowflake of the newest activity a session has been shown in a thread,
+  kept in the client's local store. A post or a session's first reply sets it
+  to the session's own message. Reading without keeping unread moves it to the
+  newest activity read, and it never moves back.
+terms:
+  - activity
+  - unread
