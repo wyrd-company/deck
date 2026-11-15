@@ -881,3 +881,56 @@ func TestHelpFitsTerminal(t *testing.T) {
 		}
 	}
 }
+
+func TestListenRemoteDeadlineBeforeLocalTimer(t *testing.T) {
+	for _, hasTimeout := range []bool{true, false} {
+		t.Run(fmt.Sprint(hasTimeout), func(t *testing.T) {
+			f := setup(t)
+			f.seed()
+			f.fake.listen = func(_ *pb.ListenRequest, s grpc.ServerStreamingServer[pb.ListenResponse]) error {
+				if s.Context().Err() != nil {
+					t.Error("local timer already expired")
+				}
+				return status.Error(codes.DeadlineExceeded, "remote deadline arrived first")
+			}
+			args := []string{"listen"}
+			want := 4
+			if hasTimeout {
+				args = append(args, "--timeout", "1h")
+				want = 5
+			}
+			code, _, err := f.run(args...)
+			if code != want {
+				t.Fatalf("%d want %d: %s", code, want, err)
+			}
+		})
+	}
+}
+func TestBotQualifiedDenyOnUnqualifiedPost(t *testing.T) {
+	for _, target := range []string{"2", "bare-alias", "default"} {
+		t.Run(target, func(t *testing.T) {
+			f := setup(t)
+			f.doc["channels"] = map[string]any{"default": "2", "deny": []string{"helper/2"}}
+			f.doc["aliases"].(map[string]any)["channels"].(map[string]string)["bare-alias"] = "2"
+			f.save()
+			args := []string{"post"}
+			if target != "default" {
+				args = append(args, target)
+			}
+			args = append(args, "--title", "Q", "--text", "hello")
+			code, _, err := f.run(args...)
+			if code != 3 || f.dialN != 0 {
+				t.Fatalf("%d dials %d: %s", code, f.dialN, err)
+			}
+		})
+	}
+}
+func TestPresentEmptyAllowRefusesBeforeDial(t *testing.T) {
+	f := setup(t)
+	f.doc["channels"] = map[string]any{"default": "helper/2", "allow": []string{}}
+	f.save()
+	code, _, err := f.run("post", "--title", "Q", "--text", "hello")
+	if code != 3 || f.dialN != 0 {
+		t.Fatalf("%d dials %d: %s", code, f.dialN, err)
+	}
+}

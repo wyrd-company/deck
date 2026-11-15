@@ -41,25 +41,26 @@ type Unread struct {
 }
 
 // Allowed compares resolved config references; a botless reference matches
-// that channel through any bot. Deny always wins over allow.
+// that channel through any bot. An unspecified target bot fails closed against
+// every matching deny reference. A present, empty allow list allows nothing.
 func Allowed(c *config.Client, bot string, channel uint64) bool {
-	match := func(ref string) bool {
+	match := func(ref string, deny bool) bool {
 		if alias, ok := c.Aliases.Channels[ref]; ok {
 			ref = alias
 		}
 		b, id, err := Reference(ref)
-		return err == nil && id == channel && (b == "" || b == bot)
+		return err == nil && id == channel && (b == "" || b == bot || deny && bot == "")
 	}
 	for _, ref := range c.Channels.Deny {
-		if match(ref) {
+		if match(ref, true) {
 			return false
 		}
 	}
-	if len(c.Channels.Allow) == 0 {
+	if c.Channels.Allow == nil {
 		return true
 	}
 	for _, ref := range c.Channels.Allow {
-		if match(ref) {
+		if match(ref, false) {
 			return true
 		}
 	}

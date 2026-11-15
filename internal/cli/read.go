@@ -142,22 +142,13 @@ func (i *invocation) read(ctx context.Context, listen bool) error {
 	fmt.Fprintln(i.app.Stderr, "deck: waiting for unread activity (Ctrl-C stops)")
 	stream, err := i.client.API.Listen(listenCtx, &pb.ListenRequest{Cursors: client.Cursors(ts)})
 	if err != nil {
-		return err
+		return listenError(ctx, listenCtx, timeout > 0, err)
 	}
 	first := true
 	for {
 		response, err := stream.Recv()
 		if err != nil {
-			if errors.Is(ctx.Err(), context.Canceled) {
-				return context.Canceled
-			}
-			if timeout > 0 && errors.Is(listenCtx.Err(), context.DeadlineExceeded) {
-				return &failure{5, "listen timeout passed with no activity; use deck inbox or listen again"}
-			}
-			if errors.Is(err, io.EOF) {
-				return status.Error(codes.Unavailable, "listen stream ended before a reply; listen again")
-			}
-			return err
+			return listenError(ctx, listenCtx, timeout > 0, err)
 		}
 		if first {
 			i.recordStates(response.Threads)
@@ -252,4 +243,18 @@ func (i *invocation) renderActivities(activity []*pb.Activity, metadata map[uint
 			}
 		}
 	}
+}
+
+// The remote gRPC deadline may arrive before the local context timer fires.
+func listenError(ctx, listenCtx context.Context, hasTimeout bool, err error) error {
+	if errors.Is(ctx.Err(), context.Canceled) {
+		return context.Canceled
+	}
+	if hasTimeout && (status.Code(err) == codes.DeadlineExceeded || errors.Is(listenCtx.Err(), context.DeadlineExceeded)) {
+		return &failure{5, "listen timeout passed with no activity; use deck inbox or listen again"}
+	}
+	if errors.Is(err, io.EOF) {
+		return status.Error(codes.Unavailable, "listen stream ended before a reply; listen again")
+	}
+	return err
 }
