@@ -58,7 +58,7 @@ func (l *adapterListener) Accept() (net.Conn, error) {
 }
 func (*adapterListener) Close() error   { return nil }
 func (*adapterListener) Addr() net.Addr { return &net.TCPAddr{} }
-func adapterSSHPeer(t *testing.T, public ssh.PublicKey, handler pb.DeckServiceServer, refuse bool) (string, string, func() string) {
+func adapterSSHPeer(t *testing.T, public ssh.PublicKey, handler pb.DeckServiceServer, refuse bool) (string, string, func() string, <-chan struct{}) {
 	t.Helper()
 	_, private, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -140,7 +140,7 @@ func adapterSSHPeer(t *testing.T, public ssh.PublicKey, handler pb.DeckServiceSe
 			t.Error("SSH peer did not stop")
 		}
 	})
-	return listener.Addr().String(), strings.TrimSpace(string(ssh.MarshalAuthorizedKey(host.PublicKey()))), func() string { key, _ := authenticated.Load().(string); return key }
+	return listener.Addr().String(), strings.TrimSpace(string(ssh.MarshalAuthorizedKey(host.PublicKey()))), func() string { key, _ := authenticated.Load().(string); return key }, finished
 }
 
 type adapterAPI struct {
@@ -246,7 +246,7 @@ func TestDefaultDialRecordsServerAuthenticatedKey(t *testing.T) {
 		t.Run(fmt.Sprint(jsonMode), func(t *testing.T) {
 			b := adapterVault(t, false)
 			api := &adapterAPI{}
-			address, host, authenticated := adapterSSHPeer(t, b.public, api, false)
+			address, host, authenticated, disconnected := adapterSSHPeer(t, b.public, api, false)
 			path, db := adapterConfig(t, b, address, host)
 			api.post = func(r *pb.PostRequest) (*pb.PostResponse, error) {
 				serverKey := authenticated()
@@ -274,6 +274,11 @@ func TestDefaultDialRecordsServerAuthenticatedKey(t *testing.T) {
 			if code := run(args, &out, &stderr); code != 0 {
 				t.Fatalf("production dial exit=%d out=%s err=%s", code, &out, &stderr)
 			}
+			select {
+			case <-disconnected:
+			case <-time.After(time.Second):
+				t.Fatal("command returned without closing its SSH connection")
+			}
 			s, err := store.OpenReadOnly(db)
 			if err != nil {
 				t.Fatal(err)
@@ -295,7 +300,7 @@ func TestDefaultDialErrorsDoNotExposeCredentials(t *testing.T) {
 		for _, jsonMode := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/json=%v", which, jsonMode), func(t *testing.T) {
 				b := adapterVault(t, which == "transit sign failure")
-				address, host, _ := adapterSSHPeer(t, b.public, &adapterAPI{}, true)
+				address, host, _, _ := adapterSSHPeer(t, b.public, &adapterAPI{}, true)
 				path, _ := adapterConfig(t, b, address, host)
 				cfg, err := config.LoadClient(path)
 				if err != nil {
@@ -319,7 +324,7 @@ func TestDefaultDialErrorsDoNotExposeCredentials(t *testing.T) {
 				}
 				assertSafe(dialErr.Error())
 				// A separate peer is required: each CLI invocation owns a fresh SSH session.
-				address, host, _ = adapterSSHPeer(t, b.public, &adapterAPI{}, true)
+				address, host, _, _ = adapterSSHPeer(t, b.public, &adapterAPI{}, true)
 				path, _ = adapterConfig(t, b, address, host)
 				var out, stderr bytes.Buffer
 				args := []string{"--config", path, "post", "--title", "Q", "--text", "hello"}
