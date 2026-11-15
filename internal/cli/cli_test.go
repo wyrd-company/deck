@@ -27,6 +27,7 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
 	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -1173,9 +1174,9 @@ func TestTextEscapesUntrustedControls(t *testing.T) {
 	f := setup(t)
 	f.seed()
 	bad := "name\nforged\r\x1b[31m"
-	thread := *baseThread
+	thread := proto.Clone(baseThread).(*pb.Thread)
 	thread.Name = bad
-	if err := f.open().Sent(ss(), keyA, "original", "created", &thread, 107, &pb.StreamPosition{Epoch: 100, Sequence: 5}); err != nil {
+	if err := f.open().Sent(ss(), keyA, "original", "created", thread, 107, &pb.StreamPosition{Epoch: 100, Sequence: 5}); err != nil {
 		t.Fatal(err)
 	}
 	f.fake.count = func(context.Context, *pb.CountUnreadRequest) (*pb.CountUnreadResponse, error) {
