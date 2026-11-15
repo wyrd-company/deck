@@ -5,6 +5,7 @@ relationships:
     - events
     - grpc-api
   shaped-by:
+    - deliver-activity-at-least-once
     - give-each-thread-one-bot
     - discord-forum-post-and-gateway-reply
     - start-a-thread-for-every-post
@@ -18,7 +19,9 @@ relationships:
     - persona
 description: >-
   deck's domain is conversations held in Discord threads by programs that act
-  through deck's bots. The service owns the bots, the grants, the thread
+  through deck's bots. What deck guarantees about publishing, unread and
+  repeated sends is in the decision record deliver-activity-at-least-once; the
+  aggregates below keep it. The service owns the bots, the grants, the thread
   registry and the activity in touched threads. The client owns sessions and
   their read state. Every identifier is a Discord snowflake: a 64-bit integer
   whose high 42 bits are milliseconds since 2015-01-01T00:00:00Z, so
@@ -29,8 +32,8 @@ aggregates:
     description: >-
       A Discord application's bot user that the service connects as. The
       service configuration names it and locates its token in OpenBao or
-      Vault. Each bot keeps one gateway session with the intents guilds,
-      guild messages, message content and guild message polls (16810497), and
+      Vault. Each bot keeps one gateway session with the intents guilds, guild
+      messages, message content and guild message polls (16810497), and
       receives the interactions on the messages it sent. A bot is in some
       servers; deck reaches a server only through a bot that is in it.
     identity: The bot's name in the service configuration.
@@ -63,7 +66,8 @@ aggregates:
     commands:
       authenticate: >-
         An SSH handshake signed by the private half. The service accepts only
-        configured public keys and resolves the key to its name for every call.
+        configured public keys and resolves the key to its name for every
+        call.
     invariants:
       - Every call acts with exactly the grants of the key that signed the
         connection.
@@ -71,26 +75,30 @@ aggregates:
     description: >-
       A Discord thread that deck has touched, recorded in the thread registry
       with its bot, server, parent channel, whether deck created it, the names
-      of the client keys that touched it, and the newest message the service
-      published for it. A thread becomes touched when a client key posts it or
-      replies in it, and stays touched while its registry entry exists. Its bot
-      is the one that first touched it through deck; every later post into it,
-      every read of it and every event from it goes through that bot, so keys
-      share a thread by holding grants on its bot.
+      of the client keys that touched it, and its recovery boundary: the
+      newest message the service published or recovered for it, or, before
+      any, the thread's newest message when the thread registered. A thread
+      becomes touched when a client key posts it or replies in it, and stays
+      touched while its registry entry exists. Its bot is the one that first
+      touched it through deck; every later post into it, every read of it and
+      every event from it goes through that bot, so keys share a thread by
+      holding grants on its bot.
     identity: The thread's snowflake.
     commands:
       post: >-
         Creates the thread in a granted channel with a title and a first
-        message. The service records the thread with the posting key, then
-        publishes the first message.
+        message, and in a forum or media channel a poll as the thread's second
+        message, since Discord drops a poll from a forum post's starter. The
+        service records the thread with the posting key, then publishes the
+        messages it sent.
       reply: >-
-        Sends a message into a thread whose parent is granted. The service adds
-        the replying key to the thread's entry, as pending, before it sends the
-        message, so nothing after the reply can go unpublished, and marks it
-        sent when the send succeeds. A failed send removes the key only while
-        it is still pending and no other send by that key into the thread is
-        in flight, so a failed attempt touches nothing and never undoes a
-        concurrent success.
+        Sends a message into a thread whose parent is granted. The service
+        adds the replying key to the thread's entry, as pending, before it
+        sends the message, so nothing after the reply can go unpublished, and
+        marks it sent when the send succeeds. A failed send removes the key
+        only while it is still pending and no other send by that key into the
+        thread is in flight, so a failed attempt touches nothing and never
+        undoes a concurrent success.
       read-history: >-
         Returns messages from Discord with an after or before message
         snowflake. Any thread whose parent is granted can be read by its
@@ -137,8 +145,9 @@ aggregates:
         deferred message update (interaction response type 6) as soon as it
         arrives and before it publishes, inside Discord's three-second
         deadline. The message does not change and the person sees no failure.
-        The component's custom identifier, type and chosen values travel in the
-        activity; the program that posted the component decides what they mean.
+        The component's custom identifier, type and chosen values travel in
+        the activity; the program that posted the component decides what they
+        mean.
     events:
       activity-published: >-
         The activity is on the event stream, on its thread's subject.
@@ -147,32 +156,35 @@ aggregates:
       - An activity is published once; a repeat of its deduplication
         identifier within the stream's duplicate window is dropped by
         JetStream.
-      - A message deck sent carries the name of the key that sent it and the
-        sending client's nonce.
+      - A message deck sent carries the name and fingerprint of the key that sent it and the sending client's nonce, and is published by its send alone.
   session-thread:
     description: >-
       One session's relation to one thread, in the client's local store: the
       session's identifiers, the thread, its bot, server and channel, the
-      cursor (a stream position), and the time the session last sent a
-      message there. The store also records every send of the session, by its
-      nonce, before the send leaves the client. The session's unread activity
-      in the thread is every activity the stream holds after the cursor,
-      except the messages the session sent and system messages.
+      cursor (a stream position), and the time the session last sent a message
+      there. The store also records every send of the session, by its key's
+      fingerprint and nonce, before the send leaves the client. The session's
+      unread activity in the thread is every activity the stream holds after
+      the cursor, except the messages the session sent (matched by sender key
+      and nonce) and system messages.
     identity: The session's primary identifier (the first configured variable
       that is set) and the thread's snowflake.
     commands:
       record: >-
-        Before every post or reply, records the send's nonce for the session.
-        After a post or the session's first reply in a thread, records the
-        thread with the cursor at the position the service returned; after
-        every message, records its snowflake and the time.
+        Before every post or reply, records the send's key fingerprint and
+        nonce for the session. After a post or the session's first reply in a
+        thread, records the thread with the cursor at the position the service
+        returned, which precedes the send; after every message, records its
+        snowflake and the time.
       mark-read: >-
-        Moves the cursor to the position of the last activity the session was
-        shown, never to an earlier one.
+        Moves the cursor to the position through which the session was shown
+        the thread's activity, never to an earlier one.
       resolve: >-
         Returns the identifiers of every session related to a thread.
     invariants:
       - A cursor never moves to an earlier position.
       - A message the session sent is never unread for that session, and never
         wakes it, whenever it reaches the stream.
+      - Activity published after a session's first send into a thread began is
+        unread for the session until read.
       - Session affinity is stored only here, never on the service.

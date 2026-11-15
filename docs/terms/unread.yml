@@ -3,11 +3,11 @@ title: Unread
 description: >-
   For a session and one of its threads: every activity the event stream holds
   after the session's cursor, except messages the session sent itself, known
-  by their nonces, and messages whose Discord type is not 0 (default), 19
-  (reply) or 46 (poll result). Other deck clients' messages, and other
-  sessions' on the same machine, are unread like a person's. The unread count
-  is the sum over the session's threads. Its horizon is the stream's maximum
-  age: activity that left the stream is read from Discord's history.
+  by their sending key and nonce, and messages whose Discord type is not 0
+  (default), 19 (reply) or 46 (poll result). Other deck clients' messages, and
+  other sessions' on the same machine, are unread like a person's. The unread
+  count is the sum over the session's threads. Its horizon is the stream's
+  maximum age: activity that left the stream is read from Discord's history.
 terms:
   - activity
   - cursor

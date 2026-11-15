@@ -4,8 +4,12 @@ relationships:
     - command-line-interface
     - configuration
   shaped-by:
+    - deliver-activity-at-least-once
     - store-session-affinity-in-sqlite
     - keep-read-cursors-on-the-client
+  mitigates:
+    - send-outcome-unknown
+    - activity-during-a-first-send-does-not-wake
   related-to:
     - transport
     - grpc-api
@@ -15,14 +19,14 @@ relationships:
     - unread
 objective: >-
   Build the `deck` client: detect the session from configured environment
-  variables, call the service for every Discord operation, keep each
-  session's threads, cursors and sent messages in a local store that several
-  processes share, and report the unread count after every session command.
+  variables, call the service for every Discord operation, keep each session's
+  threads, cursors and sent messages in a local store that several processes
+  share, and report the unread count after every session command.
 background:
   current-design: >-
-    No client exists. The operator's harness runs agents whose session is named
-    by an environment variable such as `T3CODE_THREAD_ID`, and a relay (Trowel)
-    on the same machine runs commands with an event on stdin.
+    No client exists. The operator's harness runs agents whose session is
+    named by an environment variable such as `T3CODE_THREAD_ID`, and a relay
+    (Trowel) on the same machine runs commands with an event on stdin.
   problems:
     - Several agents on one machine run deck at the same time against one
       store.
@@ -48,20 +52,22 @@ design-challenges:
     knows which session read or sent what.
 proposed-design:
   high-level-overview: >-
-    Each command loads the configuration, opens the store, detects the session,
-    and, when it needs the service, dials it once through the transport
-    design's dialer. The command does its work; a session command then counts
-    unread activity and reports it; the command exits with the categorical
-    status of the command-line interface. Nothing runs between commands.
+    Each command loads the configuration, opens the store, detects the
+    session, and, when it needs the service, dials it once through the
+    transport design's dialer. The command does its work; a session command
+    then counts unread activity and reports it; the command exits with the
+    categorical status of the command-line interface. Nothing runs between
+    commands.
   session-detection: >-
     The session is a value: an ordered list of `{name, value}` identifiers and
     the primary identifier, the first of them. Detection reads exactly the
-    variables in `session.variables` with os.LookupEnv, in order, and keeps the
-    ones that are set and not empty. `--session NAME=VALUE` replaces detection.
-    The default session has no identifiers and the primary key `""`. The store
-    keys a session by `<name>=<value>` of its primary identifier, and each
-    command updates the stored identifier list of its session to the current
-    one, so a resolve returns what the session last ran with.
+    variables in `session.variables` with os.LookupEnv, in order, and keeps
+    the ones that are set and not empty. `--session NAME=VALUE` replaces
+    detection. The default session has no identifiers and the primary key
+    `""`. The store keys a session by `<name>=<value>` of its primary
+    identifier, and each command updates the stored identifier list of its
+    session to the current one, so a resolve returns what the session last ran
+    with.
   local-store: >-
     The store is the SQLite file `store.path`, created with mode 0600 in a
     directory of mode 0700. It opens with `journal_mode=WAL`,
@@ -155,8 +161,8 @@ proposed-design:
     interface's line formats; JSON mode encodes API messages with protojson
     using proto field names inside a result object built with encoding/json,
     and writes exactly one object. Errors map from gRPC codes and local
-    failures to the categories and exit statuses of the command-line
-    interface in one table.
+    failures to the categories and exit statuses of the command-line interface
+    in one table.
   skill: >-
     The skill is `internal/skill/SKILL.md`, embedded with go:embed and printed
     verbatim by `deck skill`. It follows the Agent Skills format with `name:
