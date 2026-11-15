@@ -73,14 +73,30 @@ func Open(ctx context.Context, js jetstream.JetStream, cfg config.Threads) (*Reg
 		kv, err = js.KeyValue(ctx, cfg.Bucket)
 	}
 	if err != nil {
-		return nil, errors.New("nats.threads: cannot open bucket")
+		return nil, bucketFailure("nats.threads: cannot open bucket", err)
 	}
 	st, err := kv.Status(ctx)
-	if err != nil || st.History() != 1 || st.TTL() != 0 {
+	if err != nil {
+		return nil, bucketFailure("nats.threads: cannot check bucket", err)
+	}
+	if st.History() != 1 || st.TTL() != 0 {
 		return nil, errors.New("nats.threads: bucket requires history 1 and no TTL")
 	}
 	return New(ctx, kv, cfg.MaxAge)
 }
+
+// Preserve only safe cancellation identities, never upstream error bodies.
+// A concurrent stop must not hide an independent bucket failure.
+func bucketFailure(message string, cause error) error {
+	if errors.Is(cause, context.Canceled) {
+		return fmt.Errorf("%s: %w", message, context.Canceled)
+	}
+	if errors.Is(cause, context.DeadlineExceeded) {
+		return fmt.Errorf("%s: %w", message, context.DeadlineExceeded)
+	}
+	return errors.New(message)
+}
+
 func New(ctx context.Context, kv jetstream.KeyValue, maxAge time.Duration) (*Registry, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	r := &Registry{KV: kv, entries: map[uint64]Entry{}, revisions: map[uint64]uint64{}, dirty: map[uint64]bool{}, attempts: map[string]*attempt{}, cleanup: map[uint64]map[string]bool{}, ctx: ctx, cancel: cancel}

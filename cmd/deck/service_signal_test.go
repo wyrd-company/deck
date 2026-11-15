@@ -15,6 +15,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -30,7 +31,7 @@ func TestServiceStartSignalHelper(t *testing.T) {
 		return
 	}
 	natsServer, credentials := testutil.JWTNATS(t)
-	target := map[string]string{"login": "/v1/auth/approle/login", "nats": "/v1/kv/data/deck/nats", "bot": "/v1/kv/data/deck/bots/helper", "host": "/v1/kv/data/deck/service", "second": "/v1/kv/data/deck/nats", "failure": "/unused"}[stage]
+	target := map[string]string{"login": "/v1/auth/approle/login", "nats": "/v1/kv/data/deck/nats", "bot": "/v1/kv/data/deck/bots/helper", "host": "/v1/kv/data/deck/service", "second": "/v1/kv/data/deck/nats", "failure": "/unused", "registry": "/unused"}[stage]
 	if target == "" {
 		t.Fatal("invalid stage")
 	}
@@ -70,7 +71,12 @@ func TestServiceStartSignalHelper(t *testing.T) {
 		auth = "  auth:\n    approle:\n      role_id: generated-test-role\n      secret_id_file: " + credential
 	}
 	cfg := strings.Replace(string(raw), "address: unix:///run/openbao/agent.sock", "address: "+upstream.URL+"\n"+auth, 1)
-	cfg = strings.Replace(cfg, "nats://nats.example.internal:4222", natsServer.ClientURL(), 1)
+	natsURL := natsServer.ClientURL()
+	var bucketSignal <-chan struct{}
+	if stage == "registry" {
+		natsURL, bucketSignal = signalAtBucket(t, natsURL)
+	}
+	cfg = strings.Replace(cfg, "nats://nats.example.internal:4222", natsURL, 1)
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -128,13 +134,20 @@ func TestServiceStartSignalHelper(t *testing.T) {
 		}
 		return
 	}
+	if stage == "registry" {
+		select {
+		case <-bucketSignal:
+		default:
+			t.Fatal("startup did not reach thread-bucket request")
+		}
+	}
 	if code != 0 || out.Len() != 0 || errs.Len() != 0 {
 		t.Fatalf("signal during %s: code=%d stdout=%q stderr=%q", stage, code, out.String(), errs.String())
 	}
 }
 
 func TestServiceStartSignal(t *testing.T) {
-	for _, stage := range []string{"login", "nats", "bot", "host"} {
+	for _, stage := range []string{"login", "nats", "registry", "bot", "host"} {
 		t.Run(stage, func(t *testing.T) {
 			executable, err := os.Executable()
 			if err != nil {
@@ -224,4 +237,56 @@ func TestServiceStartRealFailureAfterSignal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("real failure after signal: %v\n%s", err, output)
 	}
+}
+
+// Forward the real NATS protocol until bucket startup, then signal the child
+// and withhold the request. This pins cancellation during registry.Open rather
+// than a secret read. The subprocess bounds failures of native signal handling.
+func signalAtBucket(t *testing.T, upstream string) (string, <-chan struct{}) {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	signalled := make(chan struct{})
+	release := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		client, err := listener.Accept()
+		if err != nil {
+			return
+		}
+		defer client.Close()
+		server, err := net.Dial("tcp", strings.TrimPrefix(upstream, "nats://"))
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		defer server.Close()
+		forwarded := make(chan struct{})
+		go func() { defer close(forwarded); _, _ = io.Copy(client, server) }()
+		defer func() { server.Close(); <-forwarded }()
+		reader := bufio.NewReader(client)
+		for {
+			line, err := reader.ReadString('\n')
+			if strings.Contains(line, "KV_deck-threads") {
+				if err := syscall.Kill(os.Getpid(), syscall.SIGTERM); err != nil {
+					t.Error(err)
+				}
+				close(signalled)
+				<-release
+				return
+			}
+			if _, writeErr := io.WriteString(server, line); writeErr != nil {
+				return
+			}
+			if err != nil {
+				return
+			}
+		}
+	}()
+	t.Cleanup(func() { close(release); listener.Close(); wg.Wait() })
+	return "nats://" + listener.Addr().String(), signalled
 }

@@ -233,4 +233,18 @@ probe_source('a real startup failure after a signal is still reported', 'cmd/dec
 probe('sanitized startup failures preserve cancellation identity', 'runtime.go',
       'if errors.Is(cause, context.Canceled) {', 'if false {',
       './cmd/deck', 'TestServiceStartSignal')
+probe('bucket open preserves native startup cancellation', 'registry/registry.go',
+      'bucketFailure("nats.threads: cannot open bucket", err)',
+      'errors.New("nats.threads: cannot open bucket")',
+      './cmd/deck', 'TestServiceStartSignal/registry')
+probe('bucket status preserves cancellation', 'registry/registry.go',
+      'bucketFailure("nats.threads: cannot check bucket", err)',
+      'errors.New("nats.threads: cannot check bucket")',
+      './internal/service/registry', 'TestOpenStartupErrors')
+probe('bucket errors remain failures after a concurrent stop', 'registry/registry.go',
+      'if errors.Is(cause, context.Canceled) {', 'if true {',
+      './internal/service/registry', 'TestOpenStartupErrors')
+probe('bucket errors retain deadline identity', 'registry/registry.go',
+      'if errors.Is(cause, context.DeadlineExceeded) {', 'if false {',
+      './internal/service/registry', 'TestOpenStartupErrors')
 print(f'PASS all {completed} targeted service mutation probes completed', flush=True)
