@@ -1,0 +1,229 @@
+$schema: https://refinery.systems/ontology/technical-design
+relationships:
+  implements:
+    - grpc-api
+    - events
+    - configuration
+  shaped-by:
+    - discord-forum-post-and-gateway-reply
+    - keep-message-history-in-discord
+    - record-touched-threads-in-jetstream-key-value
+    - define-events-as-the-api-activity
+    - carry-embeds-and-components-as-discord-json
+    - start-a-thread-for-every-post
+    - read-threads-by-id-in-granted-channels
+  assumes:
+    - person-replies-arrive-with-content
+    - component-interactions-reach-the-gateway
+    - each-bot-fits-one-gateway-session
+  mitigates:
+    - gateway-gap-loses-interactions
+  related-to:
+    - transport
+    - discord-conversations
+objective: >-
+  Run `deck service start`: hold every configured bot's Discord session, post
+  and reply on behalf of client keys within their grants, publish every
+  activity in touched threads to JetStream and nothing else, answer unread
+  counts, lists and listens from the stream, and report itself healthy only
+  while every gateway session and NATS are connected.
+background:
+  current-design: >-
+    No service exists. The discord-forum-post-and-gateway-reply spike showed
+    disgo v0.20.0 creating forum posts with every content type, gateway
+    delivery of replies in about 200 ms, and the gateway delivering a new
+    post's starter message before the REST call that created the post
+    returned.
+  problems:
+    - Activity must reach JetStream for touched threads only, and a thread's
+      identifier is unknown until Discord answers the call that creates it.
+    - Component interactions must be acknowledged within three seconds, long
+      before any agent could answer.
+    - Every client command asks for an unread count, which must not cost a
+      Discord call per thread.
+    - The service is a container with no volume; what it must remember lives
+      in NATS.
+design-challenges:
+  events-before-registration: >-
+    The gateway can deliver an event for a thread before deck knows the thread
+    is touched, and can deliver deck's own message before the REST call that
+    sent it returns. A settling buffer holds two kinds of gateway event for up
+    to 10 seconds: an event whose thread is not registered and whose thread
+    snowflake is less than 10 seconds old, and a message whose author is the
+    bot's own user. A hold ends when the thread registers or the REST path
+    publishes the message's snowflake; then the event is published if its
+    thread is touched, and dropped if the REST path already published it. After
+    10 seconds the event is published if its thread is touched and dropped
+    otherwise, so a poll result message, which Discord sends as the bot, still
+    arrives. The buffer holds at most 10,000 events and drops the oldest
+    beyond that, with a log line.
+  acknowledgement-deadline: >-
+    The handler for a component interaction responds with a deferred message
+    update (interaction response type 6) before it does anything else, and
+    then publishes. It acknowledges every component interaction on a deck bot,
+    touched thread or not, so nobody sees "This interaction failed" on a deck
+    message.
+  gateway-gaps: >-
+    disgo resumes a dropped gateway session, and Discord replays the events
+    missed while resuming. When a session cannot resume and a new one starts,
+    events between the two are lost. On every READY after the first, the
+    service backfills each touched thread of that bot that GUILD_CREATE lists
+    as active: when the thread's last_message_id is greater than the newest
+    message the activity index holds for it, the service reads the messages
+    after that one from Discord and publishes them. Component uses and poll
+    votes in the gap cannot be recovered; the risk gateway-gap-loses-interactions
+    covers them.
+  cheap-unread: >-
+    Unread counts come from an in-memory activity index that follows the event
+    stream, so a count costs no Discord or NATS request. Discord is read only
+    when a cursor is older than everything the stream still holds.
+proposed-design:
+  high-level-overview: >-
+    One process holds: one disgo client per bot; one NATS connection with a
+    JetStream publisher, the thread registry (a key-value bucket mirrored in
+    memory) and the activity index (an ordered, headers-only consumer of the
+    stream mirrored in memory); the SSH and gRPC server of the transport
+    design; and the HTTP healthcheck. Gateway events flow from a bot through
+    the touched-thread filter and the settling buffer to the publisher; API
+    calls go to Discord's REST API through the bot's client and read activity
+    from the index and the stream.
+  startup-and-shutdown: >-
+    Start: load and validate the configuration; open the OpenBao or Vault
+    client and read the host key, the NATS credentials and every bot token;
+    connect to NATS; create or check the stream and the bucket as `manage`
+    says; load the registry and start watching it; start the index's replay;
+    open every bot's gateway session; open the SSH listener and the health
+    listener. A failure before the listeners open exits with status 1 and a
+    log line naming the step and the configuration path involved. API calls
+    that read the index wait for its replay to reach the stream's last
+    sequence at start, up to the call's deadline. SIGTERM or SIGINT closes the
+    SSH listener, ends open calls, closes the gateway sessions, drains NATS and
+    exits 0, within 10 seconds.
+  bots: >-
+    Each bot is a `bot.Client` from `disgo.New` with gateway intents guilds,
+    guild messages, message content and guild message polls, and caches for
+    guilds, channels, threads and members it sees. Its listeners handle guild
+    MESSAGE_CREATE, INTERACTION_CREATE for components, MESSAGE_POLL_VOTE_ADD
+    and MESSAGE_POLL_VOTE_REMOVE, READY and GUILD_CREATE, and ignore direct
+    messages. A bot's token lives only inside its client. The bot registry
+    maps bot names to clients and is the only path to Discord.
+  thread-registry: >-
+    The bucket `nats.threads.bucket` holds one entry per touched thread, keyed
+    by the thread's snowflake in decimal, with history 1 and, when
+    `nats.threads.max_age` is set, that age. The value is JSON: `bot`,
+    `server_id`, `channel_id` (the parent), `created_by_deck`, `keys` (a map
+    from key name to the RFC 3339 time it first touched the thread), and
+    `touched_at`. Writes use the entry's revision, so concurrent touches retry
+    and never lose a key. The service loads every entry at start and watches the
+    bucket, and its in-memory map is what the gateway filter and the grant
+    checks read. A post registers the thread after Discord answers with its
+    snowflake. A reply adds the key before it sends the message, and removes a
+    key it added if the send fails.
+  posting: >-
+    Post resolves the channel's bot and checks the grant, reads the channel
+    from the bot's cache or REST, and refuses a type other than 0, 5, 15 or 16
+    with FAILED_PRECONDITION. It builds a `discord.MessageCreate`: mentions
+    become `<@id>` and `<@&id>` tokens at the start of the content and the only
+    entries of allowed_mentions, with `parse` empty and replied_user false;
+    with a persona, the text becomes the description of a leading embed whose
+    author is the persona and the content holds only the mentions; embeds and
+    components decode from their Struct JSON into disgo's types, and a
+    component list with a type of 9 or above sets the IS_COMPONENTS_V2 flag
+    (1 << 15) and requires empty text, embeds, poll and persona, its mention
+    fields then setting allowed_mentions for tokens in its text displays;
+    files become `discord.File` values. In a forum or media channel it calls
+    CreatePostInThreadChannel with the title and tags, resolving tag names to
+    the channel's available tags and requiring one when the channel's
+    REQUIRE_TAG flag is set. In a text or announcement channel it sends the
+    message, then starts a thread from it with the title; if the thread cannot
+    be started it deletes the message and returns the error. It then registers
+    the thread, publishes the first message from the REST response with
+    `sent_by` set, and returns the thread and the message.
+  replying: >-
+    Reply finds the thread's bot and parent from the registry, or for a thread
+    not touched from the bot's cache or a REST GetChannel, checks that the
+    channel is a thread (type 10, 11 or 12) whose parent is granted and that it
+    is not locked, adds the key to the registry, sends the message built as for
+    a post with a message reference when `reply_to_message_id` is set, and
+    publishes it from the REST response with `sent_by` set. Discord unarchives
+    an archived thread when the message arrives.
+  publishing: >-
+    The publisher turns each activity into an event as the events
+    specification defines (subject, headers, protojson payload) and publishes it
+    with a JetStream acknowledgement. A failed publish is retried with backoff
+    from 100 ms to 5 s for as long as the stream's duplicate window, then logged
+    with the activity's kind and snowflake and dropped. Gateway messages are
+    published only when their thread is touched and they are not held. A poll
+    vote's snowflake is `(milliseconds since 2015-01-01T00:00:00Z) << 22`
+    plus a per-process counter modulo 2^22, taken when the vote arrives. The
+    author of a poll vote carries the username when the bot's member cache has
+    it and only the snowflake otherwise.
+  activity-index: >-
+    An ordered consumer with headers only and deliver policy all follows
+    `<prefix>.>` from the stream's first message and stays live. For each event
+    it records, under the thread from the subject: the activity's snowflake,
+    kind, message type, `sent_by`, stream sequence and time, from the headers.
+    Entries per thread stay sorted by snowflake, and entries older than the
+    stream's maximum age are pruned every minute. The index is the only
+    source of unread counts, lists and listens, and every instance of the
+    service that follows the stream holds the same index.
+  unread: >-
+    CountUnread, for each cursor whose thread the calling key touched and whose
+    parent is granted, counts index entries after `after_id` that are not in
+    `exclude_ids` and are not messages of a type other than 0, 19 or 46. When
+    `after_id` is older than the stream's oldest message, it also counts the
+    messages Discord returns after `after_id` and before the index's oldest
+    entry for the thread, at most 500. ListUnread takes the same entries, the
+    oldest first up to the limit, reads each event body from the stream by
+    sequence, adds the older Discord messages in the same case, and for every
+    message with attachments reads the message from Discord for current URLs.
+    Listen registers a waiter on its threads in the index, answers at once
+    with the states and current unread activity, and then streams each new
+    entry that counts.
+  history: >-
+    ListHistory checks the thread's grant, reads Discord's messages with the
+    given cursor and limit through the bot, returns them oldest first as
+    Activity values, and sets `sent_by` for messages the index holds with one.
+    It neither touches the thread nor reads the stream otherwise.
+  channels: >-
+    ListChannels walks each grant of the calling key, takes the server's
+    channels from the bot's cache, and returns those of types 0, 5, 15 and 16
+    that the grant covers, with the server's name and each forum's tags.
+  healthcheck: >-
+    The health listener serves `GET /livez`, 200 while the process runs, and
+    `GET /healthz`, 200 when every bot's gateway status is Ready, the NATS
+    connection is CONNECTED, and the activity index has finished its replay;
+    otherwise 503. Both bodies are JSON: `{"status": "ok"}` or `{"status":
+    "fail", "bots": {"helper": "disconnected"}, "nats": "reconnecting",
+    "index": "replaying"}`, naming every check. A gateway session that is
+    reconnecting or resuming counts as disconnected. The container image runs
+    `deck service health` as its HEALTHCHECK, every 10 seconds with 3
+    retries and a 30-second start period.
+  logging: >-
+    The service logs JSON lines to stderr with log/slog: start, stop, gateway
+    state changes, NATS state changes, refused calls with the key name and the
+    gRPC code, publish failures, and buffer overflow. A log line holds
+    snowflakes, names and categories, never a token, a message's content, a
+    file or a Discord response body. disgo's own logger is wired to the same
+    handler at warning level.
+  nats-permissions: >-
+    The service's NATS user publishes on `<prefix>.>`, uses the JetStream API
+    for its stream, its consumers and its bucket (create and update only when
+    `manage` is true), and subscribes on its own inbox. Subscribers of events
+    need no permission on the bucket.
+  container: >-
+    The image `ghcr.io/wyrd-company/deck` holds the static `deck` executable,
+    runs as a non-root user, exposes the SSH and health ports, reads
+    `/etc/deck/service.yml`, and has the entrypoint `deck service start` and
+    the HEALTHCHECK above. It needs no volume. Its bot permissions in each
+    granted channel are View Channel, Send Messages, Send Messages in Threads,
+    Create Public Threads, Embed Links, Attach Files and Read Message History.
+  modules: >-
+    `internal/service` wires the process and owns startup and shutdown.
+    `internal/service/discord` owns the bot registry, the gateway listeners,
+    the settling buffer, acknowledgement, backfill and the translation between
+    disgo's types and Activity and Content. `internal/service/registry` owns the
+    bucket and its in-memory mirror. `internal/service/activity` owns the
+    publisher and the index. `internal/service/api` implements
+    `deck.v1.DeckService` from these. `internal/service/health` serves the
+    health listener.

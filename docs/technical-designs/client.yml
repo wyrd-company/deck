@@ -1,0 +1,140 @@
+$schema: https://refinery.systems/ontology/technical-design
+relationships:
+  implements:
+    - command-line-interface
+    - configuration
+  shaped-by:
+    - store-session-affinity-in-sqlite
+    - keep-read-cursors-on-the-client
+  related-to:
+    - transport
+    - grpc-api
+    - discord-conversations
+  terms:
+    - cursor
+    - unread
+objective: >-
+  Build the `deck` client: detect the session from configured environment
+  variables, call the service for every Discord operation, keep each
+  session's threads, cursors and sent messages in a local store that several
+  processes share, and report the unread count after every session command.
+background:
+  current-design: >-
+    No client exists. The operator's harness runs agents whose session is named
+    by an environment variable such as `T3CODE_THREAD_ID`, and a relay (Trowel)
+    on the same machine runs commands with an event on stdin.
+  problems:
+    - Several agents on one machine run deck at the same time against one
+      store.
+    - A relay must map a thread to its sessions without a session of its own
+      and without the service.
+    - Every session command reports unread activity, so the count must cost
+      one extra call and nothing more.
+design-challenges:
+  concurrent-processes: >-
+    Many short-lived processes write the store at once. SQLite in WAL mode
+    with a 5-second busy timeout serialises writers and lets readers run, and
+    every write is one short transaction. The driver is `modernc.org/sqlite`,
+    pure Go, because the client builds with CGO_ENABLED=0 for every platform
+    it ships to.
+  unread-without-state-on-the-service: >-
+    The service holds no read state, so the client sends, for each of the
+    session's threads, the cursor and the snowflakes of its own messages after
+    the cursor. The service counts from its index, and the client's store stays
+    the only place that knows which session read what.
+proposed-design:
+  high-level-overview: >-
+    Each command loads the configuration, opens the store, detects the session,
+    and, when it needs the service, dials it once through the transport
+    design's dialer. The command does its work; a session command then counts
+    unread activity and reports it; the command exits with the categorical
+    status of the command-line interface. Nothing runs between commands.
+  session-detection: >-
+    The session is a value: an ordered list of `{name, value}` identifiers and
+    the primary identifier, the first of them. Detection reads exactly the
+    variables in `session.variables` with os.LookupEnv, in order, and keeps the
+    ones that are set and not empty. `--session NAME=VALUE` replaces detection.
+    The default session has no identifiers and the primary key `""`. The store
+    keys a session by `<name>=<value>` of its primary identifier, and each
+    command updates the stored identifier list of its session to the current
+    one, so a resolve returns what the session last ran with.
+  local-store: >-
+    The store is the SQLite file `store.path`, created with mode 0600 in a
+    directory of mode 0700. It opens with `journal_mode=WAL`,
+    `busy_timeout=5000` and `foreign_keys=on`, and `PRAGMA user_version`
+    records its schema version; a newer version than the client knows is an
+    error, and an older one is migrated in one transaction.
+  store-schema: >-
+    Four tables. `sessions(key TEXT PRIMARY KEY, identifiers TEXT NOT NULL,
+    seen_at TEXT NOT NULL)`, with identifiers a JSON array of `{name, value}`.
+    `threads(thread_id INTEGER PRIMARY KEY, bot TEXT NOT NULL, server_id
+    INTEGER NOT NULL, channel_id INTEGER NOT NULL, title TEXT NOT NULL)`.
+    `session_threads(session_key TEXT NOT NULL REFERENCES sessions(key),
+    thread_id INTEGER NOT NULL REFERENCES threads(thread_id), role TEXT NOT
+    NULL CHECK (role IN ('created', 'replied')), cursor INTEGER NOT NULL,
+    touched_at TEXT NOT NULL, PRIMARY KEY (session_key, thread_id))`.
+    `sent_messages(message_id INTEGER PRIMARY KEY, thread_id INTEGER NOT NULL,
+    session_key TEXT NOT NULL, sent_at TEXT NOT NULL)` with an index on
+    `(session_key, thread_id)`. Snowflakes are stored as SQLite integers, which
+    hold any snowflake below 2^63. Times are RFC 3339 in UTC.
+  recording: >-
+    After a successful post, one transaction upserts the session, inserts the
+    thread, inserts the session thread with role `created` and the cursor at
+    the new message, and inserts the message into sent_messages. After a
+    successful reply, the same transaction upserts the thread, inserts the
+    session thread with role `replied` and the cursor at the reply when the
+    session held none for it, and inserts the message. A post or reply that the
+    service performed but the store failed to record reports the message and
+    exits 1, naming the store failure.
+  cursors-and-unread: >-
+    For a set of threads, the client builds one Cursor per thread: the
+    session's cursor and the sent_messages snowflakes of that session in that
+    thread greater than the cursor. The unread report sends the session's
+    threads that the allow and deny lists keep to CountUnread. Read sends them
+    to ListUnread and, unless `--keep-unread`, moves each thread's cursor to
+    the greatest activity snowflake it received for that thread, with
+    `UPDATE ... SET cursor = max(cursor, ?)` so that a cursor never moves back
+    even when two processes read at once. Sent messages at or below a cursor
+    are no longer sent in requests, and stay in the store for resolve.
+  listen: >-
+    Listen sends the threads' cursors to the Listen call, reads responses
+    until one carries activity, prints it, marks it read unless asked not to,
+    and ends the call. Its timeout is a context deadline on the call; when it
+    passes, listen exits 5. An interrupt ends the call and exits 130.
+  resolve: >-
+    Resolve opens the store read-only and needs neither the service nor
+    OpenBao. Given an event, it decodes the payload with protojson into an
+    Activity, rejecting anything that is not one with exit status 2, and takes
+    its thread. It returns every session thread of that thread whose session
+    has identifiers, oldest touch first, leaving out the session whose
+    sent_messages hold the event's message snowflake when the event is a
+    message.
+  allow-and-deny: >-
+    Channel references in the configuration resolve to `{bot?, channel}` at
+    load. A target channel is allowed when `channels.allow` is absent or one
+    of its references matches, and no reference in `channels.deny` matches; a
+    reference without a bot matches the channel through any bot. Post checks
+    its channel; reply, read, history and listen check the thread's parent
+    from the store, or from GetThread for a thread the store does not hold,
+    before any other call. A refused target exits 3 without the call.
+  rendering: >-
+    One renderer per output mode. Text mode writes the command-line
+    interface's line formats; JSON mode encodes API messages with protojson
+    using proto field names inside a result object built with encoding/json,
+    and writes exactly one object. Errors map from gRPC codes and local
+    failures to the categories and exit statuses of the command-line
+    interface in one table.
+  skill: >-
+    The skill is `internal/skill/SKILL.md`, embedded with go:embed and printed
+    verbatim by `deck skill`. It follows the Agent Skills format with `name:
+    deck` and a description that says when to use deck, and teaches an agent
+    to post and reply, to treat the unread line as its inbox, to read and
+    listen, and to leave resolve to relays.
+  modules: >-
+    `cmd/deck` holds main. `internal/cli` holds the command tree, flags,
+    references, rendering and the exit-status table. `internal/config` loads
+    and validates both configuration documents. `internal/session` detects the
+    session. `internal/store` owns the SQLite store and its migrations; no
+    other package opens the file. `internal/client` wraps the gRPC client
+    connection with the session and store logic that commands share: building
+    cursors, recording, marking read and counting.
