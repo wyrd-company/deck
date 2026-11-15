@@ -28,7 +28,10 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-type Store struct{ db *sql.DB }
+type Store struct {
+	db    *sql.DB
+	empty bool
+}
 type Thread struct {
 	Info      *pb.Thread
 	After     *pb.StreamPosition
@@ -118,7 +121,8 @@ func open(path string, readOnly bool) (*Store, error) {
 	}
 	if version < 1 {
 		if readOnly {
-			return fail(errors.New("store needs migration; run a session command first"))
+			s.empty = true
+			return s, nil
 		}
 		if _, err = conn.ExecContext(context.Background(), schema); err != nil {
 			return fail(err)
@@ -185,7 +189,7 @@ func (s *Store) Pending(ss session.Session, key, nonce, kind string, thread uint
 	})
 }
 func (s *Store) SendState(key, nonce, state string) error {
-	_, err := s.db.Exec(`UPDATE sends SET state=? WHERE key_fingerprint=? AND nonce=?`, state, key, nonce)
+	_, err := s.db.Exec(`UPDATE sends SET state=? WHERE key_fingerprint=? AND nonce=? AND state <> 'sent'`, state, key, nonce)
 	return err
 }
 func (s *Store) Sent(ss session.Session, key, nonce, role string, thread *pb.Thread, message uint64, position *pb.StreamPosition) error {
@@ -249,6 +253,9 @@ func (s *Store) Advance(ss session.Session, ids []uint64, through *pb.StreamPosi
 	})
 }
 func (s *Store) Resolve(thread uint64, event *pb.Activity) ([]Resolved, error) {
+	if s.empty {
+		return []Resolved{}, nil
+	}
 	key, nonce := "", ""
 	if event != nil {
 		key, nonce = event.SenderKey, event.Nonce
@@ -275,4 +282,20 @@ func (s *Store) Resolve(thread uint64, event *pb.Activity) ([]Resolved, error) {
 		result = append(result, r)
 	}
 	return result, rows.Err()
+}
+
+// SendRecord returns durable outcome metadata without exposing the database.
+// It also makes it possible to inspect a send whose command was interrupted.
+type SendRecord struct {
+	State               string
+	ThreadID, MessageID uint64
+}
+
+func (s *Store) SendRecord(key, nonce string) (SendRecord, error) {
+	var r SendRecord
+	var thread, message sql.NullInt64
+	err := s.db.QueryRow(`SELECT state,thread_id,message_id FROM sends WHERE key_fingerprint=? AND nonce=?`, key, nonce).Scan(&r.State, &thread, &message)
+	r.ThreadID = uint64(thread.Int64)
+	r.MessageID = uint64(message.Int64)
+	return r, err
 }

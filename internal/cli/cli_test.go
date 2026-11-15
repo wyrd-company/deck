@@ -265,46 +265,104 @@ func TestFirstReplyResponsePosition(t *testing.T) {
 	}
 }
 func TestUnknownSendNoRetryAndExplicitNonce(t *testing.T) {
-	for _, code := range []codes.Code{codes.Unavailable, codes.DeadlineExceeded, codes.Unknown, codes.Internal} {
-		t.Run(code.String(), func(t *testing.T) {
-			f := setup(t)
-			calls := 0
-			var nonce string
-			f.fake.post = func(ctx context.Context, r *pb.PostRequest) (*pb.PostResponse, error) {
-				calls++
-				nonce = r.Nonce
-				return nil, status.Error(code, "answer lost")
-			}
-			exit, out, errout := f.run("post", "--title", "Question", "--text", "hello")
-			if exit != 4 || calls != 1 || !strings.Contains(errout, "outcome unknown") || !strings.Contains(errout, "--nonce "+nonce) || out != "" {
-				t.Fatalf("%d %q %q calls=%d", exit, out, errout, calls)
-			}
-			var got string
-			f.fake.post = func(ctx context.Context, r *pb.PostRequest) (*pb.PostResponse, error) {
-				calls++
-				got = r.Nonce
-				return &pb.PostResponse{Thread: baseThread, Message: ownActivity(keyA, got, 7), Position: &pb.StreamPosition{Epoch: 100, Sequence: 5}}, nil
-			}
-			f.result("post", "--title", "Question", "--text", "hello", "--nonce", nonce)
-			if calls != 2 || got != nonce {
-				t.Fatal("explicit repeat", calls, got, nonce)
+	for _, kind := range []string{"post", "reply"} {
+		t.Run(kind, func(t *testing.T) {
+			for _, grpcCode := range []codes.Code{codes.Unavailable, codes.DeadlineExceeded, codes.Unknown, codes.Internal} {
+				t.Run(grpcCode.String(), func(t *testing.T) {
+					f := setup(t)
+					if kind == "reply" {
+						f.seed()
+					}
+					s := f.open()
+					calls := 0
+					nonce := ""
+					observe := func(n string) {
+						calls++
+						nonce = n
+						record, err := s.SendRecord(keyA, n)
+						if err != nil || record.State != "pending" && record.State != "unknown" {
+							t.Errorf("before call: %+v %v", record, err)
+						}
+					}
+					f.fake.post = func(_ context.Context, r *pb.PostRequest) (*pb.PostResponse, error) {
+						observe(r.Nonce)
+						return nil, status.Error(grpcCode, "answer lost")
+					}
+					f.fake.reply = func(_ context.Context, r *pb.ReplyRequest) (*pb.ReplyResponse, error) {
+						observe(r.Nonce)
+						return nil, status.Error(grpcCode, "answer lost")
+					}
+					args := []string{kind}
+					if kind == "post" {
+						args = append(args, "--title", "Question")
+					} else {
+						args = append(args, "10")
+					}
+					args = append(args, "--text", "hello")
+					code, out, errout := f.run(args...)
+					if code != 4 || calls != 1 || !strings.Contains(errout, "outcome unknown") || !strings.Contains(errout, "--nonce "+nonce) || out != "" {
+						t.Fatalf("%d %q %q calls=%d", code, out, errout, calls)
+					}
+					record, err := s.SendRecord(keyA, nonce)
+					if err != nil || record.State != "unknown" {
+						t.Fatalf("after unknown: %+v %v", record, err)
+					}
+					got := ""
+					f.fake.post = func(_ context.Context, r *pb.PostRequest) (*pb.PostResponse, error) {
+						calls++
+						got = r.Nonce
+						return &pb.PostResponse{Thread: baseThread, Message: ownActivity(keyA, got, 7), Position: &pb.StreamPosition{Epoch: 100, Sequence: 5}}, nil
+					}
+					f.fake.reply = func(_ context.Context, r *pb.ReplyRequest) (*pb.ReplyResponse, error) {
+						calls++
+						got = r.Nonce
+						return &pb.ReplyResponse{Thread: baseThread, Message: ownActivity(keyA, got, 7), Position: &pb.StreamPosition{Epoch: 100, Sequence: 5}}, nil
+					}
+					f.result(append(args, "--nonce", nonce)...)
+					if calls != 2 || got != nonce {
+						t.Fatalf("explicit repeat: calls=%d got=%s want=%s", calls, got, nonce)
+					}
+					record, err = s.SendRecord(keyA, nonce)
+					if err != nil || record.State != "sent" || record.ThreadID != 10 || record.MessageID != 107 {
+						t.Fatalf("after success: %+v %v", record, err)
+					}
+				})
 			}
 		})
 	}
 }
 func TestDeadlineAfterSendLeft(t *testing.T) {
-	f := setup(t)
-	f.doc["service"].(map[string]any)["timeout"] = "25ms"
-	f.save()
-	var calls atomic.Int32
-	f.fake.post = func(ctx context.Context, r *pb.PostRequest) (*pb.PostResponse, error) {
-		calls.Add(1)
-		<-ctx.Done()
-		return nil, ctx.Err()
-	}
-	code, _, err := f.run("post", "--title", "Q", "--text", "body")
-	if code != 4 || calls.Load() != 1 || !strings.Contains(err, "outcome unknown") {
-		t.Fatalf("%d %q %d", code, err, calls.Load())
+	for _, kind := range []string{"post", "reply"} {
+		t.Run(kind, func(t *testing.T) {
+			f := setup(t)
+			if kind == "reply" {
+				f.seed()
+			}
+			f.doc["service"].(map[string]any)["timeout"] = "25ms"
+			f.save()
+			var calls atomic.Int32
+			nonce := make(chan string, 4)
+			wait := func(ctx context.Context, n string) error { calls.Add(1); nonce <- n; <-ctx.Done(); return ctx.Err() }
+			f.fake.post = func(ctx context.Context, r *pb.PostRequest) (*pb.PostResponse, error) { return nil, wait(ctx, r.Nonce) }
+			f.fake.reply = func(ctx context.Context, r *pb.ReplyRequest) (*pb.ReplyResponse, error) {
+				return nil, wait(ctx, r.Nonce)
+			}
+			args := []string{kind}
+			if kind == "post" {
+				args = append(args, "--title", "Q")
+			} else {
+				args = append(args, "10")
+			}
+			args = append(args, "--text", "body")
+			code, _, errout := f.run(args...)
+			if code != 4 || calls.Load() != 1 || !strings.Contains(errout, "outcome unknown") {
+				t.Fatalf("%d %q calls=%d", code, errout, calls.Load())
+			}
+			record, err := f.open().SendRecord(keyA, <-nonce)
+			if err != nil || record.State != "unknown" {
+				t.Fatalf("after deadline: %+v %v", record, err)
+			}
+		})
 	}
 }
 func TestRotationRenameAndSameNonce(t *testing.T) {
@@ -932,5 +990,131 @@ func TestPresentEmptyAllowRefusesBeforeDial(t *testing.T) {
 	code, _, err := f.run("post", "--title", "Q", "--text", "hello")
 	if code != 3 || f.dialN != 0 {
 		t.Fatalf("%d dials %d: %s", code, f.dialN, err)
+	}
+}
+
+func TestSameKeyDifferentSessionsSeeEachOthersSends(t *testing.T) {
+	f := setup(t)
+	f.seed()
+	s := f.open()
+	other := session.Session{Identifiers: []session.Identifier{{Name: "DECK_TEST_SESSION", Value: "two"}}}
+	if err := s.Pending(other, keyA, "otherSession", "reply", 10); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Sent(other, keyA, "otherSession", "replied", baseThread, 108, &pb.StreamPosition{Epoch: 100, Sequence: 5}); err != nil {
+		t.Fatal(err)
+	}
+	activities := []*pb.Activity{ownActivity(keyA, "original", 7), ownActivity(keyA, "otherSession", 8)}
+	state := touched(2, &pb.OwnMessage{Id: 107, SenderKey: keyA, Nonce: "original"}, &pb.OwnMessage{Id: 108, SenderKey: keyA, Nonce: "otherSession"})
+	f.fake.count = func(context.Context, *pb.CountUnreadRequest) (*pb.CountUnreadResponse, error) {
+		return &pb.CountUnreadResponse{Threads: []*pb.ThreadCount{state}}, nil
+	}
+	f.fake.list = func(context.Context, *pb.ListUnreadRequest) (*pb.ListUnreadResponse, error) {
+		return &pb.ListUnreadResponse{Threads: []*pb.ThreadCount{state}, Activity: activities, Through: &pb.StreamPosition{Epoch: 100, Sequence: 9}}, nil
+	}
+	f.fake.listen = func(_ *pb.ListenRequest, stream grpc.ServerStreamingServer[pb.ListenResponse]) error {
+		return stream.Send(&pb.ListenResponse{Threads: []*pb.ThreadCount{state}, Activity: activities, Through: &pb.StreamPosition{Epoch: 100, Sequence: 9}})
+	}
+	for _, which := range []struct{ session, id string }{{"one", "108"}, {"two", "107"}} {
+		t.Setenv("DECK_TEST_SESSION", which.session)
+		assertUnread(t, f.result("inbox", "--all"), 1)
+		for _, command := range []string{"read", "listen"} {
+			result := f.result(command, "--keep-unread")
+			items := result["activity"].([]any)
+			if len(items) != 1 || items[0].(map[string]any)["id"] != which.id {
+				t.Fatalf("%s/%s: %+v", which.session, command, result)
+			}
+		}
+	}
+	for _, a := range activities {
+		a.Sequence = 0
+		raw, _ := (protojson.MarshalOptions{UseProtoNames: true}).Marshal(a)
+		f.input = string(raw)
+		result := f.result("resolve", "--event", "-")
+		sessions := result["sessions"].([]any)
+		if len(sessions) != 1 {
+			t.Fatal(result)
+		}
+		want := "two"
+		if a.Nonce == "otherSession" {
+			want = "one"
+		}
+		if sessions[0].(map[string]any)["identifiers"].([]any)[0].(map[string]any)["value"] != want {
+			t.Fatal(result)
+		}
+	}
+}
+func TestSendStatesAndFailedRepeat(t *testing.T) {
+	for _, kind := range []string{"post", "reply"} {
+		for _, outcome := range []string{"sent", "failed", "unknown", "store-failure"} {
+			t.Run(kind+"/"+outcome, func(t *testing.T) {
+				f := setup(t)
+				if kind == "reply" {
+					f.seed()
+				}
+				s := f.open()
+				nonce := "StateProbe"
+				observe := func() {
+					record, err := s.SendRecord(keyA, nonce)
+					if err != nil || record.State != "pending" {
+						t.Errorf("pending: %+v %v", record, err)
+					}
+				}
+				result := func() (*pb.Thread, *pb.Activity, *pb.StreamPosition, error) {
+					observe()
+					if outcome == "failed" {
+						return nil, nil, nil, status.Error(codes.PermissionDenied, "refused")
+					}
+					if outcome == "unknown" {
+						return nil, nil, nil, status.Error(codes.Unavailable, "lost answer")
+					}
+					position := &pb.StreamPosition{Epoch: 100, Sequence: 5}
+					if outcome == "store-failure" {
+						position.Epoch = 1 << 63
+					}
+					return baseThread, ownActivity(keyA, nonce, 7), position, nil
+				}
+				f.fake.post = func(context.Context, *pb.PostRequest) (*pb.PostResponse, error) {
+					thread, a, p, e := result()
+					return &pb.PostResponse{Thread: thread, Message: a, Position: p}, e
+				}
+				f.fake.reply = func(context.Context, *pb.ReplyRequest) (*pb.ReplyResponse, error) {
+					thread, a, p, e := result()
+					return &pb.ReplyResponse{Thread: thread, Message: a, Position: p}, e
+				}
+				args := []string{kind}
+				if kind == "post" {
+					args = append(args, "--title", "Q")
+				} else {
+					args = append(args, "10")
+				}
+				args = append(args, "--text", "hello", "--nonce", nonce)
+				code, _, errout := f.run(args...)
+				wantCode := map[string]int{"sent": 0, "failed": 3, "unknown": 4, "store-failure": 1}[outcome]
+				record, err := s.SendRecord(keyA, nonce)
+				wantState := outcome
+				if outcome == "store-failure" {
+					wantState = "pending"
+				}
+				if code != wantCode || err != nil || record.State != wantState {
+					t.Fatalf("code %d record %+v err %v output %s", code, record, err, errout)
+				}
+				if outcome == "sent" {
+					for _, c := range []codes.Code{codes.Unavailable, codes.PermissionDenied} {
+						f.fake.post = func(context.Context, *pb.PostRequest) (*pb.PostResponse, error) {
+							return nil, status.Error(c, "repeat failed")
+						}
+						f.fake.reply = func(context.Context, *pb.ReplyRequest) (*pb.ReplyResponse, error) {
+							return nil, status.Error(c, "repeat failed")
+						}
+						f.run(args...)
+						record, err = s.SendRecord(keyA, nonce)
+						if err != nil || record.State != "sent" || record.MessageID != 107 {
+							t.Fatalf("downgraded sent repeat: %+v %v", record, err)
+						}
+					}
+				}
+			})
+		}
 	}
 }

@@ -50,6 +50,35 @@ probes = [
      'for _, ref := range c.Channels.Deny {', 'for _, ref := range []string{} {',
      ['go', 'test', '-count=1', '-run', '^TestAllowDenyBeforeCalls$', './internal/cli']),
 ]
+probes.extend([
+    ('no automatic reply repeat', 'internal/cli/commands.go',
+     'r, e := i.client.API.Reply(call, &pb.ReplyRequest{Thread: thread, Content: content, ReplyToMessageId: replyTo, Nonce: nonce})',
+     'r, e := i.client.API.Reply(call, &pb.ReplyRequest{Thread: thread, Content: content, ReplyToMessageId: replyTo, Nonce: nonce}); if e != nil {r,e=i.client.API.Reply(call,&pb.ReplyRequest{Thread:thread,Content:content,Nonce:nonce})}',
+     ['go', 'test', '-count=1', '-run', '^TestUnknownSendNoRetryAndExplicitNonce/reply$', './internal/cli']),
+    ('own matches only within its session', 'internal/store/store.go',
+     'WHERE session_key=? AND key_fingerprint=? AND nonce=?',
+     'WHERE (session_key=? OR 1=1) AND key_fingerprint=? AND nonce=?',
+     ['go', 'test', '-count=1', '-run', '^TestSameKeyDifferentSessionsSeeEachOthersSends$', './internal/cli']),
+    ('failed and unknown send states are persisted', 'internal/store/store.go',
+     'func (s *Store) SendState(key, nonce, state string) error {',
+     'func (s *Store) SendState(key, nonce, state string) error { return nil;',
+     ['go', 'test', '-count=1', '-run', '^TestSendStatesAndFailedRepeat$', './internal/cli']),
+    ('successful send transitions out of pending', 'internal/store/store.go',
+     "UPDATE sends SET state='sent',thread_id", "UPDATE sends SET state='pending',thread_id",
+     ['go', 'test', '-count=1', '-run', '^TestSendStatesAndFailedRepeat$', './internal/cli']),
+    ('failed repeat preserves a successful send', 'internal/store/store.go',
+     " AND state <> 'sent'", '',
+     ['go', 'test', '-count=1', '-run', '^TestSendStatesAndFailedRepeat$', './internal/cli']),
+    ('remote listen deadline precedes local timer', 'internal/cli/read.go',
+     'status.Code(err) == codes.DeadlineExceeded || ', '',
+     ['go', 'test', '-count=1', '-run', '^TestListenRemoteDeadlineBeforeLocalTimer$', './internal/cli']),
+    ('bot-qualified deny blocks botless target', 'internal/client/client.go',
+     ' || deny && bot == ""', '',
+     ['go', 'test', '-count=1', '-run', '^TestBotQualifiedDenyOnUnqualifiedPost$', './internal/cli']),
+    ('present empty allow blocks every channel', 'internal/client/client.go',
+     'if c.Channels.Allow == nil {', 'if len(c.Channels.Allow) == 0 {',
+     ['go', 'test', '-count=1', '-run', '^TestPresentEmptyAllowRefusesBeforeDial$', './internal/cli']),
+])
 for probe in probes:
     mutate(*probe)
 print(f'PASS all {len(probes)} client guard probes completed', flush=True)

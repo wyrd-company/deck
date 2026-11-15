@@ -172,3 +172,34 @@ func TestConcurrentCreation(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+func TestResolveWhileStoreIsBeingCreated(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "deck.db")
+	if err := os.WriteFile(path, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	reader, err := OpenReadOnly(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, err := reader.Resolve(10, nil)
+	if err != nil || len(rows) != 0 {
+		t.Fatalf("initial store: %+v %v", rows, err)
+	}
+	reader.Close()
+	writer, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seed(t, writer)
+	writer.Close()
+	reader, err = OpenReadOnly(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	rows, err = reader.Resolve(10, nil)
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("migrated store: %+v %v", rows, err)
+	}
+}
