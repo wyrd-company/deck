@@ -3,6 +3,10 @@ package activity
 import (
 	"context"
 	"encoding/json"
+	"github.com/nats-io/nats.go"
+	"github.com/santhosh-tekuri/jsonschema/v6"
+	"os"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -76,5 +80,76 @@ func TestConnectionEventsCallsEveryHook(t *testing.T) {
 	}
 	if a != 1000 || b != 1000 || d != 1000 {
 		t.Fatal(a, b, d)
+	}
+}
+
+func TestJWTConnectionAndReconnectHooks(t *testing.T) {
+	s, creds := testutil.JWTNATS(t)
+	cfg := config.NATS{Servers: []string{s.ClientURL()}, Name: "test", Timeout: time.Second}
+	events := &ConnectionEvents{}
+	var first, second, disconnect atomic.Int64
+	events.OnReconnect(func() { first.Add(1) })
+	events.OnReconnect(func() { second.Add(1) })
+	events.OnDisconnect(func() { disconnect.Add(1) })
+	nc, err := Connect(cfg, creds, events)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer nc.Close()
+	_ = nc.StatusChanged(nats.RECONNECTING, nats.CONNECTED)
+	for i := int64(1); i <= 15; i++ {
+		if err := nc.ForceReconnect(); err != nil {
+			t.Fatal(err)
+		}
+		testutil.Until(t, func() bool { return first.Load() >= i && second.Load() >= i && disconnect.Load() >= i })
+	}
+	if first.Load() != 15 || second.Load() != 15 {
+		t.Fatal("reconnect notification dropped")
+	}
+	if _, err := Connect(cfg, "invalid creds", events); err == nil {
+		t.Fatal("invalid JWT accepted")
+	}
+}
+
+func TestActivitySchema(t *testing.T) {
+	raw, err := os.ReadFile("../../../docs/specifications/assets/events/activity.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc any
+	if err = json.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	compiler := jsonschema.NewCompiler()
+	if err = compiler.AddResource("activity.json", doc); err != nil {
+		t.Fatal(err)
+	}
+	schema, err := compiler.Compile("activity.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, kind := range []string{"message", "component", "poll_vote"} {
+		t.Run(kind, func(t *testing.T) {
+			a := &pb.Activity{Id: 123, Time: timestamppb.Now(), Bot: "test", ServerId: 1, ChannelId: 2, ThreadId: 3}
+			switch kind {
+			case "message":
+				a.Kind = &pb.Activity_Message{Message: &pb.Message{Content: "hello"}}
+			case "component":
+				a.Kind = &pb.Activity_Component{Component: &pb.ComponentUse{MessageId: 1, CustomId: "button", ComponentType: 2}}
+			case "poll_vote":
+				a.Kind = &pb.Activity_PollVote{PollVote: &pb.PollVote{MessageId: 1, AnswerId: 1}}
+			}
+			m, err := Envelope("deck", a, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var payload any
+			if err = json.Unmarshal(m.Data, &payload); err != nil {
+				t.Fatal(err)
+			}
+			if err = schema.Validate(payload); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }

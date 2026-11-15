@@ -4,6 +4,11 @@ product: deck
 order: 4
 ---
 
+A post starts a Discord thread in a forum, media, text or announcement channel.
+A reply sends a message inside a thread. The service chooses the configured bot
+allowed by your key's grants; specify the bot when your grants cover several.
+A touched thread keeps the bot that first touched it.
+
 Use `deck channels` to find a channel your key can use. `channels.default` in the
 client configuration supplies the channel when you omit it.
 
@@ -23,6 +28,11 @@ Only one flag can read stdin. `--mention USER` and `--mention-role ROLE` accept
 configured aliases or Discord IDs and can repeat. A configured default persona
 can be overridden with `--persona NAME` or `--no-persona`.
 
+A persona sets the author of a leading embed, with the text as its description.
+Discord still attributes the message to the bot. Explicit mentions stay outside
+that embed. Everyone, here and automatic reply pings are disabled. Discord
+validates combinations of rich content as well as individual fields.
+
 Text must be valid UTF-8. The complete encoded request, including attachments,
 must fit within 64 MiB. Invalid input exits 2 and names the field to fix before
 recording or sending a message.
@@ -32,15 +42,19 @@ deck post team --title 'Pick a time' --mention owner \
   --poll 'When?' --answer Today --answer Tomorrow --poll-duration 48h
 ```
 
-A forum poll is sent as a second message. A poll failure does not undo its post;
-check the diagnostic or JSON `poll_error`.
+A forum or media post sends its poll as a second message because Discord drops
+polls from forum starters. For a poll-only post, the thread title supplies the
+starter's text. A poll failure does not undo its post; check the diagnostic or
+JSON `poll_error`. Text-channel posts send their content in the parent channel
+and create a thread on that message.
 
 If a send reports `outcome unknown` and exits 4, inspect Discord before repeating
 it. The error prints a command with the send's original `--nonce`. Run that only
 intentionally, with the original content, target and session. A repeated nonce is
 deduplicated while the original send is in flight or its event is retained.
 After retention expires, repeating it can duplicate the message. deck never
-repeats a send automatically.
+repeats a send automatically. A lost forum response can leave a real post whose
+outcome the service cannot determine; repeating that send can create another post.
 
 Copy the entire printed shell command, including any assignments before `deck`.
 Those preserve line breaks and other control characters in the original content.
@@ -55,3 +69,7 @@ Each session command reports unread activity on stderr, or in `unread` with
 embedded agent instructions. The [CLI specification](../specifications/command-line-interface.yml)
 defines every flag and output field; `deck post --help` and `deck reply --help`
 are available without configuration.
+
+The [API specification](../specifications/grpc-api.yml) defines content limits,
+nonce behavior and response fields. [Configuration](../specifications/configuration.yml)
+defines personas and bot grants.

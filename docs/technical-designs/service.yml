@@ -278,7 +278,8 @@ proposed-design:
     resolving tag names to the channel's available tags and requiring one when
     the channel's REQUIRE_TAG flag is set (INVALID_ARGUMENT without one), and
     then sends the poll, when there is one, as the thread's second message,
-    because Discord drops a poll from a forum post's starter (measured); a
+    because Discord drops a poll from a forum post's starter (measured). A
+    poll-only post uses its title as the starter's text. A
     poll that fails to send leaves the post in place and is reported in
     `poll_error`. In a text or announcement channel it sends the message, poll
     included, with the derived nonce and enforce_nonce, then starts a thread

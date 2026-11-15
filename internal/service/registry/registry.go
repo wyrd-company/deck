@@ -1,3 +1,11 @@
+// ---
+// relationships:
+//
+//	implements:
+//	  - service
+//	  - record-touched-threads-in-jetstream-key-value
+//
+// ---
 // Package registry maintains the durable, one-bot-per-thread routing registry.
 package registry
 
@@ -42,6 +50,7 @@ type Registry struct {
 	revisions map[uint64]uint64
 	dirty     map[uint64]bool
 	attempts  map[string]*attempt
+	cleanup   map[uint64]map[string]bool
 	ctx       context.Context
 	cancel    context.CancelFunc
 	wg        sync.WaitGroup
@@ -67,7 +76,7 @@ func Open(ctx context.Context, js jetstream.JetStream, cfg config.Threads) (*Reg
 }
 func New(ctx context.Context, kv jetstream.KeyValue, maxAge time.Duration) (*Registry, error) {
 	ctx, cancel := context.WithCancel(ctx)
-	r := &Registry{KV: kv, entries: map[uint64]Entry{}, revisions: map[uint64]uint64{}, dirty: map[uint64]bool{}, attempts: map[string]*attempt{}, ctx: ctx, cancel: cancel}
+	r := &Registry{KV: kv, entries: map[uint64]Entry{}, revisions: map[uint64]uint64{}, dirty: map[uint64]bool{}, attempts: map[string]*attempt{}, cleanup: map[uint64]map[string]bool{}, ctx: ctx, cancel: cancel}
 	w, err := kv.Watch(ctx, "threads.*")
 	if err != nil {
 		cancel()
@@ -108,14 +117,16 @@ func (r *Registry) Lookup(id uint64) (Entry, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	e, ok := r.entries[id]
-	return clone(e), ok
+	return clone(e), ok && (e.CreatedByDeck || len(e.Keys) > 0)
 }
 func (r *Registry) Snapshot() map[uint64]Entry {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	out := map[uint64]Entry{}
 	for id, e := range r.entries {
-		out[id] = clone(e)
+		if e.CreatedByDeck || len(e.Keys) > 0 {
+			out[id] = clone(e)
+		}
 	}
 	return out
 }
@@ -177,13 +188,27 @@ func (r *Registry) writeLocked(ctx context.Context, id uint64, e Entry) error {
 			}
 			rev = old.Revision()
 			for k, t := range previous.Keys {
-				if _, ok := e.Keys[k]; !ok {
+				if r.cleanup[id][k] {
+					continue
+				}
+				if current, ok := e.Keys[k]; !ok || t.State == "sent" && current.State != "sent" {
 					e.Keys[k] = t
 				}
 			}
 			if previous.LastMessageID > e.LastMessageID {
 				e.LastMessageID = previous.LastMessageID
 			}
+		}
+		if len(e.Keys) == 0 && !e.CreatedByDeck {
+			if rev != 0 {
+				if err := r.KV.Delete(ctx, key(id), jetstream.LastRevision(rev)); err != nil {
+					return err
+				}
+			}
+			delete(r.entries, id)
+			delete(r.dirty, id)
+			delete(r.cleanup, id)
+			return nil
 		}
 		raw, err := json.Marshal(e)
 		if err != nil {
@@ -204,6 +229,7 @@ func (r *Registry) writeLocked(ctx context.Context, id uint64, e Entry) error {
 		r.entries[id] = clone(e)
 		r.revisions[id] = next
 		delete(r.dirty, id)
+		delete(r.cleanup, id)
 		return nil
 	}
 }
@@ -294,25 +320,18 @@ func (r *Registry) FinishReply(id uint64, name string, success, unknown bool) {
 	}
 	delete(r.attempts, k)
 	if !success && !a.unknown && a.removable && e.Keys[name].State == "pending" {
-		// A deletion must use the current revision, without merging the removed key back.
+		delete(e.Keys, name)
+		if r.cleanup[id] == nil {
+			r.cleanup[id] = map[string]bool{}
+		}
+		r.cleanup[id][name] = true
+		r.entries[id] = e
+		r.dirty[id] = true
 		ctx, cancel := context.WithTimeout(r.ctx, time.Second)
 		defer cancel()
-		delete(e.Keys, name)
-		if len(e.Keys) == 0 && !e.CreatedByDeck {
-			if err := r.KV.Delete(ctx, key(id), jetstream.LastRevision(r.revisions[id])); err == nil {
-				delete(r.entries, id)
-				delete(r.dirty, id)
-			}
-			return
-		}
-		raw, _ := json.Marshal(e)
-		rev, err := r.KV.Update(ctx, key(id), raw, r.revisions[id])
-		if err == nil {
-			r.entries[id] = e
-			r.revisions[id] = rev
-			delete(r.dirty, id)
-		}
+		_ = r.writeLocked(ctx, id, e)
 	}
+
 }
 
 // Advance is monotonic. Task 7 calls it only after its recovery/pending gate allows it.

@@ -1,3 +1,11 @@
+// ---
+// relationships:
+//
+//	implements:
+//	  - service
+//	  - events
+//
+// ---
 // Package activity owns publication of deck's activity envelopes.
 package activity
 
