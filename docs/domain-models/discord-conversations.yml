@@ -113,10 +113,14 @@ aggregates:
         touched it. Events on the stream cover every touched thread, and who
         may subscribe to them is NATS authorization.
       - A thread has one bot. A call that names another bot for a touched
-        thread is refused, and only the thread's bot publishes its messages and poll votes; a component use is published by the bot Discord delivered it to, the one that sent its message. A
-        thread whose bot is no longer configured, or can no longer see it,
-        produces nothing and refuses calls until its registry entry expires or
-        is deleted.
+        thread is refused, and only the thread's bot publishes its messages
+        and poll votes; a component use is published by the bot Discord
+        delivered it to, the one that sent its message. A thread whose bot is
+        no longer configured, or can no longer see it, produces no events and
+        refuses the calls that need Discord or a grant on its bot; counts
+        still answer, NOT_GRANTED for a bot no longer configured and from the
+        index for a bot that cannot see the thread, until its registry entry
+        is swept or deleted.
       - A message's content is text, user and role mentions, embeds,
         components, a poll and files, in Discord's limits; an optional persona
         sets the author of a leading embed that holds the text, and mentions
@@ -129,9 +133,13 @@ aggregates:
       select menu on a message deck sent), or a poll vote (added or removed).
       Each activity has a snowflake: the message's or the interaction's own,
       or, for a poll vote, one the service makes from the moment it received
-      the vote. Each is published once to the event stream, which holds it for
-      the stream's maximum age and gives it a position (the stream's epoch and
-      a sequence) in publication order. Publication order can differ from
+      the vote. Each is published to the event stream at least once, and can
+      be published twice, as deliver-activity-at-least-once states with its
+      named residuals (send-outcome-unknown,
+      recovery-replays-published-messages, gateway-gap-loses-interactions);
+      the stream holds it for its maximum age and gives it a position (the
+      stream's epoch and a sequence) in publication order. Publication order
+      can differ from
       snowflake order: a held message, a recovered message and a vote stamped
       by the service's clock can reach the stream after activity with a
       greater snowflake. For a thread started from a message in a text or
@@ -153,9 +161,10 @@ aggregates:
         The activity is on the event stream, on its thread's subject.
     invariants:
       - Activity in a thread that is not touched is never published.
-      - An activity is published once; a repeat of its deduplication
-        identifier within the stream's duplicate window is dropped by
-        JetStream.
+      - An activity is published at least once, as
+        deliver-activity-at-least-once states with its named residuals; a
+        repeat of its deduplication identifier within the stream's duplicate
+        window is dropped by JetStream, and a repeat after it is stored again.
       - A message deck sent carries the name and fingerprint of the key that sent it and the sending client's nonce, and is published by its send alone.
   session-thread:
     description: >-
