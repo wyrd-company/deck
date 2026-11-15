@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -319,7 +320,18 @@ func TestUnknownSendNoRetryAndExplicitNonce(t *testing.T) {
 						got = r.Nonce
 						return &pb.ReplyResponse{Thread: baseThread, Message: ownActivity(keyA, got, 7), Position: &pb.StreamPosition{Epoch: 100, Sequence: 5}}, nil
 					}
-					f.result(append(args, "--nonce", nonce)...)
+					repeat, ok := strings.CutPrefix(strings.Split(strings.Split(errout, "before repeating: ")[1], "\n")[0], "deck ")
+					if !ok {
+						t.Fatal("missing deck repeat", errout)
+					}
+					want := fmt.Sprintf("post --config '%s' --text 'hello' --title 'Question' --nonce %s", f.path, nonce)
+					if kind == "reply" {
+						want = fmt.Sprintf("reply '10' --config '%s' --text 'hello' --nonce %s", f.path, nonce)
+					}
+					if repeat != want {
+						t.Fatalf("repeat command %q want %q", repeat, want)
+					}
+					runPrintedRepeat(t, f, "deck "+repeat)
 					if calls != 2 || got != nonce {
 						t.Fatalf("explicit repeat: calls=%d got=%s want=%s", calls, got, nonce)
 					}
@@ -1219,6 +1231,24 @@ func TestSessionConfigurationErrorsNameFileAndFix(t *testing.T) {
 	}
 }
 
+// Let a real POSIX shell interpret exactly the printed command, then run those
+// arguments through the application rather than reconstructing a repeat ourselves.
+func runPrintedRepeat(t *testing.T, f *fixture, command string) {
+	t.Helper()
+	raw, err := exec.Command("sh", "-c", "set -- "+command+`; printf '%s\0' "$@"`).Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	args := strings.Split(strings.TrimSuffix(string(raw), "\x00"), "\x00")
+	if len(args) == 0 || args[0] != "deck" {
+		t.Fatalf("repeat argv %q", args)
+	}
+	var out, stderr bytes.Buffer
+	if code := f.app(&out, &stderr).Run(context.Background(), args[1:]); code != 0 {
+		t.Fatalf("repeat exit %d: %s %s", code, &out, &stderr)
+	}
+}
+
 func TestNumericReferencesOverrideAliases(t *testing.T) {
 	for _, target := range []string{"123", "helper/123", "default"} {
 		t.Run("deny/"+target, func(t *testing.T) {
@@ -1253,3 +1283,29 @@ func TestNumericReferencesOverrideAliases(t *testing.T) {
 	}
 }
 
+func TestRepeatCommandPreservesShellArguments(t *testing.T) {
+	f := setup(t)
+	text := "hello 'operator'\n$(echo wrong) `echo wrong`"
+	f.fake.post = func(_ context.Context, r *pb.PostRequest) (*pb.PostResponse, error) {
+		return nil, status.Error(codes.Unavailable, "lost")
+	}
+	code, out, stderr := f.run("post", "team", "--title", "A 'title'", "--text", text, "--nonce", "fixedNonce", "--json")
+	if code != 4 {
+		t.Fatal(code, out, stderr)
+	}
+	var result struct{ Error struct{ Message string } }
+	if err := json.Unmarshal([]byte(out), &result); err != nil {
+		t.Fatal(err, out)
+	}
+	_, repeat, ok := strings.Cut(result.Error.Message, "before repeating: ")
+	if !ok {
+		t.Fatal(result)
+	}
+	f.fake.post = func(_ context.Context, r *pb.PostRequest) (*pb.PostResponse, error) {
+		if r.Nonce != "fixedNonce" || r.Channel.ChannelId != 2 || r.Title != "A 'title'" || r.Content.Text != text {
+			t.Errorf("repeat changed request: %v", r)
+		}
+		return &pb.PostResponse{Thread: baseThread, Message: person(11, 7, "sent"), Position: &pb.StreamPosition{Epoch: 100, Sequence: 5}}, nil
+	}
+	runPrintedRepeat(t, f, repeat)
+}
