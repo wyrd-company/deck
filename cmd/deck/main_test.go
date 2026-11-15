@@ -23,6 +23,8 @@ func TestRun(t *testing.T) {
 		stdout, stderr string
 	}{
 		{name: "version", args: []string{"--version"}, code: 0, stdout: "1.2.3\n"},
+		{name: "version JSON", args: []string{"--version", "--json"}, code: 0, stdout: "{\"version\":\"1.2.3\"}\n"},
+		{name: "JSON version", args: []string{"--json", "--version"}, code: 0, stdout: "{\"version\":\"1.2.3\"}\n"},
 		{name: "service start help", args: []string{"service", "start", "--help"}, code: 1, stderr: "deck service start: not implemented\n"},
 	}
 	for _, tt := range tests {
@@ -143,5 +145,20 @@ func TestClientDispatch(t *testing.T) {
 	var out, err bytes.Buffer
 	if code := run(nil, &out, &err); code != 2 || !strings.Contains(err.String(), "usage: deck") {
 		t.Fatalf("usage: %d %q", code, err.String())
+	}
+}
+
+func TestVersionUsage(t *testing.T) {
+	for _, args := range [][]string{{"--version", "extra"}, {"--version", "extra", "--json"}, {"--json", "--version", "extra"}} {
+		var stdout, stderr bytes.Buffer
+		if code := run(args, &stdout, &stderr); code != 2 || !strings.Contains(stdout.String()+stderr.String(), "use deck --version alone or with --json") {
+			t.Fatal("incorrect version guidance", code, stdout.String(), stderr.String())
+		}
+		if strings.Contains(strings.Join(args, " "), "--json") {
+			var result map[string]any
+			if err := json.Unmarshal(stdout.Bytes(), &result); err != nil || stderr.Len() != 0 {
+				t.Fatal("version error is not JSON", err, stderr.String())
+			}
+		}
 	}
 }

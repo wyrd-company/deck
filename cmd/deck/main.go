@@ -33,8 +33,16 @@ func runContext(ctx context.Context, args []string, stdout, stderr io.Writer) in
 	if code, handled := serviceCommand(ctx, args, stdout, stderr); handled {
 		return code
 	}
-	if len(args) == 1 && args[0] == "--version" {
-		fmt.Fprintln(stdout, Version)
+	if len(args) > 0 && (args[0] == "--version" || args[0] == "--json" && len(args) > 1 && args[1] == "--version") {
+		jsonMode := slices.Contains(args, "--json")
+		if len(args) != 1 && !(len(args) == 2 && jsonMode) {
+			return validationFailure(stdout, stderr, jsonMode, "use deck --version alone or with --json")
+		}
+		if jsonMode {
+			_ = json.NewEncoder(stdout).Encode(map[string]string{"version": Version})
+		} else {
+			fmt.Fprintln(stdout, Version)
+		}
 		return 0
 	}
 	if len(args) >= 2 && args[0] == "service" && args[1] == "start" {
