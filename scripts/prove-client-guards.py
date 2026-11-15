@@ -16,8 +16,8 @@ probes = [
      '_ = threadID; if err = i.client.Store.Session(i.client.Session); err != nil {',
      ['go', 'test', '-count=1', '-run', '^TestPostReplyPreRecordAndCursor$', './internal/cli']),
     ('no automatic send repeat', 'internal/cli/commands.go',
-     'r, e := i.client.API.Post(call, &pb.PostRequest{Channel: channel, Title: i.flags.one("title"), Tags: i.flags.values["tag"], Content: content, Nonce: nonce})',
-     'r, e := i.client.API.Post(call, &pb.PostRequest{Channel: channel, Title: i.flags.one("title"), Tags: i.flags.values["tag"], Content: content, Nonce: nonce}); if e != nil { r,e = i.client.API.Post(call, &pb.PostRequest{Channel:channel,Title:i.flags.one("title"),Content:content,Nonce:nonce}) }',
+     'r, e := i.client.API.Post(call, postRequest)',
+     'r, e := i.client.API.Post(call, postRequest); if e != nil { r,e = i.client.API.Post(call, &pb.PostRequest{Channel:channel,Title:i.flags.one("title"),Content:content,Nonce:nonce}) }',
      ['go', 'test', '-count=1', '-run', '^TestUnknownSendNoRetryAndExplicitNonce$', './internal/cli']),
     ('unknown send outcome', 'internal/cli/errors.go',
      'func unknownSend(err error) bool {', 'func unknownSend(err error) bool { return false;',
@@ -52,8 +52,8 @@ probes = [
 ]
 probes.extend([
     ('no automatic reply repeat', 'internal/cli/commands.go',
-     'r, e := i.client.API.Reply(call, &pb.ReplyRequest{Thread: thread, Content: content, ReplyToMessageId: replyTo, Nonce: nonce})',
-     'r, e := i.client.API.Reply(call, &pb.ReplyRequest{Thread: thread, Content: content, ReplyToMessageId: replyTo, Nonce: nonce}); if e != nil {r,e=i.client.API.Reply(call,&pb.ReplyRequest{Thread:thread,Content:content,Nonce:nonce})}',
+     'r, e := i.client.API.Reply(call, replyRequest)',
+     'r, e := i.client.API.Reply(call, replyRequest); if e != nil {r,e=i.client.API.Reply(call,&pb.ReplyRequest{Thread:thread,Content:content,Nonce:nonce})}',
      ['go', 'test', '-count=1', '-run', '^TestUnknownSendNoRetryAndExplicitNonce/reply$', './internal/cli']),
     ('own matches only within its session', 'internal/store/store.go',
      'WHERE session_key=? AND key_fingerprint=? AND nonce=?',
@@ -178,6 +178,23 @@ probes.extend([
      'body, _ := io.ReadAll(response.Body); return nil, fmt.Errorf("unsafe upstream: %s", body)',
      ['go', 'test', '-count=1', '-run', '^TestDefaultDialErrorsDoNotExposeCredentials/transit_sign_failure', './cmd/deck'],
      'real dial error/output exposed token or signature'),
+])
+probes.extend([
+    ('local encoding failure is refused before recording', 'internal/cli/send_request.go',
+     'if _, err := proto.Marshal(request); err != nil {', 'if _, err := proto.Marshal(request); false {',
+     ['go', 'test', '-count=1', '-run', '^TestUnsendableRequestIsNotRecorded/.*/.*/(latin1_file|invalid_text)$', './internal/cli'],
+     'local send failure not refused'),
+    ('local request size is refused before recording', 'internal/cli/send_request.go',
+     'size > maxSendRequestSize', 'false && size > maxSendRequestSize',
+     ['go', 'test', '-count=1', '-run', '^TestUnsendableRequestIsNotRecorded/.*/.*/oversize_file$', './internal/cli'],
+     'local send failure not refused'),
+    ('wire limit includes exactly 64 MiB', 'internal/cli/send_request.go',
+     'size > maxSendRequestSize', 'size >= maxSendRequestSize',
+     ['go', 'test', '-count=1', '-run', '^TestSendRequestWireBoundary$', './internal/cli'],
+     'exactly 64 MiB must be sendable'),
+    ('format controls alone preserve repeat bytes', 'internal/cli/commands.go',
+     ' || unicode.Is(unicode.Cf, r)', '',
+     ['go', 'test', '-count=1', '-run', '^TestTextRepeatPreservesControlsAndOptionValues$', './internal/cli']),
 ])
 for probe in probes:
     mutate(*probe)

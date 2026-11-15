@@ -144,6 +144,16 @@ func (i *invocation) send(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	postRequest := &pb.PostRequest{Channel: channel, Title: i.flags.one("title"), Tags: i.flags.values["tag"], Content: content, Nonce: nonce}
+	replyRequest := &pb.ReplyRequest{Thread: thread, Content: content, ReplyToMessageId: replyTo, Nonce: nonce}
+	if channel != nil {
+		err = validateSendRequest(postRequest)
+	} else {
+		err = validateSendRequest(replyRequest)
+	}
+	if err != nil {
+		return err
+	}
 	if err = i.connect(call); err != nil {
 		return err
 	}
@@ -165,13 +175,13 @@ func (i *invocation) send(ctx context.Context) error {
 	var position *pb.StreamPosition
 	var pollError string
 	if channel != nil {
-		r, e := i.client.API.Post(call, &pb.PostRequest{Channel: channel, Title: i.flags.one("title"), Tags: i.flags.values["tag"], Content: content, Nonce: nonce})
+		r, e := i.client.API.Post(call, postRequest)
 		err = e
 		if e == nil {
 			t, message, position, poll, pollError = r.Thread, r.Message, r.Position, r.PollMessage, r.PollError
 		}
 	} else {
-		r, e := i.client.API.Reply(call, &pb.ReplyRequest{Thread: thread, Content: content, ReplyToMessageId: replyTo, Nonce: nonce})
+		r, e := i.client.API.Reply(call, replyRequest)
 		err = e
 		if e == nil {
 			t, message, position = r.Thread, r.Message, r.Position

@@ -1519,7 +1519,7 @@ func TestIncompleteResultReportsOutcomeWriteFailure(t *testing.T) {
 
 func TestTextRepeatPreservesControlsAndOptionValues(t *testing.T) {
 	for _, kind := range []string{"post", "reply"} {
-		for _, value := range []string{"line one\nline two\tcol\n\n", "-- signed off", "quotes ' $(printf bad) `echo bad`\r\x1b\u202e"} {
+		for _, value := range []string{"line one\nline two\tcol\n\n", "-- signed off", "quotes ' $(printf bad) `echo bad`\r\x1b\u202e", "family 👨\u200d👩", "left\u200eright\u200f"} {
 			t.Run(kind+"/"+fmt.Sprintf("%q", value), func(t *testing.T) {
 				f := setup(t)
 				if kind == "reply" {
@@ -1551,7 +1551,7 @@ func TestTextRepeatPreservesControlsAndOptionValues(t *testing.T) {
 					t.Fatal(stderr)
 				}
 				repeat = strings.TrimSuffix(repeat, "\n")
-				if strings.ContainsAny(repeat, "\n\t\r\x1b\u202e") {
+				if strings.ContainsAny(repeat, "\n\t\r\x1b\u202e\u200d\u200e\u200f") {
 					t.Fatalf("repeat not printable single line: %q", repeat)
 				}
 				check := func(c *pb.Content, nonce string) {
