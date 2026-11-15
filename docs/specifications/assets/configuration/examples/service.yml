@@ -1,0 +1,64 @@
+# deck service configuration: /etc/deck/service.yml in the container image, or
+# the path given with --config. Every secret comes from OpenBao or Vault.
+
+listen:
+  ssh: ":2222"      # default :2222
+  health: ":8080"   # default :8080; GET /healthz and /livez
+
+vault:
+  address: unix:///run/wyrwood/vault.sock
+  kv_mount: kv      # default secret
+  timeout: 10s
+  # A socket that injects its own token needs no auth. Otherwise one of:
+  # auth:
+  #   token_file: /run/secrets/openbao-token
+  #   approle:
+  #     mount: approle
+  #     role_id: 4f2b9c1e-deck-service
+  #     secret_id_file: /run/secrets/openbao-secret-id
+
+# An OpenSSH ed25519 private key; `deck service host-key` prints its public half.
+host_key:
+  path: deck/service
+  field: host_key
+
+nats:
+  servers:
+    - nats://nats.example.internal:4222
+  # The whole text of a NATS .creds file (user JWT and nkey seed).
+  creds:
+    path: deck/nats
+    field: creds
+  subject_prefix: deck   # events go to deck.<server>.<channel>.<thread>
+  stream:
+    name: DECK
+    max_age: 168h        # how long component uses and poll votes are kept
+    duplicate_window: 2m
+    replicas: 1
+    manage: true         # create the stream, and correct its settings
+  threads:
+    bucket: deck-threads
+    replicas: 1
+    manage: true
+
+bots:
+  - name: helper
+    token:
+      path: deck/bots/helper
+      field: token
+
+keys:
+  - name: agents-laptop
+    public_key: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDJBAVStrSM+G5/wGNI7sSyA1HkajqVZEN/xUSQHp+j6 deck-agents-laptop
+    grants:
+      - bot: helper
+        server: "1287000000000000001"
+        channels:
+          - "1287000000000000002"
+          - "1287000000000000004"
+  - name: release-runner
+    public_key: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKsnOSebKitKvldpM4uYrF4AWHUDBfwxFk7/7tOWoVux deck-release-runner
+    grants:
+      - bot: helper
+        server: "1287000000000000001"
+        channels: ["*"]
