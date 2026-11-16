@@ -118,10 +118,11 @@ A main-branch push publishes nothing. A release-tag push:
 The publisher is pinned in `Taskfile.yml`, `release.yml`, and `submit-package.yml`.
 Move all three pins together when its approved contract or deck allowlist changes.
 Secrets needed (configure them separately; no release task creates secrets):
-`HOMEBREW_TAP_TOKEN` with contents write access to `homebrew-tools`, `NPM_TOKEN`
-with publish access to `@wyrd-company/deck`, `REPO_WYRD_FOO_PUBLISHER_APP_ID`, and
-`REPO_WYRD_FOO_PUBLISHER_PRIVATE_KEY`. GitHub supplies `GITHUB_TOKEN` for release
-assets and GHCR; npm provenance uses the workflow's OIDC permission.
+`FORMULAE_PUBLISH_KEY`, the organization's SSH deploy key with write access to
+`homebrew-tools`, `NPM_TOKEN` with publish access to `@wyrd-company/deck`,
+`REPO_WYRD_FOO_PUBLISHER_APP_ID`, and `REPO_WYRD_FOO_PUBLISHER_PRIVATE_KEY`.
+GitHub supplies `GITHUB_TOKEN` for release assets and GHCR; npm provenance uses
+the workflow's OIDC permission.
 
 Recover a failed Release job with GitHub's **Re-run failed jobs** on the original
 tag run. Recover package submission with **Submit package release**, specifying
