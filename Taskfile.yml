@@ -225,20 +225,22 @@ tasks:
   check:
     desc: Run all repository checks
     aliases: [ci]
-    deps:
-      - lint
-      - build
-      - generate:check
-      - docs:check
-      - demo:check
-      - config:check
-      - workflows:check
-      - intentional:check
-      - release:check
-      - release:scripts:check
-      - repository:scripts:check
-      - npm:check
-      - test:acceptance:relay
+    # Cold Go builds share large dependencies. Avoid concurrent compilers
+    # duplicating that work and thrashing memory on a small contributor machine.
+    cmds:
+      - task: lint
+      - task: build
+      - task: generate:check
+      - task: docs:check
+      - task: demo:check
+      - task: config:check
+      - task: workflows:check
+      - task: intentional:check
+      - task: release:check
+      - task: release:scripts:check
+      - task: repository:scripts:check
+      - task: npm:check
+      - task: test:acceptance:relay
       - task: test:ci
 
   release:check:

@@ -2,6 +2,7 @@
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import signal
 import socket
@@ -125,6 +126,42 @@ func main() {
                             pass
                         runner.wait(timeout=5)
             self.assertNotEqual(*service_pids)
+
+
+class CheckTaskTests(unittest.TestCase):
+    def test_check_serializes_its_subtasks(self):
+        with tempfile.TemporaryDirectory(prefix="deck-check-task-") as directory:
+            root = Path(directory)
+            # Keep the real check task, replacing each expensive subtask with
+            # a probe that fails if another check is already running.
+            sections = re.split(r"(?m)(?=^  [a-z][a-z0-9:]*:\n)",
+                                (ROOT / "Taskfile.yml").read_text())
+            for index, section in enumerate(sections):
+                header = re.match(r"  ([a-z][a-z0-9:]*):\n", section)
+                if header and header[1] != "check":
+                    sections[index] = (f"  {header[1]}:\n    cmds:\n"
+                                       f"      - python3 probe.py {header[1]}\n")
+            (root / "Taskfile.yml").write_text("".join(sections))
+            (root / "probe.py").write_text('''import os
+from pathlib import Path
+import sys
+import time
+try:
+    os.mkdir("running")
+except FileExistsError:
+    sys.exit("overlapping check tasks")
+try:
+    with Path("starts").open("a") as log:
+        log.write(sys.argv[1] + "\\n")
+    time.sleep(0.05)
+finally:
+    os.rmdir("running")
+''')
+            result = subprocess.run([shutil.which("task"), "check"], cwd=root,
+                                    text=True, stdout=subprocess.PIPE,
+                                    stderr=subprocess.STDOUT, timeout=30)
+            self.assertEqual(result.returncode, 0, result.stdout)
+            self.assertGreater(len((root / "starts").read_text().splitlines()), 1)
 
 
 class FormatTaskTests(unittest.TestCase):

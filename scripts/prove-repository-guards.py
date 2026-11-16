@@ -151,6 +151,25 @@ def format_check_guard():
           flush=True)
 
 
+def check_scheduling_guard():
+    with tempfile.TemporaryDirectory(prefix="deck-check-guard-") as directory:
+        root = Path(directory)
+        test = root / "scripts/tests/test_repository.py"
+        test.parent.mkdir(parents=True)
+        shutil.copyfile(ROOT / "scripts/tests/test_repository.py", test)
+        taskfile = root / "Taskfile.yml"
+        source = (ROOT / "Taskfile.yml").read_text()
+        taskfile.write_text(source)
+        command = [sys.executable, str(test), "CheckTaskTests"]
+        run(command, cwd=root)
+        target = "    cmds:\n      - task: lint\n"
+        if source.count(target) != 1:
+            raise RuntimeError("Check scheduling mutation target changed")
+        taskfile.write_text(source.replace(target, "    deps:\n      - task: lint\n"))
+        run(command, "overlapping check tasks", cwd=root)
+    print("PASS guard: check subtasks run sequentially; parallel dependencies fail the overlap regression", flush=True)
+
+
 def main():
     run(["task", "lint:markdown"])
     run(["task", "lint:yaml"])
@@ -163,6 +182,7 @@ def main():
     ignored_lint_guard()
     development_cancellation_guard()
     format_check_guard()
+    check_scheduling_guard()
     with tempfile.TemporaryDirectory(prefix="deck-commit-probe-") as directory:
         message = Path(directory) / "message"
         for header in ("fix(cli): preserve unread activity", "feat!: update the contract",
