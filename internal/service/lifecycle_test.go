@@ -154,8 +154,15 @@ func TestCloseFinishesSendsBeforeResources(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("Close exceeded its budget")
 	}
-	if err := <-replied; err != nil {
-		t.Fatal("send canceled by shutdown", err)
+	select {
+	case err := <-replied:
+		if err != nil {
+			t.Fatal("send canceled by shutdown", err)
+		}
+	case <-time.After(5 * time.Second):
+		// disgo's REST client deadlocks a request still in flight when it is
+		// closed, so a send outliving the bot clients never returns.
+		t.Fatal("the send never finished: resources closed under it")
 	}
 	if !l.streamIDs(t)[101] {
 		t.Fatal("the send's message never reached the stream")
