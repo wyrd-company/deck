@@ -232,7 +232,17 @@ type recoveryFake struct {
 	messages map[string][]map[string]any
 	fail     map[string]int
 	block    chan struct{}
+	unblock  sync.Once
 	reads    map[string]int
+}
+
+// release lets held history reads answer; safe to call more than once.
+func (r *recoveryFake) release() {
+	r.unblock.Do(func() {
+		if r.block != nil {
+			close(r.block)
+		}
+	})
 }
 
 func (r *recoveryFake) install(f *fakeDiscord) {
@@ -292,6 +302,7 @@ func TestRecoveryAtReady(t *testing.T) {
 		messages: map[string][]map[string]any{"100": {messageEvent(1001, 100, "7", 0), messageEvent(1002, 100, "7", 0), messageEvent(1003, 100, "123", 0), messageEvent(1004, 100, "7", 19)}, "300": {messageEvent(3001, 300, "7", 0)}}}
 	// The boundary recovery copies at READY is 1001, so 1001 is not read again.
 	rf.install(g.fakes["a"])
+	t.Cleanup(rf.release) // a failed test must not leave a fake handler blocked
 	g.fakeGW["a"].Expire()
 	g.fakeGW["a"].WaitReady(t)
 	testutil.Until(t, func() bool { return g.gateway["a"].Pending(100) })
@@ -302,7 +313,7 @@ func TestRecoveryAtReady(t *testing.T) {
 	if e, _ := g.reg.Lookup(100); e.LastMessageID != 1001 {
 		t.Fatal("live publish raised a pending boundary", e.LastMessageID)
 	}
-	close(rf.block)
+	rf.release()
 	got := g.eventually(t, 4)
 	if got[2].a.Id != 1002 || got[3].a.Id != 1004 {
 		t.Fatal("recovered", got)
