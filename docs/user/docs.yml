@@ -9,7 +9,7 @@ assets:
 products:
   deck:
     name: deck
-    version: 0.1.0
+    version: 0.1.1
     docs-version: 0.1.0
     tagline: Discord conversations for agent sessions.
     blurb: >-
