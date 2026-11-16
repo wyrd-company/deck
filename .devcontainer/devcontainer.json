@@ -15,7 +15,7 @@
   },
   "remoteUser": "vscode",
   "postCreateCommand": "go run github.com/go-task/task/v3/cmd/task@v3.52.0 setup",
-  "containerEnv": {
+  "remoteEnv": {
     "PATH": "/home/vscode/.local/bin:${containerEnv:PATH}"
   }
 }
