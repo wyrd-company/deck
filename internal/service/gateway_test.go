@@ -328,3 +328,24 @@ func TestOtherBotsIgnoreMessagesAndVotes(t *testing.T) {
 		t.Fatal(fmt.Sprint(got))
 	}
 }
+
+// A server that stays unavailable keeps GuildsReady from arriving; recovery
+// starts after GuildsReadyWait instead of leaving boundaries frozen.
+func TestRecoveryWithoutGuildsReady(t *testing.T) {
+	wait := discord.GuildsReadyWait
+	discord.GuildsReadyWait = 500 * time.Millisecond
+	t.Cleanup(func() { discord.GuildsReadyWait = wait })
+	g := setupGateways(t)
+	registerBot(t, g.reg, 100, 10, "a", 1000)
+	rf := &recoveryFake{last: map[string]uint64{"100": 1002}, fail: map[string]int{}, reads: map[string]int{},
+		messages: map[string][]map[string]any{"100": {messageEvent(1001, 100, "7", 0), messageEvent(1002, 100, "7", 0)}}}
+	rf.install(g.fakes["a"])
+	g.fakeGW["a"].Unavailable = []string{"2"}
+	g.fakeGW["a"].Expire()
+	g.fakeGW["a"].WaitReady(t)
+	got := g.eventually(t, 2)
+	if got[0].a.Id != 1001 || got[1].a.Id != 1002 {
+		t.Fatal("recovered", got)
+	}
+	testutil.Until(t, func() bool { e, _ := g.reg.Lookup(100); return e.LastMessageID == 1002 && !g.gateway["a"].Pending(100) })
+}

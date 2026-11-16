@@ -32,6 +32,9 @@ var (
 	MaxWaiting = 10000
 	// statePoll is how often a session's state is sampled for the log.
 	statePoll = time.Second
+	// GuildsReadyWait bounds the wait for every server of a session to be
+	// ready before recovery starts anyway.
+	GuildsReadyWait = 30 * time.Second
 )
 
 // voteCounter makes poll-vote snowflakes unique within the process.
@@ -69,6 +72,7 @@ type Gateway struct {
 	session    uint64
 	boundaries map[uint64]uint64
 	pending    map[uint64]bool
+	recovered  uint64
 	closed     bool
 }
 
@@ -221,7 +225,7 @@ func (g *Gateway) hold(channel uint64, run func()) {
 	if len(g.held) >= MaxHeld {
 		dropped := g.held[0]
 		g.held = g.held[1:]
-		g.overflowed[dropped.thread] = until
+		g.overflowed[dropped.thread] = dropped.until
 		g.log.Warn("settling buffer overflow; event dropped", "thread", dropped.thread)
 	}
 	g.held = append(g.held, held{thread: channel, until: until, run: run})
@@ -460,7 +464,17 @@ func (g *Gateway) onReady(e *events.Ready) {
 	g.log.Info("gateway session ready; recovery pending", "threads", g.pendingCount())
 	if len(e.Guilds) == 0 {
 		g.startRecovery(session)
+		return
 	}
+	// A server that stays unavailable keeps GuildsReady from arriving; recover
+	// anyway after GuildsReadyWait rather than leave boundaries frozen.
+	g.spawn(func() {
+		select {
+		case <-g.ctx.Done():
+		case <-time.After(GuildsReadyWait):
+			g.startRecovery(session)
+		}
+	})
 }
 
 func (g *Gateway) onGuildsReady(*events.GuildsReady) {
@@ -476,7 +490,15 @@ func (g *Gateway) pendingCount() int {
 	return len(g.pending)
 }
 
+// startRecovery runs a session's recovery once.
 func (g *Gateway) startRecovery(session uint64) {
+	g.mu.Lock()
+	if g.recovered == session {
+		g.mu.Unlock()
+		return
+	}
+	g.recovered = session
+	g.mu.Unlock()
 	g.spawn(func() { g.recover(session, nil) })
 }
 

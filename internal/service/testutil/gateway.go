@@ -17,15 +17,18 @@ import (
 // with an invalid session so every reconnect is a new session, and lets a
 // test dispatch events and drop the connection.
 type Gateway struct {
-	URL      string
-	UserID   string
-	Guilds   []map[string]any
-	mu       sync.Mutex
-	conn     *websocket.Conn
-	seq      int
-	sessions int
-	refuse   bool
-	ready    chan struct{}
+	URL    string
+	UserID string
+	Guilds []map[string]any
+	// Unavailable guilds are listed in READY but never created, so disgo
+	// never reports every server ready.
+	Unavailable []string
+	mu          sync.Mutex
+	conn        *websocket.Conn
+	seq         int
+	sessions    int
+	refuse      bool
+	ready       chan struct{}
 }
 
 func NewGateway(t *testing.T, userID string, guilds ...map[string]any) *Gateway {
@@ -80,6 +83,9 @@ func (g *Gateway) serve(conn *websocket.Conn) {
 			guilds := []any{}
 			for _, guild := range g.Guilds {
 				guilds = append(guilds, map[string]any{"id": guild["id"], "unavailable": true})
+			}
+			for _, id := range g.Unavailable {
+				guilds = append(guilds, map[string]any{"id": id, "unavailable": true})
 			}
 			g.dispatchLocked("READY", map[string]any{"v": 10, "user": map[string]any{"id": g.UserID, "username": "deck-bot", "bot": true}, "guilds": guilds, "session_id": "session", "resume_gateway_url": g.URL, "application": map[string]any{"id": g.UserID, "flags": 0}})
 			for _, guild := range g.Guilds {
