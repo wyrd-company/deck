@@ -34,6 +34,10 @@ tasks:
     desc: Install Lefthook hooks for this checkout
     cmds:
       - lefthook install
+  repository:scripts:check:
+    desc: Check contributor automation behavior
+    cmds:
+      - python3 -m unittest discover -s scripts/tests -p test_repository.py
   repository:guards:check:
     desc: Prove repository lint, commit-message and download checksum guards
     cmds:
@@ -96,6 +100,7 @@ tasks:
       - CGO_ENABLED=0 go build -trimpath -ldflags="{{.LDFLAGS}}" -o bin/deck ./cmd/deck
   dev:
     desc: Run the local service (add --watch to rebuild on source changes)
+    method: none
     requires:
       vars: [CONFIG]
     sources: ['*.go', 'cmd/**/*.go', 'internal/**/*.go', 'go.mod', 'go.sum']
@@ -223,6 +228,7 @@ tasks:
       - intentional:check
       - release:check
       - release:scripts:check
+      - repository:scripts:check
       - npm:check
       - test:acceptance:relay
       - task: test:ci
