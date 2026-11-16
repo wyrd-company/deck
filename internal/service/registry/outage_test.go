@@ -104,17 +104,29 @@ func TestLookupsStayResponsiveDuringStalledBucket(t *testing.T) {
 	}
 	// Let the background writer enter its stalled requests.
 	testutil.Until(t, func() bool { stalled.mu.Lock(); defer stalled.mu.Unlock(); return stalled.calls > 0 })
+	t.Cleanup(stalled.resume)
+	measured := make(chan time.Duration, 1)
+	go func() {
+		var worst time.Duration
+		for range 200 {
+			started := time.Now()
+			_, _ = r.Lookup(102)
+			_ = r.Snapshot()
+			_ = r.Pending()
+			if d := time.Since(started); d > worst {
+				worst = d
+			}
+		}
+		measured <- worst
+	}()
 	var worst time.Duration
-	for range 200 {
-		started := time.Now()
-		if _, ok := r.Lookup(102); !ok {
-			t.Fatal("registered thread missing")
-		}
-		_ = r.Snapshot()
-		_ = r.Pending()
-		if d := time.Since(started); d > worst {
-			worst = d
-		}
+	select {
+	case worst = <-measured:
+	case <-time.After(3 * time.Second):
+		t.Fatal("lookups blocked behind a stalled bucket write")
+	}
+	if _, ok := r.Lookup(102); !ok {
+		t.Fatal("registered thread missing")
 	}
 	if worst > 50*time.Millisecond {
 		t.Fatalf("lookup waited on bucket I/O: worst %s", worst)
