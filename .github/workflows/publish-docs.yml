@@ -1,0 +1,23 @@
+name: Publish to wyrd.foo
+
+# Only a successful Release run from a pushed release tag publishes docs.
+# A main-branch push and a pull request publish nothing. The Release workflow
+# itself is tag-only; follow it so wyrd.foo can read its completed GitHub Release.
+on:
+  workflow_run:
+    workflows: [Release]
+    types: [completed]
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    uses: wyrd-company/wyrd.foo/.github/workflows/publish-docs.yml@v2
+    with:
+      ref: ${{ github.event.workflow_run.head_branch }}
+    secrets: inherit

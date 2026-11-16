@@ -1,49 +1,23 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/user/assets/icon-dark.svg">
+    <img src="docs/user/assets/icon-light.svg" alt="deck cyberdeck icon" width="160">
+  </picture>
+</p>
+
 # deck
 
-A agent friendly Discord bot client
+An agent-friendly Discord client. Post questions, read replies and keep each
+Discord thread tied to the agent session that started the conversation. The CLI
+signs with an OpenBao/Vault Transit key; the service holds bot tokens and
+publishes activity to NATS JetStream.
 
-Story:
+![A synthetic conversation through the real deck CLI](docs/user/assets/demo.gif)
 
-An agent running under T3Code where the T3CODE_THREAD_ID is set in the shell environment.
-
-An agent session wants to reach out to a user on Discord. 
-It calls the CLI to create a new post in a forum, where it perhaps `@`s the user, includes text, embeds, components, polls or file attachements.
-The CLI, when the message was posted, uses the T3CODE_THREAD_ID (correct?) to "log in". Now the post created is associated with that thread id. Stored somewhere (sqlite?)
-The CLI didn't go directly to the discord APIs. It went to a central service over gRPC, which did the posting. It holds the bot secrets.
-The service is connected via Gateway. It detects the users response and publishes a NATS message.
-Trowel, running in the agents space, subscribed to the services notifications, uses the same thread affinity DB to use the T3code CLI to send a message to that thread notifying them there are messages.
-The agent, either having the message queued, or being woken, then calls the CLI to retrieve its "messages". Like checking Discord or an email.
-It can then do whatever it needs to based on what it recieves.
-
-Preferences:
-
-- Written in Golang with https://github.com/disgoorg/disgo
-- Secrets from OpenBao/Vault
-- Service (`deck service start`)
-  - Runs as a docker container. Published to GHCR
-  - Connects to the gateway, sends REST API calls.
-  - Secrets loaded from Vault/OpenBao via unix:// socket
-  - Is where the bot account actually resides.  
-  - Hosts gRPC API for CLI to communicate through - secured via public key from vault
-  - Publishes notifications via NATS
-  - Healthcheck
-- CLI client (`deck`)
-  - Published to homebrew (wyrd-company/homebrew-tools), npmjs (@wyrd-company/deck), repo.wyrd.foo (APT/RPM/AUR)
-  - Connects to service via gRPC
-  - Transit engine signing from vault/openbao via unix:// socket for gRPC
-  - Detects ambient environment variables for session affinity (env vars, by preference order, are configurable) OR can
-  - Commands run as session
-  - Mark messages as "read"
-  - Unread messages reported even for unrelated commands
-  - Configurable "personas" to use with embed author - name + icon url
-  - `deck listen` to block until response is received for specific Discord threads
-  - Only interacts with Discord threads it created or joins - no notification of others.
-  - `deck skill` embedded skill
-  - Config:
-    - Channels: default, allow list, deny list
-- config.yml NOT env var for any config
-- wyrd.foo user docs, a logo (cyberpunk deck theme) - light/dark, social preview, demo.gif (VHS)
-- intentional
+Read the [user documentation](https://wyrd.foo/docs/deck), or start with the
+[first-message walkthrough](docs/user/overview.md#send-your-first-message).
+The recording uses invented data and an offline fixture API; the commands run
+through the real CLI, including its local session store and read cursors.
 
 ## Design
 
@@ -131,6 +105,8 @@ A main-branch push publishes nothing. A release-tag push:
    `@wyrd-company/deck` npm wrapper.
 4. Submits the retained immutable manifest to repo.wyrd.foo, which publishes
    APT/RPM packages and renders/publishes `deck-bin` for AUR.
+5. After Release succeeds, publishes `docs/user/` and product metadata to
+   wyrd.foo through its v2 reusable workflow.
 
 The publisher is pinned in `Taskfile.yml`, `release.yml`, and `submit-package.yml`.
 Move all three pins together when its approved contract or deck allowlist changes.
@@ -145,3 +121,28 @@ tag run. Recover package submission with **Submit package release**, specifying
 the successful Release run ID and tag. It verifies the run, source commit and
 tag, then reuses that run's digest-checked manifest artifact (retained for 90 days).
 A missing retained manifest fails; do not rebuild a handoff from mutable assets.
+
+## Documentation and media
+
+`task demo` records the real CLI with synthetic data from
+[`docs/demo/demo.tape`](docs/demo/demo.tape), using the VHS 0.12.1 container
+(Go, Python 3 and Docker are required).
+`task demo:check` verifies the same scenario without recording. See the
+[demo source](docs/demo/README.md) for the fixture boundary. `task brand:render`
+regenerates the 1200×630 PNG from its [SVG source](docs/brand/social-preview.svg).
+
+The light and dark marks, social preview and demo are declared in
+[`docs/user/docs.yml`](docs/user/docs.yml). Intentional projects the `deck` and
+`deck-docs` versions into that file. The operator establishes both baselines
+with intentional; this task creates no tags. A docs-only intent targets
+`deck-docs:patch`. Publishing runs only after a successful Release triggered by
+a release-tag push; docs-unit tags alone do not publish. For a docs-only release,
+include it with the next code release. A push to main publishes nothing.
+The workflow needs `WYRD_TOOLS_DOCS_PUBLISHER_APP_ID` and
+`WYRD_TOOLS_DOCS_PUBLISHER_PRIVATE_KEY`, as Trowel's workflow does.
+
+With a wyrd.foo checkout and its pnpm dependencies installed, run
+`task docs:validate WYRD_FOO_DIR=/path/to/wyrd.foo -- --offline` to validate pages,
+assets, links and publishing metadata without publishing. Before the initial
+release baselines exist, this reports the missing tags/changelog as warnings.
+The publisher uses strict checks when a release actually publishes.
