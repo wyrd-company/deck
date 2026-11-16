@@ -1,0 +1,20 @@
+$schema: https://refinery.systems/ontology/assumption
+relationships:
+  shaped-by:
+    - config-home-without-environment
+description: >-
+  On macOS, Go's user.LookupId for the process's user ID, in a client built
+  with CGO_ENABLED=0, returns the home directory the directory service records
+  and reads no environment variable, so HOME and USER set to other values do
+  not change it. Proven by running the config-home-without-environment probe
+  on macOS with HOME and USER set to other values and comparing its result
+  with `dscl . -read /Users/<name> NFSHomeDirectory`.
+end-descendant-type: spike
+evidence:
+  - Go 1.27.3's os/user selects cgo_lookup_syscall.go and cgo_lookup_unix.go
+    on darwin (build tags `!osusergo && darwin` and `(cgo || darwin)`), which
+    call getpwuid_r in the system library, and excludes lookup_stubs.go, whose
+    current() falls back to HOME and USER, from darwin builds.
+  - Not measured; no macOS host was available. On Linux the same call does
+    read HOME (config-home-without-environment), which is why Linux reads the
+    passwd file instead.

@@ -1,0 +1,15 @@
+# Public fixture configuration. No endpoint is contacted by the demo adapter.
+service:
+  address: fixture.invalid:2222
+  host_key: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOpOs2okPTF0d06WZveRMcp0ceUWeO2jllkuCtP2YhX6
+vault:
+  address: unix:///nonexistent-demo-agent.sock
+key:
+  name: demo
+session:
+  variables: []
+channels:
+  default: questions
+aliases:
+  channels:
+    questions: helper/1287000000000000002

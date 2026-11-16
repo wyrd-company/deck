@@ -1,0 +1,17 @@
+# "*" stands alone: every channel, or a list of channels.
+vault:
+  address: unix:///run/openbao/agent.sock
+host_key: {path: deck/service, field: host_key}
+nats:
+  servers: [nats://nats.example.internal:4222]
+  creds: {path: deck/nats, field: creds}
+bots:
+  - name: helper
+    token: {path: deck/bots/helper, field: token}
+keys:
+  - name: agents-laptop
+    public_key: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDJBAVStrSM+G5/wGNI7sSyA1HkajqVZEN/xUSQHp+j6
+    grants:
+      - bot: helper
+        server: "1287000000000000001"
+        channels: ["*", "1287000000000000002"]

@@ -1,0 +1,22 @@
+$schema: https://refinery.systems/ontology/assumption
+relationships:
+  shaped-by:
+    - discord-forum-post-and-gateway-reply
+description: >-
+  When a person presses a button or chooses from a select menu on a message a
+  deck bot sent, Discord delivers a component interaction to that bot's
+  gateway session, and an interaction response of type 6 (deferred message
+  update) sent within three seconds acknowledges it with no visible change.
+  This holds while the application has no Interactions Endpoint URL set,
+  since Discord then sends interactions to that URL instead. Proven when a
+  person presses a deck button in the test server, Discord shows no failure,
+  and a component event appears on the stream.
+end-descendant-type: spike
+evidence:
+  - Discord documents gateway delivery of interactions for applications with
+    no Interactions Endpoint URL, and response type 6 for component
+    interactions.
+  - disgo v0.20.0 exposes ComponentInteractionCreate events with a
+    DeferUpdateMessage response.
+  - Not measured. A bot cannot press its own button, and the spike had no
+    person present.

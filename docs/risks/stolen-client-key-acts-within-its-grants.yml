@@ -1,0 +1,24 @@
+$schema: https://refinery.systems/ontology/risk
+relationships:
+  mitigated-by:
+    - transport
+slug: stolen-client-key-acts-within-its-grants
+title: Whoever can sign with a client key acts as that client within its grants
+description: >-
+  A client key never leaves OpenBao or Vault, but any process whose token may
+  sign with it, such as any process in an agent's container with that
+  container's OpenBao socket, can connect to the service as that client. It can
+  post and reply as the bot in every granted channel, read those channels'
+  threads by snowflake, and read the activity of threads the key touched.
+  Mitigation: grants are per key and per channel, so a key reaches only the
+  channels it was given; the key's OpenBao policy needs only read on the key
+  and update on its sign path; removing the key from the service
+  configuration and restarting the service revokes it; refused calls are
+  logged with the key's name. Session affinity is a convenience and grants
+  nothing.
+categories:
+  - security
+likelihood: 2
+impact: 3
+response-strategy: mitigate
+status: mitigated

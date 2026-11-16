@@ -1,0 +1,37 @@
+$schema: https://intentional.foo/schemas/config.yml
+contract: contract-2
+settings:
+  internal-dependency-bump: patch
+discovery:
+  managed-paths:
+  - detector: go-module
+    path: go.mod
+    release-unit: deck
+release-units:
+  deck:
+    path: .
+    projections:
+    - adapter: go
+      file: go.mod
+      mode: none
+    - adapter: yaml
+      file: docs/user/docs.yml
+      mode: committed
+      pointer: /products/deck/version
+    tags:
+      primary:
+        role: primary
+        template: '{version}'
+  deck-docs:
+    path: docs/user
+    depends-on:
+    - deck
+    projections:
+    - adapter: yaml
+      file: docs.yml
+      mode: committed
+      pointer: /products/deck/docs-version
+    tags:
+      primary:
+        role: primary
+        template: '{id}@{version}'

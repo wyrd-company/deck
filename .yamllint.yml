@@ -1,0 +1,12 @@
+extends: default
+ignore-from-file: .gitignore
+rules:
+  document-start: disable
+  line-length: disable
+  # GitHub Actions uses the unquoted `on` key.
+  truthy: disable
+  # Intentional owns its YAML serialization, including indentless sequences.
+  indentation: disable
+  comments-indentation: disable
+  comments:
+    min-spaces-from-content: 1

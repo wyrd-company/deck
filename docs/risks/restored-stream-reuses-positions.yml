@@ -1,0 +1,54 @@
+$schema: https://refinery.systems/ontology/risk
+relationships:
+  mitigated-by:
+    - service
+  related-to:
+    - deliver-activity-at-least-once
+slug: restored-stream-reuses-positions
+title: A stream restored from a snapshot without the documented step reuses positions
+description: >-
+  JetStream's snapshot and restore keep a stream's creation time and its
+  sequences (measured by the round 2 review with NATS 2.11.9). The service
+  tells stream generations apart by creation time, so after a restore it keeps
+  the old epoch, sequences after the snapshot are issued again, and a session
+  whose cursor passed them misses the activity that now holds them. The
+  documented restore procedure is to stop the service before deleting or
+  restoring the stream, restore the snapshot, delete `stream.generation` from
+  the registry bucket, and start the service on the restored stream; the
+  service then begins a new generation, every retained activity counts as
+  unread again (a duplicate, which the guarantees allow), and nothing is
+  missed. Trigger: an operator restores the events stream from a snapshot and
+  skips the procedure, including deleting and restoring it while the service
+  runs. The consumer error alone does not identify a restore, because the
+  restored creation time matches the record; this live restore is unsupported
+  and is the named residual. Mitigation: the procedure is in the service's
+  operating documentation. The same holds for a stream that loses its newest
+  messages but keeps its creation time, as after a host crash with unsynced
+  writes or a volume restore: while the service runs, the index sees the
+  stream's last sequence fall below its own and writes a new epoch, but a
+  service started after the loss cannot tell, and the same procedure applies.
+  A newly created stream has a different creation time: the service design
+  checks on error, end and reconnect and gates calls during the check.
+  stream-recreation measures the consumer-deleted error and reconnect triggers
+  and fresh consumers' sequence coverage; it does not measure the end trigger
+  or the RPC gate. Recreation with the service stopped is detected at startup.
+  The service creates a missing stream only at startup, so one stop-first
+  procedure covers deleting, recreating and restoring the stream: stop the
+  service; delete the stream and wait for the delete command to return;
+  recreate it or restore the snapshot; for a restore, delete
+  `stream.generation`; then start the service, which creates the stream at
+  startup when it is still missing. A stream deleted while the service runs
+  leaves it unavailable until someone acts (its healthcheck reports the stream
+  missing and it logs the remedy): gateway activity waits in the publisher,
+  messages are read back by recovery after a restart, and component uses and
+  poll votes still waiting at a stop are lost. On a standalone server the
+  delete API answers only after the stream's files are removed (nats-server
+  2.11.9 jetstream_api.go:3259-3265), so waiting for the command is reliable
+  there; clustered servers are unverified, and a restart during someone else's
+  deletion can still race it.
+categories:
+  - operational
+likelihood: 1
+impact: 3
+response-strategy: mitigate
+status: mitigated

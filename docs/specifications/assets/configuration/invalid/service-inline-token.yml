@@ -1,0 +1,11 @@
+# A bot token is a reference to OpenBao or Vault, never a value.
+vault:
+  address: unix:///run/openbao/agent.sock
+host_key: {path: deck/service, field: host_key}
+nats:
+  servers: [nats://nats.example.internal:4222]
+  creds: {path: deck/nats, field: creds}
+bots:
+  - name: helper
+    token: MTI4NzAwMDAwMDAwMDAwMDAwOQ.example.not-a-token
+keys: []

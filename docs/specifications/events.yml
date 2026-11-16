@@ -1,0 +1,140 @@
+$schema: https://refinery.systems/ontology/specification
+relationships:
+  references:
+    - grpc-api
+    - service
+    - configuration
+  shaped-by:
+    - define-events-as-the-api-activity
+    - keep-message-history-in-discord
+format: json-schema
+description: >-
+  The service publishes JetStream messages, events, for the activity in
+  touched threads, under the publication guarantee of
+  deliver-activity-at-least-once: every message in a touched thread that the
+  thread's bot can read reaches the stream at least once, live or by recovery,
+  and may reach it twice; component uses and poll votes reach it only when the
+  gateway delivers them live; a thread that is not touched produces nothing.
+  Only the thread's bot publishes its messages and poll votes: when several of
+  deck's bots can see a touched thread, the others ignore them; a component
+  use is published by the one bot Discord delivers it to. A message deck sent
+  is published only by the send that sent it, with `sent_by`, `sender_key` and
+  `nonce`; the gateway's and recovery's copies of the thread's bot's type 0
+  and 19 messages are dropped, and the bot's other messages, such as type 46
+  poll results, are published like any other. Activity on the starter message
+  of a thread started in a text or announcement channel (a poll vote or
+  component use on it, and its poll result) belongs to that thread.
+
+
+  The subject is `<prefix>.<server id>.<channel id>.<thread id>`, with each
+  snowflake in decimal and the channel being the thread's parent. The prefix
+  is `nats.subject_prefix` in the service configuration, default `deck`: one
+  or more dot-separated tokens of letters, digits, `-` and `_`. A subscriber
+  narrows by server, channel or thread with NATS wildcards, such as
+  `deck.1287000000000000001.>` for one server, and NATS authorization decides
+  who may subscribe to what.
+
+
+  The payload is a `deck.v1.Activity` from the gRPC API, encoded by protojson
+  with proto field names: UTF-8 JSON defined by
+  `assets/events/activity.schema.json`, with one example of each kind under
+  `assets/events/examples/`. Exactly one of `message`, `component` and
+  `poll_vote` is present. protojson omits every field that holds its zero
+  value (an absent `type` is 0, an absent `bot` flag is false), writes uint64
+  values such as snowflakes and sizes as decimal strings, writes timestamps as
+  RFC 3339 in UTC, and varies insignificant whitespace between runs, so a
+  consumer parses the JSON and never compares bytes. A message deck sent
+  carries `sent_by`, the name of the client key that sent it, `sender_key`,
+  that key's SHA256 fingerprint, and `nonce`, the sending client's identifier
+  for that send; the sender key and nonce together identify the send. The
+  payload never carries `sequence`; the stream's message metadata holds it.
+  Attachment URLs are the ones Discord gave when the message arrived, and
+  Discord's CDN expires them; the API returns current ones.
+
+
+  Every event carries these headers. `Nats-Msg-Id` is `<kind>:<activity id>`:
+  a message's or interaction's Discord snowflake, or a poll vote's snowflake
+  that the service made when the vote arrived, so each vote, a repeated one
+  included, is its own event, and JetStream drops a repeat publish of one
+  activity within the stream's duplicate window. Each thread has one
+  publisher, its bot, so no activity is published under two identifiers.
+  `Deck-Kind` is `message`, `component` or `poll_vote`. `Deck-Activity-Id` is
+  the activity's snowflake. `Deck-Message-Type` is the Discord message type,
+  on messages only. `Deck-Sent-By` is the client key's name, `Deck-Sender-Key`
+  its fingerprint, `Deck-Nonce` the client's nonce and `Deck-Send-Start` the
+  stream position the send started at, as `<epoch>:<sequence>`, on messages
+  deck sent only. `Deck-Poll-Error`, on a forum starter whose separate poll
+  failed, preserves the safe `poll_error` returned for that send so a repeat
+  after restart returns the same partial outcome. `Deck-Schema` is
+  `deck.v1.Activity`. The headers carry everything the service's activity
+  index needs, so the index replays the stream headers only.
+
+
+  The stream is `nats.stream.name` (default `DECK`) with the single subject
+  `<prefix>.>`, file storage, limits retention, discard old, a maximum age of
+  `nats.stream.max_age` (default 168h) and a duplicate window of
+  `nats.stream.duplicate_window` (default 2m). With `nats.stream.manage` true,
+  the default, the service creates the stream at startup when it is missing
+  and updates these settings when they differ; with it false, the service
+  requires the stream to exist and to cover the subject. Events leave the
+  stream when they pass the maximum age, and from then on the activity they
+  held is gone: Discord still holds messages, and nothing holds component uses
+  or poll votes.
+
+
+  Ordering is the stream's: the service publishes a thread's activity in the
+  order it receives it, and consumers that need snowflake order sort by `id`.
+  Delivery to subscribers is JetStream's: at least once for a durable consumer
+  that acknowledges.
+validation-criteria: >-
+  `check-jsonschema --check-metaschema` accepts the schema, and every file in
+  `assets/events/examples/` validates against it. A contract test marshals an
+  Activity of each kind as the service publishes it and validates the bytes
+  against the schema. An events test against an embedded JetStream server
+  shows the subject, every header, de-duplication of a repeated activity, and
+  that activity in a thread nobody touched publishes nothing. Against a fake
+  Discord it also shows, in fault-free scenarios (single-publisher rules, not
+  stronger delivery): two bots that see one touched thread publish each
+  message once; a vote added, removed and added again within the duplicate
+  window as three events; a deck reply and a forum post's starter each
+  published once, with `sent_by`, `sender_key` and `nonce`, whether its
+  gateway copy, a recovery read or the send's answer reaches the service
+  first; a forum post's poll published as the thread's second message; a bot's
+  type 46 poll result published; a person's reply held while the post's call
+  was in flight published once the thread registers; a poll vote and a
+  component use on a text channel post's starter message published on the
+  thread's subject; and recovery at READY publishing the messages sent while
+  the service was down, in an active thread and in an archived one, public or
+  private, with live messages during recovery left behind none, and a thread
+  whose read fails read again at the next READY. The embedded-NATS recreation
+  trace indexes old sequences 1 through 5, deletes and recreates the stream
+  while the ordered consumer runs, and publishes new sequences 1 through 7.
+  The consumer error triggers the service's generation check even though its
+  consume context stays open; the index changes epoch and receives all new
+  sequences 1 through 7. Repeat with the stream deleted while the service
+  runs, management enabled or disabled: the service creates nothing, the index
+  stays gated and the healthcheck reports the stream missing until an outside
+  client creates it, and then replay finishes; a restart with the stream
+  missing creates it at startup. A consumer-only deletion keeps the epoch and
+  resumes after the last indexed sequence. With a TCP relay cutting the
+  service's NATS connection, also check: recreating and publishing new 1
+  through 7 while disconnected; recreating while disconnected and publishing
+  new 1 through 7 through the service connection after reconnect; and deleting
+  while disconnected, with manage true or false, which leaves the index
+  unavailable until an outside client creates the stream. The reconnect
+  callback itself must mark each check due; a filled status channel must not
+  lose that trigger. In every case read the actual stream creation time and
+  index every retained new sequence 1 through 7. A record whose created
+  matches the stream but whose epoch differs from the index must discard old
+  entries, adopt that epoch and replay 1 through 7, both after another
+  instance updated the record and after a lost write acknowledgement.
+  Recreating between the first creation-time read and fresh-consumer creation
+  repeats the check; an unchanged generation already caught up opens its gate
+  without waiting for a new message. Concurrent counts, ListUnread and an
+  already-open Listen either complete against the old generation, wait for
+  replay, or reach their deadline with UNAVAILABLE; their cursors never skip
+  retained activity in the new generation, and a body fetched by sequence is
+  never returned under another generation's epoch. A live
+  delete-and-snapshot-restore is outside this trace and follows the
+  stop/restore/delete-generation/start procedure in service and the named
+  residual restored-stream-reuses-positions.

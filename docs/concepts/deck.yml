@@ -1,0 +1,136 @@
+$schema: https://refinery.systems/ontology/concept
+relationships:
+  assumes:
+    - one-service-instance-per-configuration
+    - person-replies-arrive-with-content
+    - component-interactions-reach-the-gateway
+    - each-bot-fits-one-gateway-session
+  exposes:
+    - stolen-client-key-acts-within-its-grants
+    - gateway-gap-loses-interactions
+    - send-outcome-unknown
+    - recovery-replays-published-messages
+    - activity-during-a-first-send-does-not-wake
+    - restored-stream-reuses-positions
+  references:
+    - deliver-activity-at-least-once
+    - discord-conversations
+    - command-line-interface
+    - configuration
+    - grpc-api
+    - events
+description: >-
+  deck lets a program that cannot hold a Discord bot's secrets, such as an
+  agent in a harness session, hold conversations on Discord. A service holds
+  the bot tokens and the gateway connections, posts and replies on behalf of
+  its clients, and publishes every new message and interaction in the threads
+  deck touched to NATS JetStream. A command-line client reaches the service over
+  gRPC on SSH, signs with an OpenBao or Vault Transit key, and records on its
+  own machine which session touched which thread, so that a relay can turn an
+  event into a wake-up for that session and the session can read what is
+  unread.
+properties:
+  service:
+    >-
+      One process, `deck service start`, delivered as a container image. It
+      holds every configured bot's token, keeps one gateway session per bot,
+      serves the gRPC API on an SSH listener, publishes events to JetStream, and
+      answers a healthcheck. The service technical design defines it.
+  client:
+    >-
+      The `deck` command. It holds no bot token and no private key. It signs its
+      SSH handshake through the Transit API, calls the service, and keeps the
+      local store. The client technical design defines it.
+  bot:
+    >-
+      A Discord application's bot user, configured on the service by a name and
+      the OpenBao or Vault location of its token. Clients refer to a bot by
+      that name.
+  client-key:
+    >-
+      An ed25519 key in an OpenBao or Vault Transit engine that is one client's
+      identity. The service knows its public half by a configured name and
+      holds its grants.
+  grant:
+    >-
+      What one client key may reach: a bot, a server, and the channels in that
+      server, listed or all. A client sees only what its grants cover, and
+      deck refuses everything else.
+  thread-registry:
+    >-
+      The service's record of each touched thread: its one bot, its server and
+      channel, the names of the client keys that touched it, and the newest
+      message published for it. It lives in a JetStream key-value bucket.
+  event-stream:
+    >-
+      The JetStream stream that holds every published activity for a configured
+      maximum age, on the subject `<prefix>.<server id>.<channel id>.<thread id>`.
+  local-store:
+    >-
+      A SQLite database on the client's machine. It records, for each session,
+      the threads the session touched, the stream position up to which it has
+      read each one, and every send it made, by a nonce recorded before the
+      send. It is the only place session affinity exists.
+  session:
+    >-
+      The program the client runs for, identified by the ambient environment
+      variables named in the client configuration, in their configured order.
+  persona:
+    >-
+      A name and an icon URL from the client configuration that a post or reply
+      shows as the author of its leading embed.
+features:
+  post:
+    >-
+      Creates a forum post in a forum or media channel, or a message and a
+      thread on it in a text or announcement channel, with text, mentions,
+      embeds, components, a poll, file attachments and an optional persona, and
+      records the thread against the session.
+  reply:
+    >-
+      Sends a message with the same content types into any thread in a granted
+      channel, and records the thread against the session.
+  notify:
+    >-
+      Publishes each new message, component use and poll vote in a touched
+      thread to JetStream, and acknowledges each component use to Discord
+      within its deadline.
+  resolve:
+    >-
+      Maps a thread, or an event, to the identifiers of the sessions on this
+      machine that touched it.
+  inbox:
+    >-
+      Counts and lists the unread activity across a session's threads, marks it
+      read unless asked to keep it unread, and reports the unread count after
+      every session command.
+  listen:
+    >-
+      Blocks until unread activity exists in one of the given threads and
+      returns it.
+  history:
+    >-
+      Reads a thread's messages from Discord with an after or before message
+      cursor, without changing what is read.
+  skill:
+    >-
+      Prints an agent skill, embedded in the client, that teaches an agent to
+      use deck.
+  healthcheck:
+    >-
+      Reports the service healthy only while every bot's gateway session and
+      the NATS connection are connected.
+exclusions:
+  - deck imposes no conversation model. A forum post and a reply are each one
+    operation, and nothing groups them beyond the thread Discord gives them.
+  - deck keeps no message store. Discord holds message history and the event
+    stream holds recent activity.
+  - A thread becomes known to deck only by deck posting or replying in it.
+    Mentions of a bot and threads others create in a granted channel produce
+    nothing.
+  - deck reports that there is activity. Which activity matters is the
+    reading program's decision.
+  - Message edits, deletions and reactions, direct messages, slash commands,
+    modals and voice are not part of deck.
+  - Waking a session is the relay's work. deck supplies the session
+    identifiers and nothing about the relay or the harness.

@@ -1,0 +1,32 @@
+$schema: https://refinery.systems/ontology/decision-record
+relationships:
+  contextualizes:
+    - events
+    - grpc-api
+description: >-
+  Activity has two audiences: the CLI through the gRPC API, and any NATS
+  subscriber, such as a relay with a JSONata transform, through events. Two
+  definitions of one activity drift.
+considered-options:
+  "1": >-
+    The event payload is a `deck.v1.Activity` in protojson with proto field
+    names, documented for subscribers by a JSON Schema that a contract test
+    holds to the protojson output.
+  "2": >-
+    A hand-written JSON event type in Go, separate from the API's messages.
+  "3": >-
+    The event payload is the binary protobuf encoding of the Activity.
+decision-outcome:
+  chosen-option: 1
+  justification: >-
+    One message defines activity for the API, the events and the activity
+    index, and protojson with proto names gives subscribers snake_case JSON
+    with embeds and components as plain objects. The contract test makes the
+    JSON Schema and the proto fail together. Option 2 is a second model to
+    keep in step. Option 3 hides the payload from relays that transform JSON.
+expected-outcomes:
+  positive:
+    - A field added to Activity reaches the API and the events in one change.
+  negative:
+    - Subscribers see protojson conventions, with snowflakes as strings, zero
+      values omitted, and whitespace that varies between runs.

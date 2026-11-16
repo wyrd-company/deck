@@ -1,0 +1,4 @@
+$schema: https://refinery.systems/ontology/term
+title: Grant
+description: >-
+  Permission assigned to a client key on the service: a bot, a server and a list of channels or every channel in that server. The client sees and operates only within these grants.

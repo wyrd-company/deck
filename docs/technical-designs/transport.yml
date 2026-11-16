@@ -1,0 +1,129 @@
+$schema: https://refinery.systems/ontology/technical-design
+relationships:
+  implements:
+    - grpc-api
+  shaped-by:
+    - transit-key-signs-ssh-for-grpc
+    - carry-grpc-in-an-ssh-subsystem-channel
+    - hold-the-service-host-key-in-openbao-kv
+  mitigates:
+    - stolen-client-key-acts-within-its-grants
+  related-to:
+    - service
+    - client
+    - configuration
+objective: >-
+  Carry the gRPC API between the client and the service over SSH served with
+  Wish, with each client's SSH identity an ed25519 key in OpenBao or Vault
+  Transit that never leaves it, and resolve every call to the configured
+  key that signed the connection. The service API applies that key's grants.
+background:
+  current-design: >-
+    The client and the service have no connection between them. The
+    transit-key-signs-ssh-for-grpc spike showed a Transit key signing an SSH
+    handshake that Wish accepts, gRPC over one SSH channel, and the key's
+    fingerprint reaching the gRPC handler.
+  problems:
+    - The client must never hold a private key, and the service must know
+      which configured key every call comes from.
+    - gRPC speaks HTTP/2 over a byte stream, and SSH offers channels.
+    - deck listen holds a call open for as long as it waits.
+design-challenges:
+  identity-into-grpc: >-
+    SSH authenticates the connection and gRPC serves the calls, and the
+    identity must pass from one to the other without a second credential. The
+    subsystem handler derives the key's name from the successfully signed
+    session public key and wraps the channel in a connection carrying it; the gRPC
+    transport credentials' server handshake reads it from that connection and
+    returns it as AuthInfo. A connection that did not come from the subsystem
+    fails the handshake, so no call can run without a key.
+  long-calls: >-
+    Wish closes idle connections, and a listen call may wait for hours. The
+    client sends gRPC keepalive pings every 30 seconds while a call is open,
+    which is traffic on the SSH channel, and the service permits pings every 15
+    seconds or slower, also with no call open.
+proposed-design:
+  high-level-overview: >-
+    The service listens on `listen.ssh` with a Wish server
+    (`charm.land/wish/v2`) that presents one ed25519 host key, offers public-key
+    authentication only, accepts the username `deck` only, and serves one
+    subsystem, `deck`. Shell, exec, port forwarding and every other request are
+    refused. Each `deck` subsystem channel is one HTTP/2 connection to a
+    `grpc.Server` that serves `deck.v1.DeckService`. The client opens one SSH
+    connection per command, one session channel on it, requests the subsystem,
+    and gives the channel to a gRPC client connection through a context
+    dialer; every call the command makes, concurrent ones included, shares that
+    channel.
+  client-signer: >-
+    The client's key is the Transit key `key.name` on mount `key.mount`, of
+    type ed25519. The signer reads the key (`GET <mount>/keys/<name>`) and takes
+    the latest version's public key as its SSH public key. Its Sign posts the
+    data to `<mount>/sign/<name>` as base64 `input`, takes the third
+    colon-separated part of the `vault:v<n>:<base64>` signature, and returns it
+    as an `ssh-ed25519` signature blob. SSH offers the key before signing, so
+    an unknown key is refused without a Transit call, and an accepted
+    connection costs one signature. The client's OpenBao or Vault access comes
+    from `vault`, and its token needs read on the key and update on its sign
+    path, nothing else.
+  host-key: >-
+    The service's host key is an OpenSSH ed25519 private key in a KV field
+    that `host_key` names, read once at start. The client pins it: it compares
+    the presented host key with `service.host_key` and refuses the connection
+    on a mismatch, and it reads no known_hosts file. `deck service host-key`
+    prints the public half for clients' configuration.
+  authentication: >-
+    The service builds a map from each configured public key's SHA256
+    fingerprint to its key name at start. The public-key handler accepts a key
+    whose fingerprint is in the map and whose username is `deck`, and refuses
+    everything else with the same failure. The handler also runs for keys a
+    client only queries without signing. The subsystem derives its key name
+    exclusively from `session.PublicKey()`, which charm.land/ssh takes from
+    the successful authentication's Permissions, and never from callback
+    context. A transport test queries A, queries B with an invalid signature
+    format, then authenticates as A and verifies A's key name. A proving
+    script repeats it against an isolated x/crypto copy with an eight-entry
+    callback cache to reproduce CVE-2024-45337 without trusting the cache's
+    present single-entry behavior. Missing or unconfigured signed keys are
+    refused before the channel reaches gRPC.
+  subsystem-to-grpc: >-
+    The subsystem handler wraps the ssh.Session in a channel connection (a
+    net.Conn whose Read, Write and Close are the channel's, whose addresses are
+    the session's, whose deadlines are no-ops, and which carries the key name),
+    hands it to a listener that the gRPC server serves, and returns only when
+    the connection closes or the SSH connection ends. The transport
+    credentials' ServerHandshake accepts only a channel connection and returns
+    AuthInfo holding the key name, with security level PrivacyAndIntegrity;
+    ClientHandshake passes the channel through. gRPC's own TLS is not used:
+    SSH encrypts and authenticates the channel.
+  grants: >-
+    Unary and stream interceptors admit only configured key names from the
+    call's authenticated identity; a missing or unconfigured name ends with
+    UNAUTHENTICATED. The service API is the sole grant authority and applies
+    that key's immutable configured grants in the order grpc-api.yml specifies:
+    check the bot before any Discord request, resolve trusted server and
+    channel metadata, then check the target. Lists apply the same grants.
+    Transport carries identity and does not duplicate these grant checks.
+  limits: >-
+    The gRPC server and client each accept and send messages up to 64 MiB;
+    grpc-go's client default of 4 MiB would refuse a long ListUnread.
+    Keepalive: the client pings every 30 seconds with a 10-second timeout while
+    a call is open; the service's enforcement policy allows pings every 15
+    seconds with no stream open. The Wish idle timeout is 10 minutes and the
+    maximum connection time is unset. An absolute 30-second SSH handshake
+    timeout bounds unauthenticated connections independently of idle traffic.
+    Each authenticated SSH connection permits at most four session channels;
+    each gRPC transport permits 32 concurrent streams. Concurrent SSH
+    connections are not capped, either before authentication or per key;
+    the channel and stream limits apply separately to each connection.
+    Shutdown closes the owned listener even before Wish registers it, and
+    waits for canceled handlers to return before service resources close.
+    The client bounds connecting, the handshake and every call but Listen
+    by `service.timeout`.
+  modules: >-
+    `internal/transport` holds both halves: the Transit signer, the client
+    dialer that returns a gRPC client connection, the Wish server with its
+    public-key handler and subsystem, the channel connection and listener,
+    the transport credentials, and the key-name accessor for handlers. It
+    knows nothing of Discord. `internal/vault` holds the OpenBao or Vault
+    client both halves use: address forms, authentication, KV reads and
+    Transit reads and signs.

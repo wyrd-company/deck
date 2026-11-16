@@ -1,0 +1,21 @@
+$schema: https://refinery.systems/ontology/risk
+relationships:
+  mitigated-by:
+    - service
+slug: service-compromise-exposes-bot-tokens
+title: A compromised service exposes every bot token it holds
+description: >-
+  The service holds every configured bot's token, the NATS credentials and its
+  host key in memory, so code execution in the service's container exposes
+  them all, and a bot token lets its holder act as that bot in every server it
+  is in, beyond deck's grants. Mitigation: the tokens are read from OpenBao or
+  Vault at start and kept only inside each bot's client; they never cross the
+  API, an event or a log; the container runs one process with no shell
+  exposed over SSH; and a token is rotated in Discord's developer portal and
+  in its KV secret, followed by a restart.
+categories:
+  - security
+likelihood: 1
+impact: 4
+response-strategy: mitigate
+status: mitigated

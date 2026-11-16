@@ -1,0 +1,72 @@
+$schema: https://refinery.systems/ontology/spike
+title: The client's home directory without the environment
+
+relationships:
+  references:
+    - configuration
+    - client
+  shapes:
+    - macos-user-lookup-reads-no-environment
+
+objective:
+  - Does Go's user.LookupId, in a client built with CGO_ENABLED=0 on Linux,
+    return a home directory from HOME when the user ID has no passwd entry?
+  - Does reading the passwd file for the process's user ID give the home
+    directory with HOME, USER and XDG_CONFIG_HOME set to other values, and
+    fail when the user ID has no entry?
+
+background:
+  current-design: >-
+    The issue allows the environment only for session identifiers. The client
+    finds its default configuration file under the user's home directory, and
+    a review probe showed that user.LookupId on CGO-disabled Linux falls back
+    to HOME and USER when the passwd file has no entry for the user ID.
+  problems:
+    - Containers often run with a user ID the passwd file does not list, which
+      is exactly when the fallback reads the environment.
+
+ideas:
+  - >-
+    Read the passwd file for the process's user ID directly and take its home
+    field, with no fallback, and compare it with user.LookupId in the same
+    process.
+
+environment:
+  location: >-
+    Branch `task/2-design` in wyrd-company/deck,
+    `docs/spikes/assets/config-home-without-environment/`, in the standalone
+    module `docs/spikes/assets`. `run.sh` builds `main.go` with
+    CGO_ENABLED=0 and runs it twice under bubblewrap, binding a passwd file it
+    writes over `/etc/passwd`, with only HOME=/tmp/fake-home, USER=fake and
+    XDG_CONFIG_HOME=/tmp/fake-xdg in the environment: once with no entry for
+    the user ID, once with an entry whose home is `/home/probe-from-passwd`.
+    The run is `result.jsonl` beside the program.
+  tools:
+    - Go 1.27.3, linux/amd64, CGO_ENABLED=0
+    - bubblewrap
+findings:
+  lookupid-follows-the-environment:
+    verdict: confirmed
+    notes: >-
+      Measured: with no passwd entry for user ID 1000, user.LookupId returns
+      the home directory `/tmp/fake-home`, the value of HOME.
+
+  passwd-file-ignores-the-environment:
+    verdict: confirmed working
+    notes: >-
+      Measured: reading the passwd file returns "no passwd entry for user ID
+      1000" with no entry, and `/home/probe-from-passwd` with one, while HOME
+      names `/tmp/fake-home` in both runs.
+
+conclusion: >-
+  On Linux the client reads the passwd file for its user ID and fails without
+  an entry; it never calls user.LookupId or user.Current. macOS keeps users in
+  its directory service, where the passwd file does not list them; there the
+  client uses user.LookupId, whose darwin implementation calls the system
+  library, which the assumption macos-user-lookup-reads-no-environment
+  records until a probe on macOS proves it.
+
+next-steps:
+  - The configuration specification names the passwd file on Linux and the
+    assumption on macOS.
+  - The client's tests repeat the no-entry case with HOME and USER set.

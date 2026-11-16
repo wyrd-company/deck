@@ -1,0 +1,11 @@
+{"nats_go":"1.55.0","nats_server":"2.11.9","pass":false,"state":"started"}
+{"case":"unrepaired-recreation","closed_at_trigger":false,"creation_changed":true,"new_sequences":[6,7],"pass":true,"trigger":"nats: consumer deleted"}
+{"case":"error-check-and-replay","closed_at_trigger":false,"creation_changed":true,"new_sequences":[1,2,3,4,5,6,7],"pass":true,"trigger":"nats: consumer deleted"}
+{"case":"missing-stream-managed-before-check","closed_at_trigger":false,"creation_changed":true,"new_sequences":[1,2,3,4,5,6,7],"pass":true,"trigger":"nats: consumer deleted"}
+{"case":"same-generation-consumer-deletion","closed_at_trigger":false,"creation_changed":false,"new_sequences":[6,7],"pass":true,"trigger":"nats: consumer deleted"}
+{"case":"reconnect-a-published-while-disconnected","checks_due":1,"creation_changed":true,"new_sequences":[1,2,3,4,5,6,7],"pass":true,"trigger":"reconnect-callback","waited_for_operator":false}
+{"case":"reconnect-b-service-publishes-after-reconnect","checks_due":1,"creation_changed":true,"new_sequences":[1,2,3,4,5,6,7],"pass":true,"trigger":"reconnect-callback","waited_for_operator":false}
+{"case":"reconnect-c-management-recreates-missing-stream","checks_due":1,"creation_changed":true,"new_sequences":[1,2,3,4,5,6,7],"pass":true,"trigger":"reconnect-callback","waited_for_operator":false}
+{"case":"reconnect-d-unmanaged-waits-for-operator","checks_due":1,"creation_changed":true,"new_sequences":[1,2,3,4,5,6,7],"pass":true,"trigger":"reconnect-callback","waited_for_operator":true}
+{"pass":true,"state":"completed"}
+{"identical_runs":5,"state":"comparison-completed","pass":true}

@@ -1,0 +1,11 @@
+# A NATS URL never carries credentials; they come from nats.creds.
+vault:
+  address: unix:///run/openbao/agent.sock
+host_key: {path: deck/service, field: host_key}
+nats:
+  servers: [nats://demo:dummy-pass@nats.example.internal:4222]
+  creds: {path: deck/nats, field: creds}
+bots:
+  - name: helper
+    token: {path: deck/bots/helper, field: token}
+keys: []

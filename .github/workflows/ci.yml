@@ -1,0 +1,76 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Repository checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source with release tags
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          # Cover both the root module (1.27.1) and docs/spikes/assets (1.27.3).
+          go-version: "1.27.3"
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "24"
+      - name: Install repository check tools
+        run: |
+          go install github.com/go-task/task/v3/cmd/task@v3.52.0
+          npm install --global @wyrd-company/intentional@0.4.0
+          python3 -m pip install --require-hashes --only-binary=:all: --no-deps -r scripts/ci-requirements.txt
+          curl --fail --silent --show-error --location \
+            https://github.com/openbao/openbao/releases/download/v2.7.2/openbao_2.7.2_linux_amd64.tar.gz \
+            --output "$RUNNER_TEMP/openbao.tar.gz"
+          echo "582b1f3c2fdc5afd443b2d57a225ef654de75adea609fdb66731fd582a9cbc96  $RUNNER_TEMP/openbao.tar.gz" | sha256sum --check
+          tar -xzf "$RUNNER_TEMP/openbao.tar.gz" -C "$(go env GOPATH)/bin" bao
+      - name: Validate repository
+        run: task check
+
+  release-snapshot:
+    name: Non-publishing release snapshot
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod
+      - name: Build all archives, DEB/RPM packages, and Homebrew formula
+        run: go run github.com/go-task/task/v3/cmd/task@v3.52.0 release:snapshot
+      - name: Preserve non-published release artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-snapshot
+          path: |
+            dist/*.tar.gz
+            dist/*.deb
+            dist/*.rpm
+            dist/checksums.txt
+            dist/homebrew/Formula/deck.rb
+          if-no-files-found: error
+  config-home-macos:
+    name: macOS configuration home (CGO disabled)
+    runs-on: macos-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod
+      - name: Prove default config path against macOS directory service
+        run: bash scripts/prove-config-home-macos.sh

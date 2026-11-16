@@ -1,0 +1,137 @@
+$schema: https://refinery.systems/ontology/spike
+title: Consumer errors and connection reconnect callbacks trigger complete replay
+relationships:
+  references:
+    - service
+    - events
+    - restored-stream-reuses-positions
+objective:
+  - Does deleting and recreating a stream report an error while an ordered
+    consumer's consume context stays open?
+  - Does replacing that consumer after the generation check deliver every
+    retained sequence of the recreated stream, including sequences below the
+    previous stream's last sequence?
+  - Does the check work when stream management creates the missing stream,
+    and when only the consumer is deleted and the generation stays the same?
+  - Does the connection's reconnect callback trigger the check when the
+    stream is recreated or deleted while the service connection is cut?
+  - With management disabled, does the check leave ingestion invalid and the
+    readiness flag false until an independent operator creates the stream?
+background:
+  current-design: >-
+    The activity index uses an ordered, headers-only consumer and identifies
+    generations by stream creation time and the registry's generation record.
+  problems:
+    - An ordered consumer resets internally after deletion and resumes after
+      its last stream sequence, even when the stream's sequences restarted.
+ideas:
+  - Treat a consumer error as invalidating the index, stop the consume context
+    outside the error callback, run stream management and the generation
+    check, and create a fresh consumer from the generation's first sequence
+    or the same generation's last indexed sequence plus one.
+  - Register a reconnect callback which invalidates ingestion, marks a check
+    due and wakes the check worker. Cut only the service connection through
+    a TCP relay while an independent admin connection changes the stream.
+environment:
+  location: >-
+    `docs/spikes/assets/stream-recreation/`, in the standalone module
+    `docs/spikes/assets`. Run `run.sh`; it builds with the race detector,
+    executes each case five times, requires byte-identical output and saves
+    one copy plus a successful comparison marker in `result.jsonl`. Each
+    case starts its own embedded NATS server on a random
+    loopback port with a temporary file store, removes the store and stops
+    the server on exit. No Discord connection or credentials are used.
+  tools:
+    - Go 1.27.3, linux/amd64
+    - Embedded nats-server v2.11.9 and nats.go v1.55.0, pinned in the spike module's go.mod
+findings:
+  consumer-error:
+    verdict: confirmed
+    notes: >-
+      Measured: after indexing old sequences 1 through 5, deletion reports
+      `nats: consumer deleted` while ConsumeContext.Closed remains open.
+      The probe asserts the exact error string and the open context. Without
+      the check, the consumer receives only new sequences 6 and 7. Every case
+      reads the stream's creation time; creation_changed is that comparison,
+      not a copy of the case's input.
+  generation-replay:
+    verdict: confirmed working
+    notes: >-
+      Measured: the error callback invalidates ingestion; a worker stops the
+      old context, compares stream creation time, and starts a fresh ordered
+      consumer with deliver all. All new sequences 1 through 7 arrive.
+  management-before-comparison:
+    verdict: confirmed working
+    notes: >-
+      Measured: the error also arrives while the stream is absent. Creating
+      the missing stream before reading its creation time gives a changed
+      generation and all new sequences 1 through 7.
+  unchanged-generation:
+    verdict: confirmed working
+    notes: >-
+      Measured: deleting only the consumer reports the same error, leaves the
+      creation time unchanged, and a fresh consumer starting at indexed
+      sequence 5 plus one receives sequences 6 and 7.
+  reconnect-published-while-disconnected:
+    verdict: confirmed working
+    notes: >-
+      Measured case (a): after indexing old 1 through 5, cut the TCP relay,
+      delete and recreate the stream, publish new 1 through 7 over the admin
+      connection, then restore the relay. The actual reconnect callback marks
+      one check due and wakes the worker. After stopping the old consumer,
+      creation time differs and the fresh consumer indexes all new 1 through
+      7. The control for silent reconnect loss is the reviewer's independent
+      probe, not this program's connected-error control.
+  reconnect-service-publishes:
+    verdict: confirmed working
+    notes: >-
+      Measured case (b): recreate while disconnected but publish new 1 through
+      7 through the service connection only after reconnect and the triggered
+      generation check. All new sequences 1 through 7 reach the fresh consumer.
+  reconnect-managed-deletion:
+    verdict: confirmed working
+    notes: >-
+      Measured case (c): delete while disconnected and leave the stream
+      absent. The actual reconnect callback triggers the worker, which
+      creates the missing stream through the service connection before
+      reading creation time. After publishing through that connection, all
+      new sequences 1 through 7 reach the fresh consumer.
+  reconnect-unmanaged-deletion:
+    verdict: confirmed working
+    notes: >-
+      Measured case (d): delete while disconnected with management disabled.
+      After the reconnect callback triggers the worker, the service Stream
+      lookup returns ErrStreamNotFound; ingestion remains invalid and the
+      probe's readiness flag remains false. Only then does the independent
+      admin create the stream. A repeated lookup reads its new creation time,
+      and after publishing, the fresh consumer receives all new 1 through 7.
+      This checks the missing-stream state and retry step, not production
+      retry timing or an RPC waiting on the gate.
+  reproducibility:
+    verdict: confirmed
+    notes: >-
+      All eight cases ran five times with the race detector and identical
+      output. Every recreated stream's creation time changed; the
+      consumer-only deletion kept it. Fresh-consumer cases re-read creation
+      time after consumer creation and assert that it remains the checked one.
+conclusion: >-
+  On the measured versions, both the reported consumer-deleted error and the
+  connection's reconnect callback supply the check trigger. The measured
+  replacement consumers receive every new retained sequence, including when
+  recreation or deletion occurs while disconnected. These runs do not
+  require the extended stop-first recreation fallback. The service design
+  separately audits the pinned library's reset causes; its statement about
+  sequence mismatch is source reasoning, not a run of this probe. This probe
+  checks a worker, ingestion invalidation, a readiness flag, stream
+  management and sequence coverage; it does not exercise the consume-end
+  trigger, production RPC gates or concurrency, epoch record writes,
+  overlapping resets, the creation-time race, or snapshot restoration.
+  These remain design requirements with build validation in events and the
+  stop-before-restore operating procedure in service. The build later found
+  a race these cases did not exercise: a stream created from one connection
+  while another connection's deletion was still removing its files shares
+  the deleted stream's directory, and every write to it fails (JetStream
+  10077), so the service creates a missing stream only at startup.
+next-steps:
+  - The service's embedded-NATS tests exercise CountUnread, ListUnread and
+    Listen across the same recreation trace and concurrent calls.

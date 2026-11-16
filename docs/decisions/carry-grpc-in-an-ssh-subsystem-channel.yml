@@ -1,0 +1,46 @@
+$schema: https://refinery.systems/ontology/decision-record
+relationships:
+  contextualizes:
+    - transport
+  shaped-by:
+    - transit-key-signs-ssh-for-grpc
+description: >-
+  The operator chose gRPC over SSH served with Wish, with a Transit-backed
+  client key. SSH carries bytes on channels of an authenticated connection,
+  and gRPC needs one HTTP/2 byte stream per connection. How the two are joined
+  decides what the service exposes and how a call learns its key.
+considered-options:
+  "1": >-
+    A `deck` subsystem: each session channel that requests it is one HTTP/2
+    connection to an in-process gRPC server, and the channel carries the key
+    name into gRPC AuthInfo.
+  "2": >-
+    SSH local port forwarding (direct-tcpip or direct-streamlocal) from the
+    client to a gRPC listener inside the service. The forwarded connection
+    reaches the gRPC server as an ordinary socket, and the key has to be
+    matched to it through a side table keyed by connection.
+  "3": >-
+    The TLS fallback the issue names: gRPC over TLS with a built-in ACME
+    client and the Transit key proving the client by a signed token per call.
+decision-outcome:
+  chosen-option: 1
+  justification: >-
+    The transit-key-signs-ssh-for-grpc spike ran option 1 end to end: unary,
+    server-streaming and concurrent calls over one channel, and the key's
+    fingerprint in every handler. The service exposes one SSH request and
+    refuses forwarding, so no socket inside the container is reachable from a
+    client. Option 2 opens forwarding on the server and keeps the identity in
+    a side table that every call must consult. Option 3 is the fallback for a
+    failed SSH design and adds certificates, an ACME account and a per-call
+    token format.
+expected-outcomes:
+  positive:
+    - One SSH connection and one Transit signature carry every call of a
+      command.
+    - The key's name reaches every handler through gRPC's own AuthInfo.
+  negative:
+    - Standard gRPC tools (grpcurl, health probes) cannot reach the API
+      without an SSH dialer.
+    - deck owns a small adapter (channel connection, listener and
+      credentials) that gRPC upgrades could disturb; the transport tests cover
+      it.

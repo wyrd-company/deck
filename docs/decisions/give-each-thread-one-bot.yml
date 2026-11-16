@@ -1,0 +1,42 @@
+$schema: https://refinery.systems/ontology/decision-record
+relationships:
+  contextualizes:
+    - service
+    - grpc-api
+    - discord-conversations
+description: >-
+  The service serves several bots, and two of them can be in one server and
+  see one thread. A thread's touches, grants, unread counts and events have to
+  agree on which bot a thread belongs to, or one key's reply through one bot
+  strands another key's unread through the other, and both bots publish the
+  same message, one copy without the sender's key.
+considered-options:
+  "1": >-
+    One bot per thread: the bot that first touches a thread through deck is
+    recorded with it, every call on it uses that bot, a call naming another
+    bot is refused, and only that bot publishes the thread's messages and poll
+    votes. A component use, which Discord delivers only to the application
+    that sent its message, is published by the bot that received it.
+  "2": >-
+    Touches per bot and thread: the registry records each (bot, key) pair, a
+    thread can be served through several bots, and one bot is chosen to
+    publish.
+decision-outcome:
+  chosen-option: 1
+  justification: >-
+    Option 1 gives every thread one route, so a grant check, a count and an
+    event all name the same bot, and one publisher means one event per
+    activity with its `sent_by` intact. Keys that share a thread do so through
+    a grant on its bot, which the operator configures. Option 2 makes every
+    registry entry a set of routes, makes each count depend on which route a
+    cursor came through, and still needs a rule for which bot publishes.
+expected-outcomes:
+  positive:
+    - Each activity has one publisher, the thread's bot for messages and poll
+      votes and the receiving bot for a component use, so overlapping bots
+      publish it once in a fault-free run.
+    - A reply, a count and an event for one thread always use the same bot.
+  negative:
+    - A key granted a channel only through a second bot cannot reply in a
+      thread another bot touched there; its operator grants it the thread's
+      bot.

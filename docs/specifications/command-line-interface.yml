@@ -1,0 +1,240 @@
+$schema: https://refinery.systems/ontology/specification
+relationships:
+  references:
+    - configuration
+    - grpc-api
+    - events
+    - client
+  shaped-by:
+    - report-unread-after-session-commands
+  terms:
+    - unread
+    - cursor
+    - persona
+format: cli
+description: >-
+  One executable, `deck`, is both the client and the service. Every command
+  accepts `--config PATH`, `--json` and `--help`; `deck --version` prints
+  the version. Commands read the configuration as the configuration
+  specification says.
+
+
+  Sessions. The client's session commands run as a session. The session's
+  identifiers are the variables in `session.variables` that are set and not
+  empty, in configured order, and the first of them is the primary
+  identifier, which keys the session in the local store. `--session
+  NAME=VALUE` on any session command replaces detection with that one
+  identifier. With no variable set and no `--session`, the command runs as
+  the default session, whose identifier list is empty. The session commands
+  are post, reply, inbox, read, history, listen, channels and skill. read
+  and listen act on the session's own threads: a THREAD argument the session
+  does not hold is a usage error that names `deck history` for reading it,
+  and so is calling either with no THREAD argument when the session holds no
+  threads.
+
+
+  Unread report. After a session command does its work, the client counts
+  the session's unread activity with the cursors as the command left them,
+  and reports it: in text mode one line on stderr, `unread: 3 in 2 threads
+  (deck read)`, or `unread: none`; in JSON mode an `unread` member of the
+  result, `{"total": 3, "threads": [{"thread_id": "1571484634081529857",
+  "count": 2}]}`. When the count cannot be had, the line is `unread: unknown
+  (<reason>)` and the member is `{"error": "<reason>"}`, and the command's
+  own result and exit status stand. Threads whose channel the client's allow
+  and deny lists exclude are left out of every count and list. A thread the
+  session holds that the service reports as not touched by the key (its
+  registry entry expired) or not granted adds nothing to the count; inbox
+  shows it with its state in place of a count, read and listen leave it out
+  and name it on stderr, and the JSON `unread.threads` carries its state.
+  The session's own messages are never counted. A thread whose cursor is
+  older than what the service's event stream holds adds `(older activity may
+  have expired; deck history <thread>)` to the line, and `"horizon_passed":
+  true` to its JSON entry, until a read of the thread moves its cursor on.
+  What a session can see twice, and what it can miss, is set by the unread
+  guarantee of deliver-activity-at-least-once.
+
+
+  References. A CHANNEL is an alias from `aliases.channels`,
+  `[<bot>/]<snowflake>`, or omitted for `channels.default`. A THREAD is
+  `[<bot>/]<snowflake>` or a Discord URL
+  `https://discord.com/channels/<server>/<thread>[/<message>]`. A USER or
+  ROLE is an alias from `aliases.users` or `aliases.roles`, or a snowflake.
+  A reference made only of digits is a snowflake, and any other is an alias.
+  The client checks every channel against `channels.allow` and
+  `channels.deny` before it calls the service; for a reply into a thread the
+  local store does not hold, it first asks the service for the thread's
+  parent channel.
+
+
+  Content flags, on post and reply. `--text TEXT` or `--text-file PATH` (`-`
+  reads stdin) is the message text, in Discord markdown. `--mention USER`
+  and `--mention-role ROLE` repeat, and each mention notifies. `--embed
+  PATH` repeats; each file holds one Discord embed object or an array of
+  them. `--components PATH` holds an array of Discord top-level component
+  objects. `--poll QUESTION` with one `--answer TEXT` per answer adds a
+  poll; `--poll-duration` is a Go duration rounded up to whole hours,
+  default 24h, and `--poll-multiselect` allows several answers. `--file
+  PATH` repeats and attaches the file under its base name. `--persona NAME`
+  uses a configured persona, `--no-persona` uses none, and otherwise
+  `default_persona` applies. `--nonce NONCE` repeats an earlier send with
+  that send's nonce: while the first send is in flight, or the service's
+  event stream holds a message it published (the stream's maximum age, 168
+  hours by default), the service returns the first result and sends nothing;
+  otherwise it sends, and can duplicate a post or reply whose outcome was
+  lost. At most one flag reads stdin, and a message needs text, an embed,
+  components, a poll or a file.
+
+
+  `deck post [CHANNEL] --title TITLE [--tag TAG]... [content flags]` creates
+  a thread named TITLE: a forum post in a forum or media channel, with tags
+  by name or snowflake and a poll sent as the thread's second message, or in
+  a text or announcement channel a message and a thread started from it. It
+  records the thread against the session with the cursor at the position the
+  service returns, which is from before the post, so a reply made while the
+  post was being created is unread. Every post and reply records its key's
+  fingerprint and a nonce for the send in the local store before it calls
+  the service. The client never repeats a send on its own: when the outcome
+  of a send is unknown, the command reports `outcome unknown`, prints the
+  command that repeats it with `--nonce <nonce>`, and exits 4. A post whose
+  poll could not be sent succeeds and prints the poll's error on stderr.
+  Text: `posted 1571484634081529857 in helper/1287000000000000002` and the
+  thread URL, on stdout. JSON: `{"thread": Thread, "message": Activity,
+  "poll_message": Activity, "poll_error": "...", "unread": ...}`, with
+  Thread and Activity in the protojson form of the gRPC API and the poll
+  members present only when they apply.
+
+
+  `deck reply THREAD [--reply-to MESSAGE] [content flags]` sends a message
+  into the thread. On the session's first message in the thread it records
+  the thread with the cursor at the position the service returns, which is
+  from before the reply, so activity during the reply is unread; it records
+  every send, under its key's fingerprint and nonce, as the session's own
+  before it calls the service. Text: `replied 1571485045016997890 in
+  1571484634081529857` and the message URL. JSON: as post.
+
+
+  `deck inbox [--all]` lists the session's threads that have unread
+  activity, or with `--all` every thread the session holds, the one the
+  session last sent a message in first. It changes no cursor. Text: one line
+  per thread, `<count> <thread> <bot>/<channel> <title>`. JSON: `{"threads":
+  [{"thread_id": "1571484634081529857", "bot": "helper", "channel_id":
+  "1287000000000000002", "title": "Changelog wording", "count": 2, "state":
+  "THREAD_STATE_TOUCHED"}], "unread": ...}`.
+
+
+  `deck read [THREAD...] [--keep-unread] [--limit N]` prints the unread
+  activity of the given threads, or of all the session's threads, up to N
+  (default 500) in the order the service published it, grouped by thread in
+  the order of each thread's first unread activity, and then, unless
+  `--keep-unread`, moves each thread's cursor to the position the service
+  reports the list complete through, even when nothing was printed, so a
+  quiet thread's horizon note clears. Text: each thread opens with a line
+  `## <title> (<thread>)`, and each activity is a line `<time> <author>
+  <kind> <id>` followed by its content indented by two spaces: a message's
+  text, one `embed:` line per embed with its title or author, one
+  `attachment: <name> <size> <url>` line per file, and a poll's question and
+  answers; a component use as `pressed <custom_id>` or `chose <values> in
+  <custom_id>` on its message; a poll vote as `voted <answer>` or `removed
+  vote <answer>` on its message. JSON: `{"activity": [Activity], "more":
+  false, "unread": ...}`.
+
+
+  `deck history THREAD [--after MESSAGE | --before MESSAGE] [--limit N]`
+  prints messages from Discord, oldest first, N at most 100 (default 50),
+  the newest when neither cursor is given. It works for any thread in a
+  granted channel, touched or not, and changes no cursor and nothing on the
+  service. Output: as read, with `"more"` telling whether Discord holds more
+  in the cursor's direction.
+
+
+  `deck listen [THREAD...] [--timeout DURATION] [--keep-unread]` waits on
+  the given threads, or all the session's threads, and returns as soon as
+  any of them has unread activity, printing all of it as read does and
+  marking it read unless `--keep-unread`. Activity that is already unread
+  when it starts returns at once. Without `--timeout` it waits until
+  interrupted. When the service reports none of the threads as touched by
+  the key, nothing can arrive, and listen exits 3 with each thread's state.
+
+
+  `deck resolve THREAD` or `deck resolve --event PATH` (`-` reads stdin)
+  prints the sessions in the local store that touched the thread, or the
+  event's thread, and that have identifiers, the one that last sent a
+  message there first. Given an event whose message the session sent itself,
+  it leaves that session out, so a relay does not wake a session for its own
+  message. It is not a session command, reads only the local store and
+  contacts nothing. Text: one line per session, its identifiers as
+  `NAME=VALUE` separated by spaces, in configured order. JSON: `{"sessions":
+  [{"primary": "T3CODE_THREAD_ID", "identifiers": [{"name":
+  "T3CODE_THREAD_ID", "value": "..."}], "touched_at":
+  "2026-11-15T11:18:53Z"}]}`. No matching session is success with no lines,
+  or an empty list.
+
+
+  `deck channels` lists the channels the key's grants cover and the allow
+  and deny lists keep: one line per channel, `<bot>/<channel> <type> <server
+  name> / <name> [alias]`. JSON: `{"channels": [Channel], "unread": ...}`.
+
+
+  `deck skill` prints the agent skill embedded in the executable, a Markdown
+  file with name and description front matter, to stdout, and JSON
+  `{"skill": "<markdown>", "unread": ...}`. It needs no configuration;
+  without one, its unread line is `unread: unknown (no configuration)`.
+
+
+  `deck config validate` loads the client configuration without contacting
+  anything and prints `ok <path>`, or one line per failure, `<file>: <field
+  path>: <reason>`. `deck config key` reads the Transit key's public half
+  and prints it as an authorized-keys line with the comment `deck:<key
+  name>`, then its SHA256 fingerprint, for the service's operator to add to
+  the service configuration.
+
+
+  `deck service start` runs the service until SIGTERM or SIGINT, then closes
+  the SSH listener, ends open calls, closes the gateway sessions and drains
+  NATS within 10 seconds. It logs JSON lines to stderr. `deck service
+  validate` checks the service configuration as config validate does. `deck
+  service health` requests `/healthz` from `listen.health` on the loopback
+  address, prints the response body, and exits 0 when it is healthy, 1 when the
+  service answers unhealthy, and 4 when it cannot be reached within 2
+  seconds; the
+  container image's HEALTHCHECK runs it. `deck service host-key` reads the
+  host key from OpenBao or Vault and prints its public half and fingerprint,
+  for clients' `service.host_key`.
+
+
+  Output. Text output goes to stdout and diagnostics to stderr, prefixed
+  `deck: `. In JSON mode stdout holds exactly one JSON object: the result,
+  or `{"error": {"category": "<category>", "message": "<text>"}}`. No output
+  holds a bot token, an OpenBao token, a signature or a private key.
+
+
+  Exit statuses are categorical, and every gRPC code maps to one. 0:
+  success. 1 (`failed`): INTERNAL, UNAUTHENTICATED, UNKNOWN and every other
+  code not below, a service host key that differs from `service.host_key`,
+  and a local store failure. 2 (`invalid`): a usage error, an invalid
+  configuration, an invalid event, and INVALID_ARGUMENT. 3 (`refused`): a
+  target the allow or deny lists exclude, PERMISSION_DENIED (which also
+  covers a target the bot cannot see), NOT_FOUND (a `--reply-to` message
+  that does not exist), FAILED_PRECONDITION, and a listen with no thread
+  still touched. 4 (`unavailable`): the service, OpenBao or Vault cannot be
+  reached, UNAVAILABLE, RESOURCE_EXHAUSTED, DEADLINE_EXCEEDED from
+  `service.timeout`, and a send whose outcome is unknown. 5 (`timeout`):
+  listen's timeout passed with no activity. 130: interrupted. The JSON error
+  category is the word in backticks.
+validation-criteria: >-
+  Command tests run every command against a fake service over a real SSH
+  connection and check exact text and JSON output, each exit status for the
+  case that causes it, the unread report after every session command and its
+  absence after the others, that read and listen move cursors only without
+  `--keep-unread`, and that the allow and deny lists refuse before any call
+  reaches the service. Cursor tests cover a read that moves a cursor to a
+  recreated stream's positions, two processes reading at once, a session's
+  own message that reaches the stream after a newer message was read (never
+  unread), another key's message carrying the same nonce as a session's send
+  (unread, printed and resolved for that session), a person's reply that
+  reaches the stream before the session's post (unread), a read that lists
+  nothing clearing horizon_passed, and a relay resolving the event of a
+  reply before the replying command has recorded its result (the sender is
+  left out). A test shows that no output contains a token, signature or
+  private key, and that an environment variable outside `session.variables`,
+  including `HOME` and `XDG_CONFIG_HOME`, changes nothing.

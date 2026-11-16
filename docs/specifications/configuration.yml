@@ -1,0 +1,109 @@
+$schema: https://refinery.systems/ontology/specification
+relationships:
+  references:
+    - command-line-interface
+    - transport
+    - events
+  shaped-by:
+    - hold-the-service-host-key-in-openbao-kv
+format: json-schema
+description: >-
+  deck has two configuration documents, one for the client and one for the
+  service. Each is one YAML file of at most 1 MiB, defined by a JSON Schema:
+  `assets/configuration/client.schema.json` and
+  `assets/configuration/service.schema.json`. Keys are snake_case. Annotated
+  examples that validate are `assets/configuration/examples/client.yml` and
+  `assets/configuration/examples/service.yml`; documents under
+  `assets/configuration/invalid/` each break one rule and fail.
+
+
+  All configuration comes from these files, each named `config.yml`. The
+  only environment variables deck reads are the session identifiers that the
+  client's `session.variables` names. It expands no `${NAME}` reference and
+  reads no other variable: not `BAO_*` or `VAULT_*` (the OpenBao or Vault
+  client is built from the configuration alone, never with the library's
+  environment reading), not the HTTP proxy variables (every HTTP client deck
+  builds has no proxy), and not `HOME`, `USER` or `XDG_CONFIG_HOME`, not
+  even as a fallback. The client's file is the path given with `--config`,
+  or `.config/deck/config.yml` under the current user's home directory as
+  the system's user database records it. On Linux the client reads
+  `/etc/passwd` itself and takes the home field of the entry whose user ID
+  is the process's; it never calls Go's `user.LookupId` or `user.Current`,
+  which fall back to `HOME` and `USER` when the file has no entry (measured
+  by config-home-without-environment). On macOS it calls `user.LookupId` for
+  the process's user ID, which asks the directory service (assumption
+  macos-user-lookup-reads-no-environment). When the user database has no
+  entry for the user, as in a container run with an arbitrary user ID,
+  `--config` is required, and a command without it fails naming the user ID.
+  The service's file is the path given with `--config`, or
+  `/etc/deck/config.yml`, the path the container image uses. The Go
+  runtime's own variables, such as `GODEBUG` and `TZ`, are read by the
+  runtime and configure nothing of deck's.
+
+
+  Loading is strict. A document is decoded as YAML with unknown keys
+  rejected, then validated against its schema, then checked for the rules a
+  schema cannot state. Every failure names the field by its path, such as
+  `keys[0].grants[1].bot`, and loading reports all failures, not the first.
+  Relative paths are refused; `~` is not expanded.
+
+
+  Client rules beyond the schema: `default_persona` names a persona in
+  `personas`; every alias used in `channels.default`, `channels.allow` and
+  `channels.deny` is in `aliases.channels`. A channel reference is
+  `[<bot>/]<snowflake>` or an alias; a reference made only of digits is a
+  snowflake, and a reference with no bot matches that channel through any
+  bot. `store.path` defaults to `deck.db` in the directory that holds the
+  configuration file. `service.timeout` defaults to 15s, `vault.timeout` to
+  10s, `key.mount` to `transit`, and `session.variables` to none.
+
+
+  Service rules beyond the schema: bot names are unique; key names are
+  unique, and so are their public keys; every grant names a configured bot;
+  a key may hold several grants for one bot and server, and their channels
+  add up. Defaults: `listen.ssh` `:2222`, `listen.health` `:8080`,
+  `vault.kv_mount` `secret`, `vault.timeout` 10s, `nats.name` `deck`,
+  `nats.timeout` 10s, `nats.subject_prefix` `deck`, `nats.stream.name`
+  `DECK`, `nats.stream.max_age` 168h, `nats.stream.duplicate_window` 2m,
+  `nats.stream.replicas` 1, `nats.stream.manage` true, `nats.threads.bucket`
+  `deck-threads`, `nats.threads.replicas` 1, `nats.threads.manage` true, and
+  no `nats.threads.max_age`. The thread registry bucket has no time-to-live;
+  `nats.threads.max_age`, when set, is the age past which the service's
+  hourly sweep deletes a thread entry whose latest touch or publish is
+  older, as the service design describes.
+
+
+  Secrets. A secret is a `{mount, path, field}` reference to a field of a KV
+  version 2 secret, with `mount` defaulting to `vault.kv_mount`; the service
+  has three (`host_key`, `nats.creds`, each bot's `token`) and the client
+  none. The service reads them all once at start, each secret path once even
+  when several fields come from it, and a missing secret, missing field,
+  non-string field or denied read stops the start with the reference's path
+  in the configuration. The client's only use of OpenBao or Vault is its
+  Transit key. `vault.address` is `unix:///path`, `https://host:port`, or
+  `http://` on a loopback host, and `nats.servers` are `nats://`, `tls://`,
+  `ws://` or `wss://` URLs; none of them holds user information (`user@` or
+  `user:password@`), since a NATS client takes it as a credential and every
+  credential is a secret reference; `vault.auth` is absent (requests carry
+  no token, for a socket or agent that injects its own), `token_file`, or
+  `approle` with `role_id` and `secret_id_file`, which logs in at start and
+  revokes the login token at exit. A secret identifier or token never
+  appears in the document itself.
+
+
+  `deck config validate` and `deck service validate` load a document without
+  contacting any server and print each failure by path, as the command-line
+  interface specifies. A configuration change takes effect when the process
+  next starts.
+validation-criteria: >-
+  `check-jsonschema --check-metaschema` accepts both schemas; the examples
+  validate and each document under `invalid/` fails, for the reason its
+  comment gives. The Go loaders accept the examples, reject every invalid
+  document, and are tested against the same files, so the schemas and the
+  loaders cannot drift; a test shows a failure for each rule beyond the
+  schema with its field path. A test runs the client with `BAO_ADDR`,
+  `VAULT_ADDR`, `VAULT_TOKEN`, `HTTPS_PROXY`, `HOME`, `USER` and
+  `XDG_CONFIG_HOME` set and shows that deck ignores them: with a passwd
+  entry for its user ID it finds its file under that entry's home, and with
+  none it fails naming the user ID, as config-home-without-environment's
+  probe does under bubblewrap.

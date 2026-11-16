@@ -1,0 +1,27 @@
+{
+  "id": "1571485045016997890",
+  "time": "2026-11-15T11:20:31.512Z",
+  "bot": "helper",
+  "server_id": "1287000000000000001",
+  "channel_id": "1287000000000000002",
+  "thread_id": "1571484634081529857",
+  "author": {
+    "id": "1100000000000000003",
+    "username": "bob",
+    "display_name": "Bob"
+  },
+  "message": {
+    "type": 19,
+    "content": "Yes, ship it. The second option reads better.",
+    "reply_to_message_id": "1571484634081529857",
+    "attachments": [
+      {
+        "id": "1571485045016997891",
+        "filename": "notes.txt",
+        "content_type": "text/plain; charset=utf-8",
+        "size": "1534",
+        "url": "https://cdn.discordapp.com/attachments/1571484634081529857/1571485045016997891/notes.txt"
+      }
+    ]
+  }
+}

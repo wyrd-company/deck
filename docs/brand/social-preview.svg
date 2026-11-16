@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" role="img" aria-labelledby="title desc">
+<title id="title">deck — Discord conversations for agent sessions</title>
+<desc id="desc">A cyberdeck terminal links an agent's session to a Discord conversation.</desc>
+<defs><pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse"><path d="M40 0H0v40" fill="none" stroke="#1c2940" stroke-width="1"/></pattern></defs>
+<path fill="#0b1220" d="M0 0h1200v630H0z"/>
+<path fill="url(#grid)" d="M0 0h1200v630H0z"/>
+<path d="M56 58h192m-192 0v36m1088 478H952m192 0v-36" stroke="#59f1e8" stroke-width="3" fill="none"/>
+<circle cx="91" cy="539" r="5" fill="#59f1e8"/>
+<text x="108" y="545" fill="#9eafc8" font-family="DejaVu Sans Mono, monospace" font-size="17">SESSION CONNECTED</text>
+<g transform="translate(70 134) scale(1.32)">  <g stroke="#edf4ff" stroke-width="7" stroke-linejoin="round" stroke-linecap="round">
+    <path d="M42 42h154l18 18v106H42z"/>
+    <path d="M42 166h172l20 37v11H22v-11z"/>
+    <path d="M59 61h136v86H59z"/>
+    <path d="M55 183h12m16 0h12m16 0h12m16 0h12m16 0h12m-115 15h12m16 0h12m16 0h57" stroke-width="5"/>
+  </g>
+  <path d="m79 86 16 15-16 15m31 0h28" stroke="#59f1e8" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M166 29h41l24 24v38h-21l-16 16V91h-28z" fill="#ff71da"/>
+  <path d="M181 51h24m-24 16h13" stroke="#edf4ff" stroke-width="5" stroke-linecap="round"/>
+  <path d="M24 83v39m0 14v10M69 229h52" stroke="#59f1e8" stroke-width="5" stroke-linecap="round"/>
+</g>
+<g font-family="DejaVu Sans, sans-serif">
+<text x="475" y="233" fill="#edf4ff" font-size="112" font-weight="bold" letter-spacing="-5">deck</text>
+<text x="482" y="302" fill="#edf4ff" font-size="33">Discord conversations</text>
+<text x="482" y="347" fill="#edf4ff" font-size="33">for agent sessions.</text>
+<text x="482" y="410" fill="#9eafc8" font-size="21">Post a question. Read the reply.</text>
+<text x="482" y="442" fill="#9eafc8" font-size="21">Keep the conversation with its session.</text>
+</g>
+<path d="M482 489h540" stroke="#27364e" stroke-width="1"/>
+<text x="482" y="536" fill="#59f1e8" font-family="DejaVu Sans Mono, monospace" font-size="19">$ deck listen --timeout 5m</text>
+<path d="M1094 100h14v14h-14z" fill="#ff71da"/>
+</svg>

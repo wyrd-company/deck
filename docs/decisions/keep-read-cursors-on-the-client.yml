@@ -1,0 +1,63 @@
+$schema: https://refinery.systems/ontology/decision-record
+relationships:
+  contextualizes:
+    - client
+    - grpc-api
+    - discord-conversations
+description: >-
+  Unread is per session, and session affinity is stored only on the client's
+  machine. Read state could still be kept on the service, keyed by something
+  the client sends, or on the client with the service only counting.
+considered-options:
+  "1": >-
+    Cursors and the session's own message snowflakes in the client's store;
+    every unread call sends them and the service counts.
+  "2": >-
+    Read state on the service, keyed by client key and an opaque session token
+    the client derives from its identifiers.
+  "3": >-
+    Read state on the service per client key, shared by every session on that
+    key.
+decision-outcome:
+  chosen-option: 1
+  justification: >-
+    The invariant keeps session affinity off the service, and an opaque
+    session token in option 2 is affinity under another name. Option 3 lets
+    one session's read hide activity from another session on the same machine.
+    Option 1 costs one stream position per thread in each request and keeps
+    the service free of per-session state.
+  decisions:
+    cursor-position: >-
+      A cursor is a stream position, the stream's epoch and a sequence, and
+      activity is after it by position. A snowflake cursor would skip activity
+      the stream receives late: a message held in the settling buffer, a
+      recovered message, or a poll vote stamped by the service's clock. The
+      epoch names a stream generation; within one generation a cursor only
+      moves forward, and on a generation change it follows the service's
+      epoch, so it is never stuck behind a generation. A cursor starts at the
+      position the service held before the session's first send into the
+      thread, so nothing published during the send is skipped.
+    own-messages: >-
+      A session's own messages are known by its key's fingerprint and a nonce,
+      which the client records before it sends. A count carries every counted
+      copy of a deck-sent message with sender_key and nonce, whichever key or
+      name sent it, as grpc-api specifies. In counts, lists, events
+      and resolve the client
+      matches sender key and nonce together, so another key's message that
+      happens to carry the same nonce is never taken for the session's own.
+      Excluding by snowflake or by position fails for a message that reaches
+      the stream after its session read something newer, or before the sending
+      command recorded its result; a nonce recorded first has neither race.
+      The service publishes deck's own messages from the send alone, so every
+      copy on the stream carries the key and nonce.
+expected-outcomes:
+  positive:
+    - The service holds no session state of any kind.
+    - Two sessions on one machine have independent read state.
+  negative:
+    - Read state does not follow a session to another machine.
+    - >-
+      Each unread call carries one cursor per thread of the session, and each
+      count carries every deck-sent counted copy with sender_key and nonce for
+      the client to subtract by its sending fingerprint and nonce, including
+      across a rotation, a rename or both together.

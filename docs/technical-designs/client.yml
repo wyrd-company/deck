@@ -1,0 +1,229 @@
+$schema: https://refinery.systems/ontology/technical-design
+relationships:
+  implements:
+    - command-line-interface
+    - configuration
+  shaped-by:
+    - deliver-activity-at-least-once
+    - store-session-affinity-in-sqlite
+    - keep-read-cursors-on-the-client
+  mitigates:
+    - send-outcome-unknown
+    - activity-during-a-first-send-does-not-wake
+  related-to:
+    - transport
+    - grpc-api
+    - discord-conversations
+  terms:
+    - cursor
+    - unread
+objective: >-
+  Build the `deck` client: detect the session from configured environment
+  variables, call the service for every Discord operation, keep each session's
+  threads, cursors and sent messages in a local store that several processes
+  share, and report the unread count after every session command.
+background:
+  current-design: >-
+    No client exists. The operator's harness runs agents whose session is
+    named by an environment variable such as `T3CODE_THREAD_ID`, and a relay
+    (Trowel) on the same machine runs commands with an event on stdin.
+  problems:
+    - Several agents on one machine run deck at the same time against one
+      store.
+    - A relay must map a thread to its sessions without a session of its own
+      and without the service.
+    - Every session command reports unread activity, so the count must cost
+      one extra call and nothing more.
+design-challenges:
+  concurrent-processes: >-
+    Many short-lived processes write the store at once. SQLite in WAL mode
+    with a 5-second busy timeout serialises writers and lets readers run, and
+    every write is one short transaction. The driver is `modernc.org/sqlite`,
+    pure Go, because the client builds with CGO_ENABLED=0 for every platform
+    it ships to.
+  unread-without-state-on-the-service: >-
+    The service holds no read state and knows no session, so the client sends,
+    for each of the session's threads, the cursor, a stream position. The
+    service returns one `own` entry per counted copy of every deck-sent
+    message with sender_key and nonce, from any key or name, each with its
+    original sending fingerprint and nonce. A message
+    is the session's own when its sending
+    key's fingerprint and its nonce match a send the session recorded before
+    sending. The client knows its key's fingerprint before any call: it reads
+    the Transit key's public half to sign, and the fingerprint is that key's
+    SHA256 fingerprint. So an own message is recognised whenever it reaches
+    the stream, and the client's store stays the only place that knows which
+    session read or sent what.
+proposed-design:
+  high-level-overview: >-
+    Each command loads the configuration, opens the store, detects the
+    session, and, when it needs the service, dials it once through the
+    transport design's dialer. The command does its work; a session command
+    then counts unread activity and reports it; the command exits with the
+    categorical status of the command-line interface. Nothing runs between
+    commands.
+  session-detection: >-
+    The session is a value: an ordered list of `{name, value}` identifiers and
+    the primary identifier, the first of them. Detection reads exactly the
+    variables in `session.variables` with os.LookupEnv, in order, and keeps
+    the ones that are set and not empty. `--session NAME=VALUE` replaces
+    detection. The default session has no identifiers and the primary key
+    `""`. The store keys a session by `<name>=<value>` of its primary
+    identifier, and each command updates the stored identifier list of its
+    session to the current one, so a resolve returns what the session last ran
+    with.
+  local-store: >-
+    The store is the SQLite file `store.path`, created with mode 0600 in a
+    directory of mode 0700. Connections set `busy_timeout=5000` and
+    `foreign_keys=on`. Before migration, the writer switches to
+    `journal_mode=WAL` outside a transaction, retrying SQLITE_BUSY for at
+    most five seconds because changing journal mode can bypass SQLite's
+    busy handler during concurrent first use. `PRAGMA user_version`
+    records its schema version; a newer version than the client knows is an
+    error, and an older one is migrated in one transaction.
+  store-schema: >-
+    Five tables. `sessions(key TEXT PRIMARY KEY, identifiers TEXT NOT NULL,
+    seen_at TEXT NOT NULL)`, with identifiers a JSON array of `{name, value}`.
+    `threads(thread_id INTEGER PRIMARY KEY, bot TEXT NOT NULL, server_id
+    INTEGER NOT NULL, channel_id INTEGER NOT NULL, title TEXT NOT NULL)`.
+    `session_threads(session_key TEXT NOT NULL REFERENCES sessions(key),
+    thread_id INTEGER NOT NULL REFERENCES threads(thread_id), role TEXT NOT
+    NULL CHECK (role IN ('created', 'replied')), cursor_epoch INTEGER NOT
+    NULL, cursor_sequence INTEGER NOT NULL, touched_at TEXT NOT NULL, PRIMARY
+    KEY (session_key, thread_id))`, where touched_at is when the session last
+    sent a message in the thread. `sends(key_fingerprint TEXT NOT NULL, nonce
+    TEXT NOT NULL, session_key TEXT NOT NULL REFERENCES sessions(key), kind
+    TEXT NOT NULL CHECK (kind IN ('post', 'reply')), thread_id INTEGER,
+    message_id INTEGER, state TEXT NOT NULL CHECK (state IN ('pending',
+    'sent', 'failed', 'unknown')), sent_at TEXT NOT NULL, PRIMARY KEY
+    (key_fingerprint, nonce))`, with indexes on `(session_key, thread_id)` and
+    `message_id`. Schema 2 adds `post_targets(key_fingerprint TEXT NOT NULL,
+    nonce TEXT NOT NULL, bot TEXT NOT NULL, channel_id INTEGER NOT NULL,
+    PRIMARY KEY(key_fingerprint, nonce))`, with a composite foreign key to
+    sends. It records the post target in the same transaction as Pending,
+    before a thread ID exists. Schema 1 is migrated under the creation lock;
+    unresolved legacy posts without a known target cannot be repeated until
+    the caller inspects Discord and chooses a new nonce. Offline relays can
+    still read schema 1 without migrating. Snowflakes and stream positions are stored as SQLite
+    integers, which hold any value below 2^63. Times are RFC 3339 in UTC.
+  recording: >-
+    Before recording a send, the client checks its serialized protobuf size
+    against 64 MiB and marshals the exact request. Invalid UTF-8 or excessive
+    size exits 2 naming the field, without a send record or uncertain outcome.
+    Before every post or reply, the client generates a nonce of 20 random
+    letters and digits, or takes the one `--nonce` gives, and, in one
+    transaction, upserts the session and inserts a `pending` send under its
+    key's fingerprint and the nonce (with the thread for a reply), or finds
+    that send already recorded for a repeat. Only then does it call the
+    service, so any event of that message finds the send already recorded.
+    After a successful post, one transaction inserts the thread, inserts the
+    session thread with role `created`, the cursor at the position the
+    response carries and touched_at now, and marks the send `sent` with its
+    thread and message. After a successful reply, one transaction upserts the
+    thread, inserts the session thread with role `replied` and the cursor at
+    the response's position when the session held none for it, sets touched_at
+    to now, and marks the send `sent`. The response's position is from before
+    the send called Discord, so activity during the send, the session's own
+    messages aside, is unread. A send the service refused is marked `failed`.
+    A send whose outcome the client did not learn (a lost connection, a
+    deadline after the request left, or UNAVAILABLE for a forum post whose
+    answer the service lost) is marked `unknown`; the client never repeats it
+    on its own, and the command prints the command that repeats it with
+    `--nonce` and exits 4. A post or reply that the service performed but the
+    store failed to record reports the message and exits 1, naming the store
+    failure.
+  cursors-and-unread: >-
+    For a set of threads, the client builds one Cursor per thread from the
+    session's cursor_epoch and cursor_sequence. The unread report sends the
+    session's threads that the allow and deny lists keep to CountUnread, and
+    its count for each thread is the response's count less the session's own
+    messages among it: for each `own` entry, subtract one when its sender_key
+    and nonce match a row in sends for this session. Each counted copy has
+    its own entry, so duplicate publications are subtracted per copy. The
+    fingerprint is the entry's original sender_key, whatever public key the
+    configured name holds today; a nonce alone never matches. Read sends
+    them to ListUnread, leaves out of what it prints
+    the activity whose sender key and nonce match one of the session's sends,
+    and, unless `--keep-unread`, writes the output successfully before
+    moving each thread's cursor to the response's
+    `through` position, whether or not anything was listed, with one `UPDATE
+    session_threads SET cursor_epoch = ?, cursor_sequence = ? WHERE
+    session_key = ? AND thread_id = ? AND (cursor_epoch <> ? OR
+    cursor_sequence < ?)`. Within one stream generation a cursor therefore
+    never moves to an earlier position, even when two processes read at once;
+    across generations it follows the response, so a new generation is always
+    reached, whatever its epoch. A process that read before a generation
+    change and writes after it can set a cursor back to the old generation;
+    the next count then treats every retained activity as unread, a duplicate
+    the unread guarantee allows. The unread report counts from the proposed
+    positions in memory before output; only after stdout accepts the entire
+    result are those positions committed. An output failure leaves the
+    cursors unchanged. A commit failure after output exits 1 and reports the
+    store failure on stderr, also in JSON mode, preserving its single result
+    object. A crash between output and commit can repeat activity on the next
+    read. A read that lists nothing still moves the
+    cursor to `through`, so a thread whose count carried horizon_passed stops
+    carrying it; until then, the unread report notes that older activity may
+    have left the stream, naming `deck history`.
+    Validation includes S recording send (A,n) for message M after its cursor,
+    then rotating public key A to B under name K with the same grants, store
+    and session. CountUnread returns M in own with (A,n); S subtracts it for
+    count 0, and read suppresses M for 0 printed. For rename, K becomes K2
+    with A unchanged; S sends M as (A,n) under K and M2 as (A,n2) under K2,
+    touching the thread for K2. Own lists both; count is 0 and read prints 0.
+    Renaming and rotating together also matches the stored pairs. For the
+    same-nonce trace S holds (A,n), and another session sends (B,n) under K;
+    own has two entries, S's count is 1 and read prints 1.
+  listen: >-
+    Listen sends the threads' cursors to the Listen call and reads responses
+    until one carries activity that is not the session's own (sender key and
+    nonce matching one of the session's sends), which covers a reply the same
+    session sent from another process while listen waited, since that send was
+    recorded before it left. It prints that activity, moves each cursor to the
+    response's `through` unless asked not to, and ends the call. When the
+    first response shows none of the threads in the touched state, nothing can
+    arrive, and listen prints the states and exits 3. Its timeout is a context
+    deadline on the call; when it passes, listen exits 5. An interrupt ends
+    the call and exits 130.
+  resolve: >-
+    Resolve opens the store read-only and needs neither the service nor
+    OpenBao. Given an event, it decodes the payload with protojson into an
+    Activity, rejecting anything that is not one with exit status 2, and takes
+    its thread. It returns every session thread of that thread whose session
+    has identifiers, leaving out the session whose sends hold the event's
+    sender key and nonce. The send was recorded before the message left the
+    client, so a relay cannot see the event before the exclusion exists. A
+    session holds a thread only once its first send into the thread has
+    returned, so resolve finds no session for activity that arrives while that
+    send is in flight; the activity is unread for the session all the same
+    (risk activity-during-a-first-send-does-not-wake). Sessions are ordered by
+    touched_at, the latest first.
+  allow-and-deny: >-
+    Channel references in the configuration resolve to `{bot?, channel}` at
+    load. A target channel is allowed when `channels.allow` is absent or one
+    of its references matches, and no reference in `channels.deny` matches; a
+    reference without a bot matches the channel through any bot. Post checks
+    its channel; reply, read, history and listen check the thread's parent
+    from the store, or from GetThread for a thread the store does not hold,
+    before any other call. A refused target exits 3 without the call.
+  rendering: >-
+    One renderer per output mode. Text mode writes the command-line
+    interface's line formats; JSON mode encodes API messages with protojson
+    using proto field names inside a result object built with encoding/json,
+    and writes exactly one object. Errors map from gRPC codes and local
+    failures to the categories and exit statuses of the command-line interface
+    in one table.
+  skill: >-
+    The skill is `internal/skill/SKILL.md`, embedded with go:embed and printed
+    verbatim by `deck skill`. It follows the Agent Skills format with `name:
+    deck` and a description that says when to use deck, and teaches an agent
+    to post and reply, to treat the unread line as its inbox, to read and
+    listen, and to leave resolve to relays.
+  modules: >-
+    `cmd/deck` holds main. `internal/cli` holds the command tree, flags,
+    references, rendering and the exit-status table. `internal/config` loads
+    and validates both configuration documents. `internal/session` detects the
+    session. `internal/store` owns the SQLite store and its migrations; no
+    other package opens the file. `internal/client` wraps the gRPC client
+    connection with the session and store logic that commands share: building
+    cursors, recording, marking read and counting.

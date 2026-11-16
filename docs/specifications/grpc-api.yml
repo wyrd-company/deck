@@ -1,0 +1,193 @@
+$schema: https://refinery.systems/ontology/specification
+relationships:
+  references:
+    - transport
+    - events
+    - discord-conversations
+  shaped-by:
+    - give-each-thread-one-bot
+    - carry-embeds-and-components-as-discord-json
+    - define-events-as-the-api-activity
+    - read-threads-by-id-in-granted-channels
+format: protobuf
+description: >-
+  The service serves one gRPC service, `deck.v1.DeckService`, defined by
+  `assets/grpc-api/deck/v1/deck.proto`. That file is the source the Go code
+  is generated from; nothing else defines the API. It runs over the `deck`
+  SSH subsystem as the transport technical design describes, and every call
+  acts with the grants of the client key that signed the SSH connection. No
+  call carries credentials or a session identity of its own.
+
+
+  Identifiers are Discord snowflakes in uint64 fields; zero means absent. A
+  bot is named by its name in the service configuration. A touched thread
+  has one bot, the one that first touched it through deck, and every call on
+  the thread uses it: a reference may leave the bot empty. The grant check
+  runs against the thread's bot first, so a key without a grant covering the
+  thread through that bot is refused with PERMISSION_DENIED, and only a key
+  with one that named another bot gets INVALID_ARGUMENT naming the thread's
+  bot. Keys share a thread by holding grants on its bot. An empty bot means
+  the one bot the calling key's grants name. When they name several, a
+  thread reference goes to the thread's bot only if the key holds a grant
+  covering the thread through it, and every other empty-bot reference, to a
+  channel or to a thread touched or not, is INVALID_ARGUMENT asking for a
+  bot, so the answer does not tell whether another key touched the thread.
+
+
+  Every call that names a target checks it in this order, before it sends or
+  reads anything else: the bot is named in at least one of the key's grants;
+  the target's server and parent channel come from that bot's Discord
+  metadata (cache, or a REST read), never from the request or the grant; and
+  some grant names that bot, that server, and the channel or `*`. A target
+  that fails any step, including one the bot cannot see, is refused with
+  PERMISSION_DENIED and one message for every case, so a refusal does not
+  tell whether the target exists.
+
+
+  Post and Reply carry the client's `nonce`, an identifier for the send that
+  is unique for its key, and the repeated-sends guarantee of
+  deliver-activity-at-least-once holds for them: a repeat with the same key
+  and nonce returns the first send's result, its starting position included,
+  without sending, while the first is in flight or the event stream holds a
+  message it published, which is the stream's maximum age, restart or not; a
+  repeat of a send that failed, or of one whose message never reached the
+  stream, sends again. Reply and a text channel post also send Discord a
+  nonce derived from the key's fingerprint and the client nonce, with
+  enforce_nonce, which answers a repeat Discord still remembers with the
+  first message; a forum post has no such check in Discord, and when
+  Discord's answer to one is lost the call ends UNAVAILABLE with its outcome
+  unknown. The nonce and the key's fingerprint travel on the published
+  message, and are together how a client recognises its own messages in
+  lists, events, listen, resolve and counts, including after the key's public
+  key rotates under the same name.
+
+
+  Content carries embeds and components as `google.protobuf.Struct` values
+  that hold Discord's own JSON objects. The service decodes them into
+  Discord's types and lets Discord validate them; a Discord validation error
+  (code 50035) returns INVALID_ARGUMENT with Discord's field paths in the
+  message. Limits are Discord's (API v10): 2000 characters of text, 4096
+  with a persona since the text then fills an embed description, 10 embeds
+  holding at most 6000 characters together, 10 files, a thread title of 1 to
+  100 characters, 5 forum tags, a poll of 1 to 10 answers lasting 1 to 768
+  hours. The service checks the limits it can count before calling Discord.
+  Each request is at most 64 MiB, which bounds files; Discord refuses a file
+  over the server's upload limit, and the service returns that as
+  INVALID_ARGUMENT naming the file.
+
+
+  Activity is the one shape for everything new in a thread. Post and Reply
+  return the messages they created as Activity values, and a stream position
+  for the session's cursor to start at: the newest position the service's
+  activity index held before the send called Discord, so activity published
+  during the send is after it. A forum post's poll is the thread's second
+  message, returned as `poll_message`; a post whose poll could not be sent
+  succeeds and says why in `poll_error`. A poll-only forum post uses its
+  required title as the starter message text. ListHistory returns messages in
+  snowflake order, oldest first; ListUnread and Listen return activity in
+  stream order, the order the service published it, with each activity's
+  sequence, and the position `through` which the response is complete; the
+  event stream carries one Activity per event in its protojson form, without
+  the sequence. An Activity's attachment URLs from the API are current: for
+  unread messages with attachments the service reads the thread's messages
+  from Discord after the snowflake one less than the oldest of them and
+  takes their URLs; when Discord no longer has a message, or cannot be read
+  within the deadline, it returns the URLs it published.
+
+
+  Unread is computed from the event stream and from cursors the client
+  sends, and never from Discord, under the unread guarantee of
+  deliver-activity-at-least-once. A Cursor is a thread and a stream
+  position; the activity after it is the thread's activity at a later
+  position in the same epoch, or all of the thread's activity the stream
+  holds when the cursor is from another epoch. Each stream generation has
+  its own epoch, and positions of different epochs do not order: a cursor
+  from another epoch than the stream's has everything the stream holds after
+  it. Activity that reaches the stream late, such as a held reply or a
+  recovered message, is therefore still after a cursor that moved past it in
+  snowflake terms. Messages whose type is not 0, 19 or 46 are never counted.
+  Each ThreadCount.own contains one entry per counted copy of a deck-sent
+  message: every counted index entry with both sender_key and nonce,
+  whichever key or name sent it. The service selects by neither the calling
+  key's name nor its fingerprint.
+  Each OwnMessage carries `id`, `nonce` and `sender_key`, the sending key's
+  original SHA256 fingerprint. The client subtracts each entry exactly when
+  its sender_key and nonce together match a send recorded for the session;
+  it uses neither the caller's current fingerprint nor the nonce alone. A
+  thread's state for the calling key is NOT_TOUCHED unless the key is in the
+  thread's registry entry, whatever its grants say; for a key in the entry
+  it is NOT_GRANTED when no grant of the key covers the thread through its
+  bot, and TOUCHED otherwise. Only a TOUCHED thread has a count, and neither
+  other state fails the call. A thread whose stream history no longer
+  reaches back to the cursor answers with `horizon_passed`; what fell out of
+  the stream is read with ListHistory. ListUnread returns at most its limit
+  in stream order and sets `more` when activity remains. A client that marks
+  read moves each cursor to the response's `through` position, never to an
+  earlier position within one epoch, and to the response's epoch when it
+  differs; with nothing listed, that clears `horizon_passed`.
+
+
+  Listen answers at once with each thread's state, as CountUnread reports
+  it, any unread activity and its `through`, and then sends each further
+  activity as it is published, with `through` at that activity. The client
+  ends the call when it has what it waited for, or when its own timeout
+  passes. A Listen call stays open through gRPC keepalive pings, as the
+  transport design sets.
+
+
+  Errors are gRPC status codes. INVALID_ARGUMENT: a malformed request, a
+  missing bot among several, a bot other than a touched thread's, content
+  beyond a limit, a forum post without the tag its forum requires, or
+  Discord's validation error. PERMISSION_DENIED: a target that fails the
+  grant check above. NOT_FOUND: a message that `reply_to_message_id` names
+  does not exist in the granted thread (Discord code 10008).
+  FAILED_PRECONDITION: the channel's type does not take posts, the thread is
+  locked, or the bot lacks a Discord permission the call needs (Discord code
+  50013), with the permission named when Discord names it.
+  RESOURCE_EXHAUSTED: Discord's rate limit would hold the call past its
+  deadline. UNAVAILABLE: the bot's gateway session, Discord's REST API, or
+  NATS cannot be reached for this call, or Discord's answer to a forum post
+  was lost and the post's outcome is unknown. UNAUTHENTICATED: a call with
+  no key on its connection, which the SSH listener never lets through.
+  INTERNAL: anything else, with no upstream text. No status message carries
+  a token, a request URL or a Discord response body other than Discord's
+  validation field paths and the name of a missing permission.
+validation-criteria: >-
+  `buf build` and `buf lint` (the STANDARD rules) pass on `assets/grpc-api`,
+  and the generated Go code in the repository matches what the proto
+  generates, checked by `task check`. Service tests drive every call over a
+  real SSH connection against a fake Discord REST API and an embedded
+  JetStream server, and show each error code above for the case that causes
+  it, a same-bot wildcard grant on one server refusing a channel of another
+  server, an ungranted bot refused before any Discord request, a repeated
+  key and nonce returning the first result without a second send (while the
+  first is in flight, after it completed, and after a service restart while
+  the stream holds its message), a text channel post repeated after its
+  answer was lost taking the thread Discord already started, a forum post's
+  poll sent as the thread's second message, a thread another key touched
+  answering NOT_TOUCHED for a key that is not in its entry, in counts and in
+  Listen's first response, an empty-bot reference from a key granted several
+  bots answering INVALID_ARGUMENT for a thread it cannot reach whether or
+  not the thread is touched, a first reply's boundary set before the reply
+  exists, a Post whose registry bucket is unreachable creating nothing, two
+  concurrent replies by one key, one failing, leaving the key's touch in
+  place, a second reply by a key already sent failing without removing its
+  touch, a failed first reply leaving the thread untouched, a reply whose
+  outcome is unknown leaving its key's touch in place, live publishes during
+  a thread's pending recovery leaving its boundary unraised, a forum post
+  whose answer was lost ending UNAVAILABLE without a search, and a key
+  granted only another bot refused for a touched thread with
+  PERMISSION_DENIED. A contract test marshals Activity values of each kind
+  with protojson and proto field names and validates them against
+  `assets/events/activity.schema.json`. For the rotation trace, session S
+  records send (fingerprint A, nonce n), whose message M lies after its
+  cursor. Rotate the public key from A to B under the same name K, retaining
+  the grants, store and session. CountUnread counts M and returns its own
+  entry with sender_key A and nonce n; S subtracts it, giving count 0.
+  ListUnread returns M with sender_key A and nonce n; read prints 0. For the
+  rename trace, K becomes K2 with public key A unchanged. S sends M as (A,n)
+  under K and M2 as (A,n2) under K2, touching the thread for K2. Own lists
+  both entries; count is 0 and read prints 0. Renaming and rotating together
+  uses the same stored pairs. For the same-nonce trace, S holds (A,n) and
+  another session sends (B,n) under K: own has two entries, S's count is 1
+  and read prints 1. Matching by nonce alone fails this trace.

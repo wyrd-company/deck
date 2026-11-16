@@ -1,0 +1,23 @@
+$schema: https://refinery.systems/ontology/assumption
+relationships:
+  shaped-by:
+    - discord-forum-post-and-gateway-reply
+description: >-
+  A person's reply in a touched thread reaches the service as a guild
+  MESSAGE_CREATE on the bot's gateway session with its content, embeds,
+  attachments and components, because the bot's application holds the
+  message content intent. An application in fewer than 100 servers enables
+  that intent in Discord's developer portal; one in 100 or more needs
+  Discord's approval for it. Proven when a person replies in a deck thread on
+  the test server and the event on the stream carries the reply's text, as
+  the acceptance scenario does.
+end-descendant-type: spike
+evidence:
+  - The test application's flags hold GATEWAY_MESSAGE_CONTENT_LIMITED, and the
+    gateway accepted a session that requested the message content intent
+    (discord-forum-post-and-gateway-reply).
+  - The bot's own replies arrived from the gateway with their content in 205
+    to 902 ms in the spike's committed run
+    (discord-forum-post-and-gateway-reply, result.jsonl).
+  - Discord documents that without the intent, content, embeds, attachments
+    and components are empty for messages that do not mention the bot.

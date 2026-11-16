@@ -1,0 +1,309 @@
+version: "3"
+
+# These names mean the same thing in every repository. CI, hooks and docs
+# call these tasks; the commands that run them live only here.
+
+vars:
+  VERSION: '{{.VERSION | default "dev"}}'
+  LDFLAGS: -s -w -X main.Version={{.VERSION}}
+  IMAGE: ghcr.io/wyrd-company/deck
+  GORELEASER: go run github.com/goreleaser/goreleaser/v2@v2.17.0
+  PUBLISHER_COMMIT: aa6772776dbe03e974180d3057b5e8868fa3a095
+  MARKDOWNLINT: npx --yes markdownlint-cli2@0.18.1
+  YAMLLINT: uvx --from yamllint==1.37.1 yamllint
+  ACTIONLINT: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+
+tasks:
+  default:
+    desc: List available tasks
+    cmds:
+      - task --list
+  setup:
+    desc: Install pinned check tools and hooks (needs Go, Node.js and Python)
+    cmds:
+      - go install github.com/go-task/task/v3/cmd/task@v3.52.0
+      - go install github.com/evilmartians/lefthook/v2@v2.2.2
+      - python3 -m venv "$HOME/.local/share/deck/check-tools"
+      - '"$HOME/.local/share/deck/check-tools/bin/python" -m pip install uv==0.13.7'
+      - npm install --prefix "$HOME/.local/share/deck/check-tools" --ignore-scripts @wyrd-company/intentional@0.4.0
+      - node "$HOME/.local/share/deck/check-tools/node_modules/@wyrd-company/intentional/install.js"
+      - mkdir -p "$HOME/.local/bin"
+      - ln -sf "$HOME/.local/share/deck/check-tools/bin/uv" "$HOME/.local/bin/uv"
+      - ln -sf "$HOME/.local/share/deck/check-tools/bin/uvx" "$HOME/.local/bin/uvx"
+      - ln -sf "$HOME/.local/share/deck/check-tools/node_modules/.bin/intentional" "$HOME/.local/bin/intentional"
+      - python3 scripts/install-openbao.py
+      - task: hooks:install
+  hooks:install:
+    desc: Install Lefthook hooks for this checkout
+    cmds:
+      - lefthook install
+  repository:scripts:check:
+    desc: Check contributor automation behavior
+    cmds:
+      - python3 -m unittest discover -s scripts/tests -p test_repository.py
+  repository:guards:check:
+    desc: Prove repository lint, commit-message and download checksum guards
+    cmds:
+      - python3 scripts/prove-repository-guards.py
+  lint:commit-msg:
+    desc: Check a Conventional Commit message file
+    cmds:
+      # The commit-msg hook passes the message file path through CLI_ARGS.
+      - python3 scripts/check-commit-message.py {{.CLI_ARGS}}
+  lint:markdown:
+    desc: Lint Markdown without rewriting files
+    cmds:
+      - '{{.MARKDOWNLINT}}'
+  lint:yaml:
+    desc: Lint YAML without rewriting files
+    cmds:
+      - '{{.YAMLLINT}} --strict .'
+  format:
+    desc: Format Go sources and Markdown
+    cmds:
+      - gofmt -w .
+      - '{{.MARKDOWNLINT}} --fix'
+  test:unit:
+    desc: Run selected Go tests (pass package and test flags after --)
+    cmds:
+      - go test {{.CLI_ARGS}}
+  intent:add:
+    desc: Record a user-visible change with intentional
+    requires:
+      vars: [MESSAGE]
+    vars:
+      BUMP: '{{.BUMP | default "patch"}}'
+      UNIT: '{{.UNIT | default "deck"}}'
+    cmds:
+      - intentional add --release-unit {{shellQuote (printf "%s:%s" .UNIT .BUMP)}} --message {{shellQuote .MESSAGE}}
+  format:check:
+    desc: Check Go formatting
+    cmds:
+      - |
+        unformatted=$(gofmt -l .) || exit 1
+        if [ -n "$unformatted" ]; then
+          printf '%s\n' "$unformatted"
+          exit 1
+        fi
+  vet:
+    desc: Run go vet
+    cmds:
+      - go vet ./...
+  lint:
+    desc: Check code, Markdown, YAML and formatting without rewriting files
+    deps: [vet, format:check, lint:markdown, lint:yaml]
+  test:
+    desc: Run tests (OpenBao tests skip without bao)
+    cmds:
+      - go test ./...
+  test:ci:
+    desc: Run uncached tests and fail when OpenBao tests skip
+    cmds:
+      - bash scripts/test-ci.sh
+  build:
+    desc: Build deck into bin/
+    cmds:
+      - CGO_ENABLED=0 go build -trimpath -ldflags="{{.LDFLAGS}}" -o bin/deck ./cmd/deck
+  dev:
+    desc: Run the local service (add --watch to rebuild on source changes)
+    method: none
+    requires:
+      vars: [CONFIG]
+    sources: ['*.go', 'cmd/**/*.go', 'internal/**/*.go', 'go.mod', 'go.sum']
+    cmds:
+      - task: build
+      - ./bin/deck service start --config {{shellQuote .CONFIG}}
+  release:plan:
+    desc: Save an intentional release plan outside tracked files
+    requires:
+      vars: [PLAN]
+    cmds:
+      - intentional plan > {{shellQuote .PLAN}}
+  release:apply:
+    desc: Apply the intentional release plan to repository metadata
+    cmds:
+      - intentional apply
+  release:tag:
+    desc: Tag an operator-reviewed release using its saved intentional plan
+    requires:
+      vars: [PLAN]
+    cmds:
+      - intentional tag --plan {{shellQuote .PLAN}}
+  workflows:check:
+    desc: Validate GitHub Actions workflows
+    cmds:
+      - '{{.ACTIONLINT}}'
+      - python3 scripts/check-ci-go.py
+  intentional:check:
+    desc: Validate intentional configuration and intents
+    cmds:
+      - |
+        if [ -n "$(git tag --list '[0-9]*.[0-9]*.[0-9]*')" ]; then
+          intentional check
+        else
+          intentional status
+        fi
+  generate:
+    desc: Generate Go protobuf and gRPC code with pinned tools
+    cmds:
+      - bash scripts/generate.sh
+  generate:check:
+    desc: Fail when generated API code differs from the design proto
+    cmds:
+      - bash scripts/check-generated.sh
+  demo:
+    desc: Record the synthetic CLI conversation with VHS
+    cmds:
+      - bash docs/demo/run.sh
+  demo:check:
+    desc: Verify the demo's real CLI, store and cursor behavior without recording
+    cmds:
+      - bash docs/demo/run.sh --check
+  brand:render:
+    desc: Render the social preview from its SVG source (needs Node.js and DejaVu Sans)
+    cmds:
+      - bash docs/brand/render.sh
+  docs:validate:
+    desc: Validate wyrd.foo publishing metadata and pages without publishing
+    vars:
+      WYRD_FOO_DIR: '{{.WYRD_FOO_DIR | default "../wyrd.foo"}}'
+    cmds:
+      - node "{{.WYRD_FOO_DIR}}/publisher/cli.ts" validate . {{.CLI_ARGS}}
+  docs:check:
+    desc: Validate design documents, schemas, fixtures and proto
+    cmds:
+      - bash docs/check.sh
+  config:check:
+    desc: Validate both annotated example configs without network access
+    cmds:
+      - go run ./cmd/deck config validate --config docs/specifications/assets/configuration/examples/client.yml
+      - go run ./cmd/deck service validate --config docs/specifications/assets/configuration/examples/service.yml
+  guards:check:
+    desc: Prove validation, Vault and check-task guards with restored mutations
+    cmds:
+      - python3 scripts/prove-guards.py --integration
+  transport:guards:check:
+    desc: Prove transport authentication and carried Vault guards
+    cmds:
+      - python3 scripts/prove-transport-guards.py
+  service:guards:check:
+    desc: Prove service routing, send-outcome and publication guards with restored mutations
+    cmds:
+      - python3 scripts/prove-service-guards.py
+  test:discord:live:
+    desc: Run opt-in API and gateway tests against the configured test Discord server
+    cmds:
+      - go test -count=1 -tags discordlive -run '^TestDiscordLive' -v ./internal/service
+  test:acceptance:
+    desc: Run the container/Discord/Trowel acceptance (skips without the test bot fixture)
+    vars:
+      FIXTURE: '{{.FIXTURE | default "/workspace/tools/deck/.env"}}'
+      EVIDENCE: '{{.EVIDENCE | default ""}}'
+      HUMAN_WAIT: '{{.HUMAN_WAIT | default "0s"}}'
+    cmds:
+      - go test -count=1 -timeout 15m -tags discordlive -v ./tests/acceptance -args -fixture {{shellQuote .FIXTURE}} -evidence {{shellQuote .EVIDENCE}} -human-wait {{shellQuote .HUMAN_WAIT}}
+  test:acceptance:relay:
+    desc: Prove the acceptance relay and recording stand-in without external services
+    cmds:
+      - python3 -m unittest discover -s tests/acceptance -p 'test_*.py'
+  test:acceptance:diagnostic:
+    desc: Debug the native live stack (does not prove container acceptance)
+    vars:
+      FIXTURE: '{{.FIXTURE | default "/workspace/tools/deck/.env"}}'
+      EVIDENCE: '{{.EVIDENCE | default ""}}'
+      HUMAN_WAIT: '{{.HUMAN_WAIT | default "0s"}}'
+    cmds:
+      - go test -count=1 -timeout 15m -tags discordlive -v ./tests/acceptance -args -native-diagnostic -fixture {{shellQuote .FIXTURE}} -evidence {{shellQuote .EVIDENCE}} -human-wait {{shellQuote .HUMAN_WAIT}}
+  acceptance:guards:check:
+    desc: Prove acceptance relay safety guards with mutations in disposable copies
+    cmds:
+      - python3 scripts/prove-acceptance-guards.py
+  config:home:check:
+    desc: Prove passwd-home lookup with the real CLI in bubblewrap (Linux)
+    cmds:
+      - bash scripts/prove-config-home.sh
+  check:
+    desc: Run all repository checks
+    aliases: [ci]
+    # Cold Go builds share large dependencies. Avoid concurrent compilers
+    # duplicating that work and thrashing memory on a small contributor machine.
+    cmds:
+      - task: lint
+      - task: build
+      - task: generate:check
+      - task: docs:check
+      - task: demo:check
+      - task: config:check
+      - task: workflows:check
+      - task: intentional:check
+      - task: release:check
+      - task: release:scripts:check
+      - task: repository:scripts:check
+      - task: npm:check
+      - task: test:acceptance:relay
+      - task: test:ci
+
+  release:check:
+    desc: Validate pinned GoReleaser configuration
+    cmds:
+      - '{{.GORELEASER}} check .goreleaser.yaml'
+  release:scripts:check:
+    desc: Check release scripts and their failure guards
+    cmds:
+      - bash -n scripts/check-release-source.sh scripts/release-notes.sh scripts/validate-publisher-contract.sh scripts/prove-config-home-macos.sh
+      - python3 -m unittest discover -s scripts/tests -p 'test_release*.py'
+  npm:check:
+    desc: Test the native binary installer and launcher without publishing
+    cmds:
+      - npm test --prefix npm
+      - npm pack --dry-run --ignore-scripts ./npm
+  release:guards:check:
+    desc: Prove anonymous-source, checksum, HTTPS, stable-version and handoff guards with restored mutations
+    cmds:
+      - python3 scripts/prove-release-guards.py
+  release:snapshot:
+    desc: Build all release archives/packages/formula into dist/ without publishing
+    vars:
+      RELEASE_VERSION: '{{.RELEASE_VERSION | default "0.0.0"}}'
+    cmds:
+      - RELEASE_VERSION="{{.RELEASE_VERSION}}" {{.GORELEASER}} release --snapshot --clean --parallelism 2
+      - python3 scripts/create-homebrew-formula.py --artifacts-dir dist --version "{{.RELEASE_VERSION}}" --output dist/homebrew/Formula/deck.rb
+  release:install:check:
+    desc: Prove packed npm install with local snapshot bytes (run in a disposable machine after release:snapshot)
+    vars:
+      RELEASE_VERSION: '{{.RELEASE_VERSION | default "0.0.0"}}'
+    cmds:
+      - node scripts/prove-release-install.js dist "{{.RELEASE_VERSION}}"
+  release:source:check:
+    desc: Require an anonymously accessible published source tag before releasing
+    requires:
+      vars: [RELEASE_VERSION]
+    cmds:
+      - bash scripts/check-release-source.sh "{{.RELEASE_VERSION}}"
+  release:compatibility:
+    desc: Prove the pinned publisher queue/staging/AUR contract without publishing (needs rpm, dpkg-deb)
+    requires:
+      vars: [PUBLISHER_ROOT]
+    vars:
+      RELEASE_VERSION: '{{.RELEASE_VERSION | default "0.0.0"}}'
+      RELEASE_COMMIT:
+        sh: git rev-parse HEAD
+    cmds:
+      - task: release:snapshot
+        vars:
+          RELEASE_VERSION: '{{.RELEASE_VERSION}}'
+      - python3 scripts/create-release-manifest.py --artifacts-dir dist --version "{{.RELEASE_VERSION}}" --commit "{{.RELEASE_COMMIT}}" --output dist/release-manifest.json
+      - bash scripts/validate-publisher-contract.sh "{{.PUBLISHER_ROOT}}" "{{.PUBLISHER_COMMIT}}" dist/release-manifest.json dist dist/publisher-contract
+  config:home:macos:check:
+    desc: Prove the CGO-disabled CLI uses the macOS directory-service home despite hostile env
+    cmds:
+      - bash scripts/prove-config-home-macos.sh
+  image:build:
+    desc: Build/load the service image locally without pushing
+    cmds:
+      - docker build --build-arg VERSION={{.VERSION}} -t {{.IMAGE}}:{{.VERSION}} .
+  image:build:multiarch:
+    desc: Build a local multi-arch OCI archive without pushing (requires buildx and foreign-CPU emulation)
+    cmds:
+      - mkdir -p dist
+      - docker buildx build --platform linux/amd64,linux/arm64 --build-arg VERSION={{.VERSION}} --output type=oci,dest=dist/deck-image.tar .

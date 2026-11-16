@@ -1,0 +1,61 @@
+$schema: https://refinery.systems/ontology/decision-record
+relationships:
+  contextualizes:
+    - service
+    - events
+description: >-
+  Retention was left to the design, with the operator leaning towards no
+  message store on the service, Discord holding history read with an
+  after-message-id cursor, and the JetStream stream with a configured maximum
+  age holding what Discord cannot return later. Every session command needs an
+  unread count, which is the hot path, and component uses and poll votes exist
+  nowhere but in what deck published.
+considered-options:
+  "1": >-
+    A message store on the service: a database on a volume that keeps every
+    activity, with its own retention.
+  "2": >-
+    Discord for messages and the stream for interactions: unread messages are
+    read from Discord after each cursor, and interactions from the stream.
+  "3": >-
+    The stream for all recent activity and Discord for history: the stream
+    holds every activity for its maximum age, an in-memory index that follows
+    it answers counts, lists and listens, and Discord serves history reads and
+    the recovery of messages the gateway missed.
+decision-outcome:
+  chosen-option: 3
+  justification: >-
+    Option 3 keeps the operator's lean: the service has no store of its own,
+    Discord holds history and answers after-message-id reads, and the stream's
+    maximum age bounds what deck keeps of interactions. It adds that the
+    stream, which already holds every message because every message is
+    published, also serves recent messages, so a count after every command is
+    a lookup in memory, whatever the cursor, and one ordering rule covers
+    every kind. Option 2 costs a Discord REST call for each thread with new
+    messages on every command and merges two sources for every list. Option 1
+    adds a volume and a store to a container that otherwise needs neither.
+  decisions:
+    max-age: >-
+      The stream's maximum age, 168 hours by default, is the horizon of
+      unread. A session that does not read for longer is told its cursor
+      passed the horizon, loses the component uses and poll votes it missed,
+      and reads the messages it missed from Discord with `deck history`.
+      Counting is never extended into Discord, so a quiet thread with an old
+      cursor costs nothing on every command.
+    attachment-urls: >-
+      Discord's attachment URLs expire, so the API reads a message with
+      attachments from Discord when it returns it, and events carry the URLs
+      Discord gave at the time.
+expected-outcomes:
+  positive:
+    - The unread count after each command costs one gRPC call and no Discord
+      or NATS request, for every cursor.
+    - The service runs without a volume; restarting it rebuilds the index from
+      the stream.
+  negative:
+    - Edits and deletions after publication are not reflected in unread
+      activity, which shows each message as it arrived.
+    - Component uses and poll votes older than the stream's maximum age are
+      gone.
+    - Messages older than the stream's maximum age are no longer unread; a
+      session past the horizon finds them only by reading history.

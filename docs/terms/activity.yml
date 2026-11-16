@@ -1,0 +1,12 @@
+$schema: https://refinery.systems/ontology/term
+title: Activity
+description: >-
+  One new thing in a touched thread that deck publishes: a message, a component
+  use (a button press or a select menu choice on a message deck sent), or a
+  poll vote added or removed. Every activity has a snowflake, and activities
+  sort by it. A message and a component use have Discord's own snowflake; a
+  poll vote has one the service makes from the millisecond it received the
+  vote. The payload of every event, and every item the API lists, is one
+  activity.
+terms:
+  - touched-thread

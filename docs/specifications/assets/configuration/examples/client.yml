@@ -1,0 +1,63 @@
+# deck client configuration: .config/deck/config.yml in the home directory the
+# user database records for the user, or the path given with --config. deck
+# reads no other configuration source.
+
+service:
+  # The service's SSH listener.
+  address: deck.example.internal:2222
+  # The service's host key, as `deck service host-key` prints it. deck refuses
+  # a service that presents any other.
+  host_key: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOpOs2okPTF0d06WZveRMcp0ceUWeO2jllkuCtP2YhX6 deck-service
+  # Bounds connecting and every call except listen. Default 15s.
+  timeout: 15s
+
+vault:
+  # unix:///path, https://host:port, or http:// on a loopback host.
+  address: unix:///run/openbao/agent.sock
+  # Without auth, requests carry no token: an OpenBao Agent or Vault Agent
+  # listening on the socket adds its own.
+  # auth:
+  #   token_file: /run/secrets/openbao-token
+
+key:
+  # The Transit key (type ed25519) that is this client's identity. The
+  # service's operator adds its public half, from `deck config key`.
+  mount: transit
+  name: deck-agents-laptop
+
+session:
+  # Environment variables that identify the session, most preferred first.
+  # The first one that is set is the session's primary identifier.
+  variables:
+    - T3CODE_THREAD_ID
+    - CLAUDE_CODE_SESSION_ID
+
+# store:
+#   path: /home/agent/.config/deck/deck.db   # default: beside this file
+
+channels:
+  # Where `deck post` goes when no channel is named.
+  default: questions
+  # When present, the only channels this client posts to or reads from.
+  allow:
+    - questions
+    - helper/1287000000000000004
+  # Never posted to or read from; deny wins over allow.
+  deny:
+    - "1287000000000000005"
+
+aliases:
+  channels:
+    questions: helper/1287000000000000002
+  users:
+    bob: "1100000000000000003"
+  roles:
+    reviewers: "1287000000000000007"
+
+personas:
+  release-agent:
+    name: Release agent
+    icon_url: https://example.com/release-agent.png
+
+# Used by every post and reply unless --persona or --no-persona says otherwise.
+default_persona: release-agent

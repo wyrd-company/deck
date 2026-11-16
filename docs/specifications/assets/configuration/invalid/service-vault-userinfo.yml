@@ -1,0 +1,11 @@
+# An OpenBao or Vault address never carries credentials.
+vault:
+  address: https://demo:dummy-pass@openbao.example.internal:8200
+host_key: {path: deck/service, field: host_key}
+nats:
+  servers: [nats://nats.example.internal:4222]
+  creds: {path: deck/nats, field: creds}
+bots:
+  - name: helper
+    token: {path: deck/bots/helper, field: token}
+keys: []

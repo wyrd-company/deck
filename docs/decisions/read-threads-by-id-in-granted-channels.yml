@@ -1,0 +1,35 @@
+$schema: https://refinery.systems/ontology/decision-record
+relationships:
+  contextualizes:
+    - discord-conversations
+    - grpc-api
+    - service
+description: >-
+  The invariants say a client sees only the bots, servers and channels its key
+  is granted, and is told only about threads it created or replied in, and the
+  criterion for many bots is that a client without a grant on a channel can
+  neither post to nor read from it. Whether a client may read a thread it did
+  not touch, given the thread's snowflake, is a question the invariants leave
+  open. Agents often answer threads that people start, and replying blind
+  would follow from refusing.
+considered-options:
+  "1": >-
+    History and thread metadata of any thread whose parent channel is granted,
+    by snowflake; counts, lists, listens and events only for touched threads.
+  "2": >-
+    Every read only for threads the key touched.
+decision-outcome:
+  chosen-option: 1
+  justification: >-
+    The grant is the boundary of what a key sees, at channel granularity, and
+    a thread in a granted channel is inside it. Being told about a thread
+    means discovery: counts, lists, listens and events, which stay limited to
+    touched threads. A client that already holds a thread's snowflake learns
+    nothing it was not told by reading it, and an agent can read a person's
+    question before it answers. Option 2 forces a reply before any read.
+expected-outcomes:
+  positive:
+    - An agent handed a thread link reads it, then replies, which touches it.
+  negative:
+    - A key with a grant on a busy channel can read any thread there whose
+      snowflake it learns elsewhere.

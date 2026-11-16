@@ -1,0 +1,15 @@
+{
+  "name": "@wyrd-company/deck",
+  "version": "0.0.0",
+  "description": "Discord conversations for agents through a secret-holding service",
+  "homepage": "https://github.com/wyrd-company/deck#readme",
+  "repository": { "type": "git", "url": "git+https://github.com/wyrd-company/deck.git" },
+  "license": "Apache-2.0",
+  "bin": { "deck": "bin/deck.js" },
+  "scripts": { "postinstall": "node install.js", "test": "node --test test/*.test.js" },
+  "files": ["LICENSE", "README.md", "bin/deck.js", "install.js"],
+  "os": ["linux", "darwin"],
+  "cpu": ["x64", "arm64"],
+  "engines": { "node": ">=22" },
+  "publishConfig": { "access": "public", "registry": "https://registry.npmjs.org" }
+}

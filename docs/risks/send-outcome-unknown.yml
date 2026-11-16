@@ -1,0 +1,49 @@
+$schema: https://refinery.systems/ontology/risk
+relationships:
+  mitigated-by:
+    - service
+    - client
+  related-to:
+    - deliver-activity-at-least-once
+slug: send-outcome-unknown
+title: A send whose outcome is lost can be duplicated or go unpublished
+description: >-
+  The service keeps only sends in flight in memory; a completed send is known
+  by its message on the stream. Five windows fall outside the repeated-sends
+  and publication guarantees. First, the service stops after Discord
+  accepted
+  a send and before JetStream acknowledged its message: the message is in
+  Discord, never on the stream, so other subscribers and sessions never see
+  it, and a repeat with the same nonce finds nothing and sends again, a
+  duplicate for a forum post and for a reply or text channel post once
+  Discord's nonce check has lapsed (assumption
+  discord-deduplicates-a-repeated-nonce-for-minutes). Second, Discord's answer
+  to a forum post is lost (a timeout): the service cannot tell whether the
+  post exists, returns UNAVAILABLE, and a repeat can duplicate it. Third, a
+  forum post's poll goes as the thread's second message: if that send fails
+  the post succeeds without its poll and says so. Fourth, Post returns once it
+  has registered the thread in memory, while the entry's write to the bucket
+  can still be retrying, for as long as NATS stays unreachable; if the service
+  stops before the write lands, the thread is no longer touched, produces no
+  events and answers NOT_TOUCHED until a key replies in it again. Fifth,
+  Discord accepts a reply or a text channel post's message and its REST
+  answer is lost while the service keeps running: the gateway's and
+  recovery's copies of the bot's own messages are dropped and the send
+  cannot publish an answer it did not receive, so the message stays off the
+  stream and the send ends with its outcome unknown, without any crash; a
+  repeat with its nonce is answered by Discord's nonce check while that
+  lasts. A reply
+  whose outcome is unknown keeps its key's touch, so the thread produces
+  events for the key whether or not the reply reached Discord. Mitigation: the
+  client records every send before it calls the service and never repeats one
+  on its own; an unknown outcome is reported with exit status 4 and the
+  command that repeats it with its nonce, which is safe whenever the first
+  send reached the stream; the service logs each lost registration at a clean
+  stop; and the first window is only the time between Discord's answer and
+  JetStream's acknowledgement.
+categories:
+  - operational
+likelihood: 2
+impact: 2
+response-strategy: accept
+status: accepted
