@@ -7,6 +7,7 @@ A pass is printed only after every probe has completed.
 import io
 from pathlib import Path
 import subprocess
+import shutil
 import tarfile
 import tempfile
 from unittest.mock import patch
@@ -14,8 +15,8 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parent.parent
 
 
-def run(command, marker=None):
-    result = subprocess.run(command, cwd=ROOT, text=True, stdout=subprocess.PIPE,
+def run(command, marker=None, cwd=ROOT):
+    result = subprocess.run(command, cwd=cwd, text=True, stdout=subprocess.PIPE,
                             stderr=subprocess.STDOUT, timeout=120)
     if marker is None:
         if result.returncode:
@@ -33,6 +34,40 @@ def fixture_failure(filename, contents, command, marker):
         run(command, marker)
     finally:
         path.unlink(missing_ok=True)
+
+
+def ignored_lint_guard():
+    with tempfile.TemporaryDirectory(prefix="deck-ignored-lint-") as directory:
+        root = Path(directory)
+        for name in ("Taskfile.yml", ".gitignore", ".markdownlint-cli2.yaml", ".yamllint.yml"):
+            shutil.copyfile(ROOT / name, root / name)
+        (root / "checked.md").write_text("# Checked source\n")
+        fixtures = {}
+        for name in (".venv/lib", "bin", ".release-proof", "npm/node_modules/example"):
+            folder = root / name
+            folder.mkdir(parents=True)
+            for filename, contents in (("probe.md", "# Probe\n\n### Skipped level\n"),
+                                       ("probe.yml", "duplicate: one\nduplicate: two\n")):
+                path = folder / filename
+                path.write_text(contents)
+                fixtures[path] = contents
+        run(["task", "lint:markdown", "lint:yaml"], cwd=root)
+        run(["task", "format"], cwd=root)
+        if any(path.read_text() != contents for path, contents in fixtures.items()):
+            raise RuntimeError("Formatting rewrote git-ignored content")
+        markdown = root / ".markdownlint-cli2.yaml"
+        source = markdown.read_text()
+        if source.count("gitignore: true") != 1:
+            raise RuntimeError("Markdown ignore mutation target changed")
+        markdown.write_text(source.replace("gitignore: true", "gitignore: false"))
+        run(["task", "lint:markdown"], "MD001", cwd=root)
+        yaml = root / ".yamllint.yml"
+        source = yaml.read_text()
+        if source.count("ignore-from-file: .gitignore") != 1:
+            raise RuntimeError("YAML ignore mutation target changed")
+        yaml.write_text(source.replace("ignore-from-file: .gitignore", ""))
+        run(["task", "lint:yaml"], "key-duplicates", cwd=root)
+    print("PASS guard: lints/format leave ignored files alone; removing either exclusion detects fixtures", flush=True)
 
 
 def checksum_guard(source):
@@ -70,6 +105,7 @@ def main():
     fixture_failure("repository-guard-probe.yml", "duplicate: one\nduplicate: two\n",
                     ["task", "lint:yaml"], "key-duplicates")
     print("PASS guard: YAML lint rejects duplicate keys", flush=True)
+    ignored_lint_guard()
     with tempfile.TemporaryDirectory(prefix="deck-commit-probe-") as directory:
         message = Path(directory) / "message"
         for header in ("fix(cli): preserve unread activity", "feat!: update the contract",

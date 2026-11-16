@@ -1,7 +1,5 @@
 extends: default
-ignore: |
-  node_modules/
-  dist/
+ignore-from-file: .gitignore
 rules:
   document-start: disable
   line-length: disable

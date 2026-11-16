@@ -43,6 +43,6 @@ go.work.sum
 
 __pycache__/
 
-/node_modules/
+node_modules/
 .venv/
 .DS_Store
