@@ -16,8 +16,10 @@ links for review. Keep the fixture outside the repository; it is never copied
 into the image or passed on a command line. The CLI configuration contains
 only references to the local OpenBao secrets and Transit signing key.
 
-Both posts include a mention of the test server's owner, an embed, a button, an attachment and a
-poll. An exact nonce repeat must return the same IDs, with one copy in Discord
+Both posts include a mention of the test server's owner, an embed, a button and
+a poll. The forum starter also has a file; Discord rejected a file alongside
+the text-channel poll with `INVALID_POLL_ATTACHMENTS` during acceptance.
+An exact nonce repeat must return the same IDs, with one copy in Discord
 history. For forums the poll must be a separate, second message. Trowel feeds
 events to `relay.py`, which invokes `deck resolve --event - --json` and calls
 the absolute `t3.py` recorder path with the resolved synthetic session ID.
@@ -55,6 +57,9 @@ remain as evidence; delete them separately only after review if desired.
 without external services, including failed resolution, no matching session,
 literal untrusted values, and a PATH trap that detects use of a real `t3`.
 These checks also run in `task ci`.
+`task acceptance:guards:check` breaks the failed-resolution, identifier
+preservation and absolute-recorder guards in disposable copies and requires
+their corresponding assertions to fail.
 
 `task test:acceptance:diagnostic` runs the same conversation with a native
 service process when Docker is unavailable. Its final marker is

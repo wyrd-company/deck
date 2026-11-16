@@ -113,6 +113,10 @@ tasks:
       HUMAN_WAIT: '{{.HUMAN_WAIT | default "0s"}}'
     cmds:
       - go test -count=1 -timeout 15m -tags discordlive -v ./tests/acceptance -args -native-diagnostic -fixture {{shellQuote .FIXTURE}} -evidence {{shellQuote .EVIDENCE}} -human-wait {{shellQuote .HUMAN_WAIT}}
+  acceptance:guards:check:
+    desc: Prove acceptance relay safety guards with mutations in disposable copies
+    cmds:
+      - python3 scripts/prove-acceptance-guards.py
   config:home:check:
     desc: Prove passwd-home lookup with the real CLI in bubblewrap (Linux)
     cmds:

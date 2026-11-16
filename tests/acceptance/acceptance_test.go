@@ -263,7 +263,7 @@ func TestAcceptance(t *testing.T) {
 	r.writeJSON(trowelConfig, map[string]any{
 		"server":   map[string]any{"listen": freeAddress(t)},
 		"nats":     map[string]any{"url": ns.ClientURL(), "creds_file": credsFile},
-		"subjects": []any{map[string]any{"name": "deck-acceptance", "stream": "DECK", "subject": "deck.>", "consumer": map[string]any{"deliver_policy": "all", "ack_wait": "5s"}, "destinations": []any{map[string]any{"command": map[string]any{"argv": []string{python, filepath.Join(root, "tests/acceptance/relay.py"), r.deck, r.client, filepath.Join(root, "tests/acceptance/t3.py"), records}, "timeout": "20s"}}}}},
+		"subjects": []any{map[string]any{"name": "deck-acceptance", "stream": "DECK", "subject": "deck.>", "consumer": map[string]any{"deliver_policy": "all", "ack_wait": "5s"}, "destinations": []any{map[string]any{"name": "record-t3", "command": map[string]any{"argv": []string{python, filepath.Join(root, "tests/acceptance/relay.py"), r.deck, r.client, filepath.Join(root, "tests/acceptance/t3.py"), records}, "timeout": "20s"}}}}},
 	}, 0600)
 	r.command(nil, "trowel", "-config", trowelConfig, "-validate")
 	trowelEvidence, _ := os.ReadFile(trowelConfig)
@@ -351,7 +351,13 @@ func (r *run) scenario(sub *nats.Subscription, records string) {
 		}
 		content := "Container acceptance " + r.session + ": reply here, press the button and add/remove a poll vote if available."
 		question := "Does " + r.session + " work?"
-		args := []string{"post", "test/" + channel, "--title", "Deck acceptance " + kind + " " + r.session, "--text", content, "--mention", mention, "--poll", question, "--answer", "Yes", "--answer", "No", "--embed", embedFile, "--components", componentFile, "--file", attachment, "--nonce", strings.ToUpper(kind[:1]) + randomID(r.t)[:20]}
+		args := []string{"post", "test/" + channel, "--title", "Deck acceptance " + kind + " " + r.session, "--text", content, "--mention", mention, "--poll", question, "--answer", "Yes", "--answer", "No", "--embed", embedFile, "--components", componentFile, "--nonce", strings.ToUpper(kind[:1]) + randomID(r.t)[:20]}
+		// Measured API constraint: a text message combining a poll with file
+		// attachments returns INVALID_POLL_ATTACHMENTS. Forum polls are sent
+		// separately, so their starters can retain the attachment.
+		if kind == "forum" {
+			args = append(args, "--file", attachment)
+		}
 		flags, _ := forum["flags"].(float64)
 		if kind == "forum" && int(flags)&16 != 0 {
 			tags := forum["available_tags"].([]any)
@@ -364,8 +370,11 @@ func (r *run) scenario(sub *nats.Subscription, records string) {
 		thread := post["thread"].(map[string]any)["thread_id"].(string)
 		message := post["message"].(map[string]any)
 		body := message["message"].(map[string]any)
-		if len(body["embeds"].([]any)) != 1 || len(body["components"].([]any)) != 1 || len(body["attachments"].([]any)) != 1 || body["mention_user_ids"].([]any)[0] != mention {
+		if len(body["embeds"].([]any)) != 1 || len(body["components"].([]any)) != 1 || body["mention_user_ids"].([]any)[0] != mention {
 			r.t.Fatal("rich content missing from returned Discord post")
+		}
+		if kind == "forum" && len(body["attachments"].([]any)) != 1 {
+			r.t.Fatal("forum attachment missing")
 		}
 		if body["embeds"].([]any)[0].(map[string]any)["title"] != "Container acceptance" || body["components"].([]any)[0].(map[string]any)["components"].([]any)[0].(map[string]any)["custom_id"] != "deck-acceptance" {
 			r.t.Fatal("returned embed/button changed")
@@ -385,7 +394,7 @@ func (r *run) scenario(sub *nats.Subscription, records string) {
 		posts = append(posts, post)
 		r.save(kind+"-post.json", post)
 		link := "https://discord.com/channels/" + r.fixture["SERVER_ID"] + "/" + thread + "/" + message["id"].(string)
-		r.note("PASS: " + kind + " post with mention, embed, button, attachment and poll: " + link)
+		r.note("PASS: " + kind + " post with mention, embed, button and poll (forum also has a file): " + link)
 		// Repeat the exact CLI command. It must retain the first IDs and leave
 		// only the original starter/poll messages in Discord.
 		again := r.cli(args...)
