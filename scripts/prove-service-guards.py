@@ -336,4 +336,7 @@ probe_source('a bind failure during a stop stays a failure', 'internal/transport
 probe_source('a Vault failure during a stop stays a failure', 'internal/vault/client.go',
       'if ctx.Err() != nil && errors.Is(err, ctx.Err()) {', 'if ctx.Err() != nil {',
       './internal/vault', 'TestFailureDuringStopIsNotCancellation')
+probe('a missing stream is created only after its deletion ends', 'activity/index.go',
+      '\trecreateDelay = 2 * time.Second', '\trecreateDelay = 0 * time.Second',
+      './internal/service/activity', 'TestRecreationWaitsForTheDeletion')
 print(f'PASS all {completed} targeted service mutation probes completed', flush=True)
