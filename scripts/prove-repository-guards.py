@@ -1,0 +1,95 @@
+#!/usr/bin/env python3
+"""Prove repository lint, commit-message and setup checksum guards.
+
+Every temporary mutation is removed in finally. Run alone in a worktree.
+A pass is printed only after every probe has completed.
+"""
+import io
+from pathlib import Path
+import subprocess
+import tarfile
+import tempfile
+from unittest.mock import patch
+
+ROOT = Path(__file__).resolve().parent.parent
+
+
+def run(command, marker=None):
+    result = subprocess.run(command, cwd=ROOT, text=True, stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT, timeout=120)
+    if marker is None:
+        if result.returncode:
+            raise RuntimeError(result.stdout)
+    elif result.returncode == 0 or marker not in result.stdout:
+        raise RuntimeError(f"Guard did not reject the probe: {command}\n{result.stdout}")
+
+
+def fixture_failure(filename, contents, command, marker):
+    path = ROOT / filename
+    if path.exists():
+        raise RuntimeError(f"Probe would overwrite an existing file: {path}")
+    try:
+        path.write_text(contents)
+        run(command, marker)
+    finally:
+        path.unlink(missing_ok=True)
+
+
+def checksum_guard(source):
+    namespace = {"__name__": "installer_probe"}
+    exec(compile(source, "install-openbao.py", "exec"), namespace)
+    archive = io.BytesIO()
+    payload = b"synthetic OpenBao executable"
+    with tarfile.open(fileobj=archive, mode="w:gz") as package:
+        entry = tarfile.TarInfo("bao")
+        entry.size = len(payload)
+        package.addfile(entry, io.BytesIO(payload))
+    data = archive.getvalue()
+    # A real tar archive that differs from the pinned OpenBao release bytes.
+    with tempfile.TemporaryDirectory(prefix="deck-installer-probe-") as directory:
+        target = Path(directory) / ".local/bin/bao"
+        with patch("platform.system", return_value="Linux"), \
+                patch("platform.machine", return_value="x86_64"), \
+                patch("pathlib.Path.home", return_value=Path(directory)), \
+                patch("urllib.request.urlopen", return_value=io.BytesIO(data)):
+            try:
+                namespace["main"]()
+            except SystemExit as error:
+                if str(error) != "OpenBao archive checksum mismatch" or target.exists():
+                    raise RuntimeError("Unexpected checksum rejection") from error
+                return True
+        return False
+
+
+def main():
+    run(["task", "lint:markdown"])
+    run(["task", "lint:yaml"])
+    fixture_failure("repository-guard-probe.md", "# Probe\n\n### Skipped heading\n",
+                    ["task", "lint:markdown"], "MD001")
+    print("PASS guard: Markdown heading lint rejects a skipped level", flush=True)
+    fixture_failure("repository-guard-probe.yml", "duplicate: one\nduplicate: two\n",
+                    ["task", "lint:yaml"], "key-duplicates")
+    print("PASS guard: YAML lint rejects duplicate keys", flush=True)
+    with tempfile.TemporaryDirectory(prefix="deck-commit-probe-") as directory:
+        message = Path(directory) / "message"
+        for header in ("fix(cli): preserve unread activity", "feat!: update the contract"):
+            message.write_text(header + "\n")
+            run(["task", "lint:commit-msg", "--", str(message)])
+        for header in ("", "Update stuff", "fix: "):
+            message.write_text(header + "\n")
+            run(["task", "lint:commit-msg", "--", str(message)], "Use a Conventional Commit")
+    print("PASS guard: commit messages accept conventional headers and reject invalid ones", flush=True)
+    source = (ROOT / "scripts/install-openbao.py").read_text()
+    if not checksum_guard(source):
+        raise RuntimeError("The installer accepted a corrupt download")
+    target = "if hashlib.sha256(archive).hexdigest() != expected:"
+    if source.count(target) != 1:
+        raise RuntimeError("Installer mutation target changed")
+    if checksum_guard(source.replace(target, "if False:")):
+        raise RuntimeError("The checksum mutation was not detected")
+    print("PASS guard: a checksum mismatch prevents installation; removing the check defeats the probe", flush=True)
+    print("repository guards: pass", flush=True)
+
+
+if __name__ == "__main__":
+    main()

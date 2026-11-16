@@ -134,7 +134,7 @@ def main():
         print('PASS guard: task check propagates docs/check.sh failure', flush=True)
         with tempfile.TemporaryDirectory(prefix='deck-no-bao-') as directory:
             # Leave bao off PATH while retaining all other check prerequisites.
-            for name in ('go', 'task', 'uv', 'intentional', 'node'):
+            for name in ('go', 'task', 'uv', 'uvx', 'intentional', 'node', 'npm', 'npx'):
                 executable = shutil.which(name)
                 if not executable:
                     raise RuntimeError(f'missing check prerequisite: {name}')

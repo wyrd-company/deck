@@ -6,6 +6,8 @@ vars:
   IMAGE: ghcr.io/wyrd-company/deck
   GORELEASER: go run github.com/goreleaser/goreleaser/v2@v2.17.0
   PUBLISHER_COMMIT: aa6772776dbe03e974180d3057b5e8868fa3a095
+  MARKDOWNLINT: npx --yes markdownlint-cli2@0.18.1
+  YAMLLINT: uvx --from yamllint==1.37.1 yamllint
   ACTIONLINT: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
 
 tasks:
@@ -13,10 +15,58 @@ tasks:
     desc: List available tasks
     cmds:
       - task --list
+  setup:
+    desc: Install pinned check tools and hooks (needs Go, Node.js and Python)
+    cmds:
+      - go install github.com/go-task/task/v3/cmd/task@v3.52.0
+      - go install github.com/evilmartians/lefthook/v2@v2.2.2
+      - python3 -m venv "$HOME/.local/share/deck/check-tools"
+      - '"$HOME/.local/share/deck/check-tools/bin/python" -m pip install uv==0.13.7'
+      - npm install --prefix "$HOME/.local/share/deck/check-tools" --ignore-scripts @wyrd-company/intentional@0.4.0
+      - node "$HOME/.local/share/deck/check-tools/node_modules/@wyrd-company/intentional/install.js"
+      - mkdir -p "$HOME/.local/bin"
+      - ln -sf "$HOME/.local/share/deck/check-tools/bin/uv" "$HOME/.local/bin/uv"
+      - ln -sf "$HOME/.local/share/deck/check-tools/bin/uvx" "$HOME/.local/bin/uvx"
+      - ln -sf "$HOME/.local/share/deck/check-tools/node_modules/.bin/intentional" "$HOME/.local/bin/intentional"
+      - python3 scripts/install-openbao.py
+      - task: hooks:install
+  hooks:install:
+    desc: Install Lefthook hooks for this checkout
+    cmds:
+      - lefthook install
+  repository:guards:check:
+    desc: Prove repository lint, commit-message and download checksum guards
+    cmds:
+      - python3 scripts/prove-repository-guards.py
+  lint:commit-msg:
+    desc: Check a Conventional Commit message file
+    cmds:
+      - python3 scripts/check-commit-message.py {{.CLI_ARGS}}
+  lint:markdown:
+    desc: Lint Markdown without rewriting files
+    cmds:
+      - '{{.MARKDOWNLINT}}'
+  lint:yaml:
+    desc: Lint YAML without rewriting files
+    cmds:
+      - '{{.YAMLLINT}} --strict .'
   format:
-    desc: Format Go sources
+    desc: Format Go sources and Markdown
     cmds:
       - gofmt -w .
+      - '{{.MARKDOWNLINT}} --fix'
+  test:unit:
+    desc: Run selected Go tests (pass package and test flags after --)
+    cmds:
+      - go test {{.CLI_ARGS}}
+  intent:add:
+    desc: Record a user-visible change with intentional
+    requires:
+      vars: [MESSAGE]
+    vars:
+      BUMP: '{{.BUMP | default "patch"}}'
+    cmds:
+      - intentional add --release-unit deck:{{.BUMP}} --message {{shellQuote .MESSAGE}}
   format:check:
     desc: Check Go formatting
     cmds:
@@ -26,8 +76,8 @@ tasks:
     cmds:
       - go vet ./...
   lint:
-    desc: Vet and check formatting
-    deps: [vet, format:check]
+    desc: Check code, Markdown, YAML and formatting without rewriting files
+    deps: [vet, format:check, lint:markdown, lint:yaml]
   test:
     desc: Run tests (OpenBao tests skip without bao)
     cmds:
@@ -40,12 +90,33 @@ tasks:
     desc: Run repository checks with mandatory real OpenBao coverage
     cmds:
       - task: check
-        vars:
-          TEST_TASK: test:ci
   build:
     desc: Build deck into bin/
     cmds:
       - CGO_ENABLED=0 go build -trimpath -ldflags="{{.LDFLAGS}}" -o bin/deck ./cmd/deck
+  dev:
+    desc: Run the local service (add --watch to rebuild on source changes)
+    requires:
+      vars: [CONFIG]
+    sources: ['*.go', 'cmd/**/*.go', 'internal/**/*.go', 'go.mod', 'go.sum']
+    cmds:
+      - go run ./cmd/deck service start --config {{shellQuote .CONFIG}}
+  release:plan:
+    desc: Save an intentional release plan outside tracked files
+    requires:
+      vars: [PLAN]
+    cmds:
+      - intentional plan > {{shellQuote .PLAN}}
+  release:apply:
+    desc: Apply the intentional release plan to repository metadata
+    cmds:
+      - intentional apply
+  release:tag:
+    desc: Tag an operator-reviewed release using its saved intentional plan
+    requires:
+      vars: [PLAN]
+    cmds:
+      - intentional tag --plan {{shellQuote .PLAN}}
   workflows:check:
     desc: Validate GitHub Actions workflows
     cmds:
@@ -154,7 +225,7 @@ tasks:
       - release:scripts:check
       - npm:check
       - test:acceptance:relay
-      - task: '{{default "test" .TEST_TASK}}'
+      - task: test:ci
 
   release:check:
     desc: Validate pinned GoReleaser configuration

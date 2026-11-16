@@ -1,0 +1,6 @@
+* text=auto
+*.sh text eol=lf
+go.sum linguist-generated=true
+internal/api/deckv1/*.pb.go linguist-generated=true
+*.png binary
+*.gif binary

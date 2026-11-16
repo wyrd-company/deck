@@ -24,12 +24,15 @@ profile.cov
 go.work
 go.work.sum
 
-# env file
+# Local credentials and environment
 .env
+.env.*
+!.env.example
+/config.yml
 
 # Editor/IDE
-# .idea/
-# .vscode/
+.idea/
+.vscode/
 
 # Build artifacts
 /bin/
@@ -39,3 +42,7 @@ go.work.sum
 /npm/*.tgz
 
 __pycache__/
+
+/node_modules/
+.venv/
+.DS_Store

@@ -37,7 +37,7 @@ jobs:
           echo "582b1f3c2fdc5afd443b2d57a225ef654de75adea609fdb66731fd582a9cbc96  $RUNNER_TEMP/openbao.tar.gz" | sha256sum --check
           tar -xzf "$RUNNER_TEMP/openbao.tar.gz" -C "$(go env GOPATH)/bin" bao
       - name: Validate repository
-        run: task ci
+        run: task check
 
   release-snapshot:
     name: Non-publishing release snapshot
