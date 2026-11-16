@@ -73,8 +73,9 @@ tasks:
       vars: [MESSAGE]
     vars:
       BUMP: '{{.BUMP | default "patch"}}'
+      UNIT: '{{.UNIT | default "deck"}}'
     cmds:
-      - intentional add --release-unit deck:{{.BUMP}} --message {{shellQuote .MESSAGE}}
+      - intentional add --release-unit {{shellQuote (printf "%s:%s" .UNIT .BUMP)}} --message {{shellQuote .MESSAGE}}
   format:check:
     desc: Check Go formatting
     cmds:

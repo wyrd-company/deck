@@ -121,6 +121,29 @@ func main() {
             self.assertNotEqual(*service_pids)
 
 
+class IntentTaskTests(unittest.TestCase):
+    def test_intents_target_the_selected_release_unit(self):
+        for arguments, unit, bump in (([], "deck", "patch"),
+                                      (["UNIT=deck-docs"], "deck-docs", "patch"),
+                                      (["UNIT=deck-docs", "BUMP=minor"], "deck-docs", "minor")):
+            with self.subTest(unit=unit, bump=bump), tempfile.TemporaryDirectory(prefix="deck-intent-") as directory:
+                root = Path(directory)
+                for name in ("Taskfile.yml", "go.mod", ".intentional/config.yml", "docs/user/docs.yml"):
+                    target = root / name
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.write_bytes((ROOT / name).read_bytes())
+                result = subprocess.run([shutil.which("task"), "intent:add", *arguments,
+                                         'MESSAGE=Explain the reader\'s "next step"'],
+                                        cwd=root, text=True, stdout=subprocess.PIPE,
+                                        stderr=subprocess.STDOUT, timeout=30)
+                self.assertEqual(result.returncode, 0, result.stdout)
+                intents = list((root / ".intentional/intents").glob("*.md"))
+                self.assertEqual(len(intents), 1, result.stdout)
+                intent = intents[0].read_text()
+                self.assertIn(f"\n{unit}: {bump}\n", intent)
+                self.assertIn('Explain the reader\'s "next step"', intent)
+
+
 class CommitMessageTests(unittest.TestCase):
     def check_header(self, header):
         with tempfile.TemporaryDirectory(prefix="deck-commit-message-") as directory:

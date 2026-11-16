@@ -32,8 +32,10 @@ receive independent review and passing CI before merging.
 
 Read [AGENTS.md](AGENTS.md) and the relevant design documents before changing a
 contract. Keep the implementation and its design in the same pull request.
-Record user-visible changes with `task intent:add MESSAGE="Describe the change"`;
-set `BUMP=minor` or `BUMP=major` when that is the appropriate release bump.
+Record user-visible changes with `task intent:add MESSAGE="Describe the change"`.
+`UNIT` defaults to `deck`; use `task intent:add UNIT=deck-docs MESSAGE="Describe the docs change"`
+for docs-only changes. The default bump is patch; set `BUMP=minor` or `BUMP=major`
+when that is the appropriate release bump.
 
 ## Checking a change
 

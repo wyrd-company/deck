@@ -46,6 +46,7 @@ changing them requires the owner's decision.
 
 Use `task check` before pushing; [CONTRIBUTING.md](CONTRIBUTING.md) covers setup
 and focused checks. Record a user-visible change with `task intent:add` as described
-there. For API changes, edit
+there; use `UNIT=deck-docs` for docs-only changes (`UNIT` defaults to `deck`).
+For API changes, edit
 `docs/specifications/assets/grpc-api/deck/v1/deck.proto` and run `task generate`;
 `internal/api/deckv1/` is generated.
