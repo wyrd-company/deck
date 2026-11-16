@@ -1,5 +1,6 @@
 //go:build !race
 
+// DISGO-WORKAROUND(gateway-close-race): excluded from -race builds for disgo's gateway Close data race; see wyrd-company/deck issue (pending).
 // The race detector reports a data race inside disgo v0.20.0 itself:
 // gateway.CloseWithCode reads heartbeatCancel (gateway/gateway.go:360)
 // without the lock heartbeat() would need when it writes it (:491-492), so

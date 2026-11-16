@@ -1,5 +1,6 @@
 //go:build !race
 
+// DISGO-WORKAROUND(gateway-close-race): excluded from -race builds for disgo's gateway Close data race; see wyrd-company/deck issue (pending).
 // The race detector reports a data race inside disgo v0.20.0 itself when a
 // gateway session closes (gateway/gateway.go:360 against :491-492), and these
 // tests open and close real sessions against a fake gateway. They run in

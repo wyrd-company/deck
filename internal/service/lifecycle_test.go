@@ -1,5 +1,6 @@
 //go:build !race
 
+// DISGO-WORKAROUND(gateway-close-race): excluded from -race builds for disgo's gateway Close data race; see wyrd-company/deck issue (pending).
 // The race detector reports a data race inside disgo v0.20.0 itself when a
 // gateway session closes (gateway/gateway.go:360 against :491-492), and these
 // tests open and close real sessions against a fake gateway. They run in
@@ -162,6 +163,7 @@ func TestCloseFinishesSendsBeforeResources(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		// disgo's REST client deadlocks a request still in flight when it is
 		// closed, so a send outliving the bot clients never returns.
+		// DISGO-WORKAROUND(rest-close-deadlock): bounds the wait on a request that closing the REST client deadlocks; see wyrd-company/deck issue (pending).
 		t.Fatal("the send never finished: resources closed under it")
 	}
 	if !l.streamIDs(t)[101] {

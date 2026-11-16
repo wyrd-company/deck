@@ -279,6 +279,7 @@ func (r *Runtime) Close() {
 		if r.Registry != nil {
 			r.Registry.Close()
 		}
+		// DISGO-WORKAROUND(rest-close-deadlock): bot clients close only after sends and gateway work finished; see wyrd-company/deck issue (pending).
 		ctx, cancel = within(500 * time.Millisecond)
 		for _, b := range r.Bots {
 			b.Bot.Close(ctx)

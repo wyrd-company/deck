@@ -405,6 +405,7 @@ type rawVote struct {
 	AnswerID  int           `json:"answer_id"`
 }
 
+// DISGO-WORKAROUND(poll-votes): votes are read from raw gateway events because disgo never decodes them; see wyrd-company/deck issue (pending).
 // onRaw reads poll votes from the raw gateway events: disgo v0.20.0 does not
 // decode MESSAGE_POLL_VOTE_ADD or _REMOVE (gateway.UnmarshalEventData has no
 // case for them), so its typed vote events never fire. The raw event is
