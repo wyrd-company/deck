@@ -348,4 +348,13 @@ probe('an independent gateway failure during a stop stays a failure', 'runtime.g
 probe('a watched revision during a write survives reconciliation', 'registry/registry.go',
       'if w, ok := r.watched[id]; ok && w.rev > rev {', 'if w, ok := r.watched[id]; ok && w.rev > rev && w.rev == 0 {',
       './internal/service/registry', 'TestWatchedRevisionDuringWriteSurvives')
+probe('a newer trigger cancels the running check', 'activity/index.go',
+      'if i.checkCancel != nil {\n\t\t// A newer trigger', 'if false {\n\t\t// A newer trigger',
+      './internal/service/activity', 'TestNewerTriggerCancelsStalledCheck')
+probe('Listen keeps a cursor ahead of the index', 'index.go',
+      'positions[thread] = later(positions[thread], next.Through)', 'positions[thread] = next.Through',
+      './internal/service', 'TestListenKeepsACursorAhead')
+probe('later Listen responses refresh attachment URLs', 'index.go',
+      '\t\t\th.refreshAttachments(ctx, listed)\n\t\t\tfor _, a := range listed {', '\t\t\tfor _, a := range listed {',
+      './internal/service', 'TestListenRefreshesLaterAttachments')
 print(f'PASS all {completed} targeted service mutation probes completed', flush=True)
