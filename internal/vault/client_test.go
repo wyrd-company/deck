@@ -528,3 +528,36 @@ func TestSignTransitRejectsWrongVersion(t *testing.T) {
 		t.Fatalf("wrong version: %v", err)
 	}
 }
+
+// failAfterStop cancels the request's caller, then fails the request for an
+// independent reason, as a real transport failure coinciding with a stop.
+type failAfterStop struct{ stop context.CancelFunc }
+
+func (f failAfterStop) RoundTrip(*http.Request) (*http.Response, error) {
+	f.stop()
+	return nil, errors.New("independent transport failure")
+}
+
+// A request that fails for its own reason while the caller stops is not
+// labelled cancellation, so a real failure during a stop still exits 1.
+func TestFailureDuringStopIsNotCancellation(t *testing.T) {
+	c, err := New(context.Background(), config.Vault{Address: "http://127.0.0.1:1", Timeout: time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close(context.Background())
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	c.http.Transport = failAfterStop{stop: cancel}
+	_, err = c.ReadSecret(ctx, "host_key", config.SecretRef{Mount: "secret", Path: "x", Field: "key"})
+	if err == nil || errors.Is(err, context.Canceled) || !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("independent failure labelled as cancellation: %v", err)
+	}
+	// A request the stop itself ends is still cancellation.
+	ctx, cancel = context.WithCancel(context.Background())
+	cancel()
+	c.http.Transport = c.transport
+	if _, err = c.ReadSecret(ctx, "host_key", config.SecretRef{Mount: "secret", Path: "x", Field: "key"}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("stop not reported as cancellation: %v", err)
+	}
+}

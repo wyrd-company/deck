@@ -176,7 +176,9 @@ func (c *Client) request(ctx context.Context, method, path string, body any) (ma
 	}
 	response, err := c.http.Do(req)
 	if err != nil {
-		if ctx.Err() != nil {
+		// Only a failure the stop itself caused is cancellation: a request that
+		// failed for its own reason while the caller stopped stays a failure.
+		if ctx.Err() != nil && errors.Is(err, ctx.Err()) {
 			return nil, fmt.Errorf("%w: request cancelled: %w", ErrUnavailable, ctx.Err())
 		}
 		if errors.Is(err, context.DeadlineExceeded) {
