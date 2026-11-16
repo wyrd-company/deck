@@ -19,10 +19,14 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	d "github.com/disgoorg/disgo/discord"
 	"github.com/disgoorg/disgo/gateway"
+	"github.com/disgoorg/disgo/rest"
+	"github.com/disgoorg/snowflake/v2"
 	"github.com/nats-io/nats-server/v2/server"
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
@@ -327,6 +331,86 @@ func TestGatewayFailureDuringStop(t *testing.T) {
 			}
 			if errors.Is(err, context.Canceled) == independent {
 				t.Fatalf("independent=%t, cancellation identity=%t: %v", independent, errors.Is(err, context.Canceled), err)
+			}
+		})
+	}
+}
+
+// heldAck holds the component acknowledgement until released, ignoring its
+// context, and records whether the REST client was closed while it was
+// still in flight.
+type heldAck struct {
+	rest.Rest
+	entered, release chan struct{}
+	active           atomic.Bool
+	closedActive     atomic.Bool
+}
+
+func (h *heldAck) CreateInteractionResponse(snowflake.ID, string, d.InteractionResponse, ...rest.RequestOpt) error {
+	h.active.Store(true)
+	defer h.active.Store(false)
+	close(h.entered)
+	<-h.release
+	return nil
+}
+func (h *heldAck) Close(ctx context.Context) {
+	h.closedActive.Store(h.active.Load())
+	h.Rest.Close(ctx)
+}
+
+// R1-04: shutdown joins a component acknowledgement in flight before it
+// closes the publisher and the bot's REST client. One that ends within the
+// budget is published; a real request that does not end is canceled at the
+// budget and its use still published; one that ignores cancellation leaves
+// its bot's REST client open rather than closed under it.
+func TestCloseJoinsComponentAcknowledgements(t *testing.T) {
+	for _, mode := range []string{"released", "canceled", "stubborn"} {
+		t.Run(mode, func(t *testing.T) {
+			l := openRuntime(t)
+			r := l.runtime
+			registerBot(t, r.Registry, 100, 10, "a", 100)
+			client := r.Bots["a"].Bot
+			entered := make(chan struct{})
+			var ack *heldAck
+			if mode == "canceled" {
+				block := make(chan struct{})
+				t.Cleanup(func() { close(block) })
+				l.fake.mu.Lock()
+				l.fake.interactionBlock, l.fake.interactionEntered = block, entered
+				l.fake.mu.Unlock()
+			} else {
+				ack = &heldAck{Rest: client.Rest, entered: entered, release: make(chan struct{})}
+				client.Rest = ack
+				t.Cleanup(func() {
+					select {
+					case <-ack.release:
+					default:
+						close(ack.release)
+					}
+				})
+			}
+			l.gateways["a"].Dispatch("INTERACTION_CREATE", componentEvent(5001, 100, 1000, "123"))
+			select {
+			case <-entered:
+			case <-time.After(5 * time.Second):
+				t.Fatal("the acknowledgement never started")
+			}
+			closed := make(chan struct{})
+			go func() { r.Close(); close(closed) }()
+			if mode == "released" {
+				time.Sleep(300 * time.Millisecond) // Close is waiting for the callback
+				close(ack.release)
+			}
+			select {
+			case <-closed:
+			case <-time.After(10 * time.Second):
+				t.Fatal("Close exceeded its budget")
+			}
+			if ack != nil && ack.closedActive.Load() {
+				t.Fatal("the REST client closed while the acknowledgement was in flight")
+			}
+			if mode != "stubborn" && !l.streamIDs(t)[5001] {
+				t.Fatal("the component use was not published before the publisher closed")
 			}
 		})
 	}

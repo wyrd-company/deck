@@ -13,6 +13,7 @@ import (
 	d "github.com/disgoorg/disgo/discord"
 	"github.com/disgoorg/disgo/events"
 	"github.com/disgoorg/disgo/gateway"
+	"github.com/disgoorg/disgo/rest"
 	"github.com/disgoorg/snowflake/v2"
 	pb "github.com/wyrd-company/deck/internal/api/deckv1"
 	"github.com/wyrd-company/deck/internal/service/activity"
@@ -74,6 +75,11 @@ type Gateway struct {
 	pending    map[uint64]bool
 	recovered  uint64
 	closed     bool
+	// calls counts listener and registration callbacks in progress, so
+	// shutdown can join them before closing what they use.
+	calls     sync.WaitGroup
+	ackCtx    context.Context
+	ackCancel context.CancelFunc
 }
 
 // NewGateway installs the bot's listeners. Install every gateway before
@@ -82,8 +88,9 @@ func NewGateway(ctx context.Context, name string, client *Client, reg *registry.
 	if log == nil {
 		log = slog.Default()
 	}
+	ackCtx, ackCancel := context.WithCancel(context.WithoutCancel(ctx))
 	ctx, cancel := context.WithCancel(ctx)
-	g := &Gateway{Name: name, client: client, registry: reg, publisher: publisher, index: index, log: log.With("bot", name), ctx: ctx, cancel: cancel, overflowed: map[uint64]time.Time{}, boundaries: map[uint64]uint64{}, pending: map[uint64]bool{}}
+	g := &Gateway{ackCtx: ackCtx, ackCancel: ackCancel, Name: name, client: client, registry: reg, publisher: publisher, index: index, log: log.With("bot", name), ctx: ctx, cancel: cancel, overflowed: map[uint64]time.Time{}, boundaries: map[uint64]uint64{}, pending: map[uint64]bool{}}
 	client.Bot.AddEventListeners(
 		bot.NewListenerFunc(g.onReady),
 		bot.NewListenerFunc(g.onGuildsReady),
@@ -145,7 +152,47 @@ func (g *Gateway) Close(ctx context.Context) {
 }
 
 // Wait waits for the gateway's background work after Close.
-func (g *Gateway) Wait() { g.wg.Wait() }
+func (g *Gateway) Wait() { g.wg.Wait(); g.ackCancel() }
+
+// ackTimeout is Discord's deadline for acknowledging an interaction.
+const ackTimeout = 3 * time.Second
+
+// enter starts a callback unless the gateway is closed; pair it with
+// g.calls.Done. No callback starts once Close has begun, so JoinCallbacks
+// never races a new Add.
+func (g *Gateway) enter() bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.closed {
+		return false
+	}
+	g.calls.Add(1)
+	return true
+}
+
+// JoinCallbacks waits, after Close, for listener callbacks still running,
+// such as a component acknowledgement in flight, so the publisher and the
+// bot's REST client stay open until they end. After budget it cancels their
+// acknowledgements and waits grace more; it reports whether they all ended.
+// A caller must not close the bot's REST client while one is still running:
+// closing disgo's rate limiter deadlocks a request in flight (see
+// DISGO-WORKAROUND(rest-close-deadlock)).
+func (g *Gateway) JoinCallbacks(budget, grace time.Duration) bool {
+	done := make(chan struct{})
+	go func() { g.calls.Wait(); close(done) }()
+	select {
+	case <-done:
+		return true
+	case <-time.After(budget):
+	}
+	g.ackCancel()
+	select {
+	case <-done:
+		return true
+	case <-time.After(grace):
+		return false
+	}
+}
 
 func (g *Gateway) watchState() {
 	last := g.Status()
@@ -235,6 +282,10 @@ func (g *Gateway) hold(channel uint64, run func()) {
 // registered releases a newly registered thread's held events into
 // publishing, and schedules recovery when the buffer dropped one of them.
 func (g *Gateway) registered(id uint64, e registry.Entry) {
+	if !g.enter() {
+		return
+	}
+	defer g.calls.Done()
 	g.mu.Lock()
 	release := []func(){}
 	g.held = slices.DeleteFunc(g.held, func(h held) bool {
@@ -325,6 +376,10 @@ func (g *Gateway) advance(thread, id uint64, message bool) {
 }
 
 func (g *Gateway) onMessage(e *events.GuildMessageCreate) {
+	if !g.enter() {
+		return
+	}
+	defer g.calls.Done()
 	m := e.Message
 	var reference uint64
 	if m.Type == d.MessageTypePollResult && m.MessageReference != nil && m.MessageReference.MessageID != nil {
@@ -350,8 +405,15 @@ func (g *Gateway) message(channel, reference uint64, m d.Message) {
 }
 
 func (g *Gateway) onComponent(e *events.ComponentInteractionCreate) {
+	if !g.enter() {
+		return
+	}
+	defer g.calls.Done()
 	// Acknowledge first, within Discord's deadline, touched thread or not.
-	if err := e.DeferUpdateMessage(); err != nil {
+	ack, cancel := context.WithTimeout(g.ackCtx, ackTimeout)
+	err := e.DeferUpdateMessage(rest.WithCtx(ack))
+	cancel()
+	if err != nil {
 		g.log.Warn("component interaction not acknowledged", "interaction", uint64(e.ID()))
 	}
 	channel, message := uint64(e.Message.ChannelID), uint64(e.Message.ID)
@@ -412,6 +474,10 @@ type rawVote struct {
 // case for them), so its typed vote events never fire. The raw event is
 // dispatched in order with the session's other events.
 func (g *Gateway) onRaw(e *events.Raw) {
+	if !g.enter() {
+		return
+	}
+	defer g.calls.Done()
 	removed := false
 	switch e.EventType {
 	case gateway.EventTypeMessagePollVoteAdd:
@@ -453,6 +519,10 @@ func (g *Gateway) pollVote(channel, message uint64, a *pb.Activity) {
 // onReady copies the boundary of each of the bot's registered threads and
 // marks their recovery pending, before any later event of the session.
 func (g *Gateway) onReady(e *events.Ready) {
+	if !g.enter() {
+		return
+	}
+	defer g.calls.Done()
 	g.mu.Lock()
 	g.session++
 	session := g.session
@@ -480,6 +550,10 @@ func (g *Gateway) onReady(e *events.Ready) {
 }
 
 func (g *Gateway) onGuildsReady(*events.GuildsReady) {
+	if !g.enter() {
+		return
+	}
+	defer g.calls.Done()
 	g.mu.Lock()
 	session := g.session
 	g.mu.Unlock()

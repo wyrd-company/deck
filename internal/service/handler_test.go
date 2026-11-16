@@ -61,6 +61,9 @@ type fakeDiscord struct {
 	history          func(path string, query url.Values) (int, any)
 	channel          func(id string) (int, any)
 	postThread       string
+	// interactionBlock holds interaction callbacks until closed or until
+	// the request is canceled.
+	interactionBlock, interactionEntered chan struct{}
 }
 
 func threadJSON(id, parent string) map[string]any {
@@ -165,6 +168,22 @@ func (f *fakeDiscord) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if strings.HasPrefix(path, "/interactions/") {
+		f.mu.Lock()
+		block, entered := f.interactionBlock, f.interactionEntered
+		f.mu.Unlock()
+		if entered != nil {
+			close(entered)
+			f.mu.Lock()
+			f.interactionEntered = nil
+			f.mu.Unlock()
+		}
+		if block != nil {
+			select {
+			case <-block:
+			case <-r.Context().Done():
+				return
+			}
+		}
 		w.WriteHeader(204)
 		return
 	}

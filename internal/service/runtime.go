@@ -219,16 +219,19 @@ func (r *Runtime) Checks() health.Checks {
 // Shutdown budgets, within the service's 10-second stop: each step ends at
 // its budget, so an outage cannot hold the process. With the gateway and bot
 // closes (half a second each) and the index's consumer stop (a second),
-// they add up to 8.5 seconds after the transport has joined its calls.
+// they add up to 9.25 seconds after the transport has joined its calls.
 var (
-	sendBudget    = 2 * time.Second
-	publishBudget = 1500 * time.Millisecond
-	flushBudget   = 1500 * time.Millisecond
-	drainBudget   = 1500 * time.Millisecond
+	callbackBudget = time.Second
+	callbackGrace  = 250 * time.Millisecond
+	sendBudget     = 1500 * time.Millisecond
+	publishBudget  = 1500 * time.Millisecond
+	flushBudget    = 1500 * time.Millisecond
+	drainBudget    = 1500 * time.Millisecond
 )
 
-// Close stops the runtime in order: gateway sessions stop delivering;
-// process-owned sends finish (up to sendBudget, then they are canceled);
+// Close stops the runtime in order: gateway sessions stop delivering and
+// their callbacks in flight finish (callbackBudget, then their
+// acknowledgements are canceled); process-owned sends finish (up to sendBudget, then they are canceled);
 // waiting activity is published (publishBudget); dirty registry entries are
 // written (flushBudget); then the index, bot clients and NATS close, NATS
 // draining first (drainBudget). What a budget cuts short is logged.
@@ -243,6 +246,27 @@ func (r *Runtime) Close() {
 			g.Close(ctx)
 		}
 		cancel()
+		// Gateway callbacks still running, such as a component
+		// acknowledgement in flight, finish before the publisher and the bot
+		// clients they use close; a bot whose callback outlives the budget
+		// keeps its REST client open (DISGO-WORKAROUND(rest-close-deadlock),
+		// see wyrd-company/deck#16).
+		leftOpen := map[string]bool{}
+		var joins sync.WaitGroup
+		var joined sync.Mutex
+		for name, g := range r.Gateways {
+			joins.Add(1)
+			go func() {
+				defer joins.Done()
+				if !g.JoinCallbacks(callbackBudget, callbackGrace) {
+					joined.Lock()
+					leftOpen[name] = true
+					joined.Unlock()
+					slog.Warn("gateway callback still running at shutdown; bot client left open", "bot", name)
+				}
+			}()
+		}
+		joins.Wait()
 		if r.Handler != nil {
 			done := make(chan struct{})
 			go func() { r.Handler.Wait(); close(done) }()
@@ -284,8 +308,10 @@ func (r *Runtime) Close() {
 		}
 		// DISGO-WORKAROUND(rest-close-deadlock): bot clients close only after sends and gateway work finished; see wyrd-company/deck#16 (upstream disgoorg/disgo#661).
 		ctx, cancel = within(500 * time.Millisecond)
-		for _, b := range r.Bots {
-			b.Bot.Close(ctx)
+		for name, b := range r.Bots {
+			if !leftOpen[name] {
+				b.Bot.Close(ctx)
+			}
 		}
 		cancel()
 		if r.NATS != nil {

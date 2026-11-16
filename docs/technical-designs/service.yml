@@ -237,12 +237,15 @@ proposed-design:
     sequence at start, up to the call's deadline. SIGTERM or SIGINT closes the
     SSH listener, cancels and joins open calls before closing the runtime,
     closes the gateway sessions, drains NATS and exits 0, within 10 seconds.
-    The runtime closes in order within budgets: gateway sessions close; sends
-    in flight get 2 seconds to finish and are then canceled; waiting activity
-    gets 1.5 seconds to publish; dirty registry entries get 1.5 seconds to be
-    written; NATS drains for up to 1.5 seconds. What a budget cuts short is
-    logged; during an outage that is waiting activity and registry writes,
-    which recovery or the named risks cover.
+    The runtime closes in order within budgets: gateway sessions close;
+    gateway callbacks in flight, such as a component acknowledgement, get 1
+    second to finish and are then canceled, and a bot whose callback still
+    runs keeps its REST client open; sends in flight get 1.5 seconds to finish
+    and are then canceled; waiting activity gets 1.5 seconds to publish; dirty
+    registry entries get 1.5 seconds to be written; NATS drains for up to 1.5
+    seconds. What a budget cuts short is logged; during an outage that is
+    waiting activity and registry writes, which recovery or the named risks
+    cover.
   bots: >-
     Each bot is a `bot.Client` from `disgo.New` with gateway intents guilds,
     guild messages, message content and guild message polls, and caches for
