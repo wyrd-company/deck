@@ -208,7 +208,8 @@ func TestDurableMergePrecedence(t *testing.T) {
 	}
 	// Deliberately omit the watcher so a stale local entry cannot be refreshed
 	// before BeginReply's CAS merge reads the real durable bucket.
-	r := &Registry{KV: kv, entries: map[uint64]Entry{100: stale}, revisions: map[uint64]uint64{}, dirty: map[uint64]bool{}, attempts: map[string]*attempt{}, cleanup: map[uint64]map[string]bool{}, ctx: ctx}
+	r := newRegistry(ctx, kv)
+	r.entries[100] = stale
 	if err = r.BeginReply(ctx, 100, stale, "key"); err != nil {
 		t.Fatal(err)
 	}

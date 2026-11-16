@@ -7,6 +7,13 @@
 //
 // ---
 // Package registry maintains the durable, one-bot-per-thread routing registry.
+//
+// The in-memory map is guarded by mu, which is never held across a NATS
+// request: lookups stay answerable while the bucket is slow or unreachable.
+// Writes to one thread are serialised by a per-thread write lock, read their
+// input from a snapshot, perform the revision-checked key-value I/O without
+// mu, and reconcile the result only when the local entry has not changed in
+// the meantime; otherwise the entry stays dirty and is written again.
 package registry
 
 import (
@@ -46,6 +53,9 @@ type BotConflictError struct{ Owner Entry }
 func (e *BotConflictError) Error() string { return ErrBotConflict.Error() }
 func (e *BotConflictError) Unwrap() error { return ErrBotConflict }
 
+// writeTimeout bounds one background write attempt of one entry.
+const writeTimeout = time.Second
+
 type attempt struct {
 	count              int
 	removable, unknown bool
@@ -56,8 +66,11 @@ type Registry struct {
 	entries   map[uint64]Entry
 	revisions map[uint64]uint64
 	dirty     map[uint64]bool
+	versions  map[uint64]uint64
 	attempts  map[string]*attempt
 	cleanup   map[uint64]map[string]bool
+	writers   map[uint64]chan struct{}
+	hooks     []func(uint64, Entry)
 	ctx       context.Context
 	cancel    context.CancelFunc
 	wg        sync.WaitGroup
@@ -97,25 +110,30 @@ func bucketFailure(message string, cause error) error {
 	return errors.New(message)
 }
 
-func New(ctx context.Context, kv jetstream.KeyValue, maxAge time.Duration) (*Registry, error) {
+func newRegistry(ctx context.Context, kv jetstream.KeyValue) *Registry {
 	ctx, cancel := context.WithCancel(ctx)
-	r := &Registry{KV: kv, entries: map[uint64]Entry{}, revisions: map[uint64]uint64{}, dirty: map[uint64]bool{}, attempts: map[string]*attempt{}, cleanup: map[uint64]map[string]bool{}, ctx: ctx, cancel: cancel}
-	w, err := kv.Watch(ctx, "threads.*")
+	return &Registry{KV: kv, entries: map[uint64]Entry{}, revisions: map[uint64]uint64{}, dirty: map[uint64]bool{}, versions: map[uint64]uint64{}, attempts: map[string]*attempt{}, cleanup: map[uint64]map[string]bool{}, writers: map[uint64]chan struct{}{}, ctx: ctx, cancel: cancel}
+}
+
+func New(ctx context.Context, kv jetstream.KeyValue, maxAge time.Duration) (*Registry, error) {
+	r := newRegistry(ctx, kv)
+	w, err := kv.Watch(r.ctx, "threads.*")
 	if err != nil {
-		cancel()
-		return nil, err
+		r.cancel()
+		return nil, bucketFailure("nats.threads: cannot watch bucket", err)
 	}
 	r.watcher = w
 	for {
 		select {
-		case <-ctx.Done():
-			w.Stop()
-			cancel()
-			return nil, ctx.Err()
+		case <-r.ctx.Done():
+			err := ctx.Err()
+			_ = w.Stop()
+			r.cancel()
+			return nil, err
 		case e, ok := <-w.Updates():
 			if !ok {
-				w.Stop()
-				cancel()
+				_ = w.Stop()
+				r.cancel()
 				return nil, errors.New("registry watch ended during load")
 			}
 			if e == nil {
@@ -136,23 +154,48 @@ func clone(e Entry) Entry {
 	e.Keys = k
 	return e
 }
+func visible(e Entry) bool { return e.CreatedByDeck || len(e.Keys) > 0 }
+
 func (r *Registry) Lookup(id uint64) (Entry, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	e, ok := r.entries[id]
-	return clone(e), ok && (e.CreatedByDeck || len(e.Keys) > 0)
+	return clone(e), ok && visible(e)
 }
 func (r *Registry) Snapshot() map[uint64]Entry {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	out := map[uint64]Entry{}
 	for id, e := range r.entries {
-		if e.CreatedByDeck || len(e.Keys) > 0 {
+		if visible(e) {
 			out[id] = clone(e)
 		}
 	}
 	return out
 }
+
+// OnRegister calls f, outside the registry's locks, each time a thread
+// becomes registered in memory: by a local post or reply, or by a watched
+// write of another instance. Register hooks before serving.
+func (r *Registry) OnRegister(f func(id uint64, e Entry)) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.hooks = append(r.hooks, f)
+}
+
+// notify runs registration hooks; call it without holding mu.
+func (r *Registry) notify(id uint64, e Entry, before bool) {
+	if before || !visible(e) {
+		return
+	}
+	r.mu.RLock()
+	hooks := append([]func(uint64, Entry){}, r.hooks...)
+	r.mu.RUnlock()
+	for _, f := range hooks {
+		f(id, clone(e))
+	}
+}
+
 func (r *Registry) Check(ctx context.Context) error { _, err := r.KV.Status(ctx); return err }
 func (r *Registry) apply(v jetstream.KeyValueEntry) {
 	id, err := strconv.ParseUint(strings.TrimPrefix(v.Key(), "threads."), 10, 64)
@@ -160,20 +203,25 @@ func (r *Registry) apply(v jetstream.KeyValueEntry) {
 		return
 	}
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	if r.dirty[id] || v.Revision() <= r.revisions[id] {
+		r.mu.Unlock()
 		return
 	}
+	old, existed := r.entries[id]
+	before := existed && visible(old)
+	var now Entry
 	if v.Operation() != jetstream.KeyValuePut {
 		delete(r.entries, id)
 	} else {
-		var e Entry
-		if json.Unmarshal(v.Value(), &e) != nil {
+		if json.Unmarshal(v.Value(), &now) != nil {
+			r.mu.Unlock()
 			return
 		}
-		r.entries[id] = e
+		r.entries[id] = now
 	}
 	r.revisions[id] = v.Revision()
+	r.mu.Unlock()
+	r.notify(id, now, before)
 }
 func (r *Registry) watch() {
 	defer r.wg.Done()
@@ -193,26 +241,47 @@ func (r *Registry) watch() {
 }
 func key(id uint64) string { return "threads." + strconv.FormatUint(id, 10) }
 
-// writeLocked merges using the bucket revision; it never overwrites another bot.
-func (r *Registry) writeLocked(ctx context.Context, id uint64, e Entry) error {
+// lock serialises writers of one thread. It never holds mu while waiting, and
+// a waiter gives up when its context ends.
+func (r *Registry) lock(ctx context.Context, id uint64) (func(), error) {
+	r.mu.Lock()
+	ch := r.writers[id]
+	if ch == nil {
+		ch = make(chan struct{}, 1)
+		r.writers[id] = ch
+	}
+	r.mu.Unlock()
+	select {
+	case ch <- struct{}{}:
+		return func() { <-ch }, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+// write merges e into the durable entry with revision-checked writes. It
+// never overwrites another bot's entry, keeps `sent` over `pending`, keeps
+// keys only the bucket holds unless cleanup removed them, and never lowers
+// the boundary. It must be called without mu.
+func (r *Registry) write(ctx context.Context, id uint64, e Entry, cleanup map[string]bool) (Entry, uint64, bool, error) {
 	e = clone(e)
 	for {
 		old, err := r.KV.Get(ctx, key(id))
 		var rev uint64
 		if err != nil && !errors.Is(err, jetstream.ErrKeyNotFound) {
-			return err
+			return Entry{}, 0, false, err
 		}
 		if err == nil {
 			var previous Entry
 			if json.Unmarshal(old.Value(), &previous) != nil {
-				return errors.New("invalid registry entry")
+				return Entry{}, 0, false, errors.New("invalid registry entry")
 			}
 			if previous.Bot != e.Bot {
-				return &BotConflictError{Owner: clone(previous)}
+				return Entry{}, 0, false, &BotConflictError{Owner: clone(previous)}
 			}
 			rev = old.Revision()
 			for k, t := range previous.Keys {
-				if r.cleanup[id][k] {
+				if cleanup[k] {
 					continue
 				}
 				if current, ok := e.Keys[k]; !ok || t.State == "sent" && current.State != "sent" {
@@ -222,21 +291,22 @@ func (r *Registry) writeLocked(ctx context.Context, id uint64, e Entry) error {
 			if previous.LastMessageID > e.LastMessageID {
 				e.LastMessageID = previous.LastMessageID
 			}
+			if previous.ActiveAt.After(e.ActiveAt) {
+				e.ActiveAt = previous.ActiveAt
+			}
+			e.CreatedByDeck = e.CreatedByDeck || previous.CreatedByDeck
 		}
-		if len(e.Keys) == 0 && !e.CreatedByDeck {
+		if !visible(e) {
 			if rev != 0 {
 				if err := r.KV.Delete(ctx, key(id), jetstream.LastRevision(rev)); err != nil {
-					return err
+					return Entry{}, 0, false, err
 				}
 			}
-			delete(r.entries, id)
-			delete(r.dirty, id)
-			delete(r.cleanup, id)
-			return nil
+			return e, 0, true, nil
 		}
 		raw, err := json.Marshal(e)
 		if err != nil {
-			return err
+			return Entry{}, 0, false, err
 		}
 		var next uint64
 		if rev == 0 {
@@ -248,22 +318,80 @@ func (r *Registry) writeLocked(ctx context.Context, id uint64, e Entry) error {
 			continue
 		}
 		if err != nil {
-			return err
+			return Entry{}, 0, false, err
 		}
-		r.entries[id] = clone(e)
-		r.revisions[id] = next
-		delete(r.dirty, id)
-		delete(r.cleanup, id)
-		return nil
+		return e, next, false, nil
 	}
+}
+
+// fold adds durable state to a local entry that changed while it was written.
+func fold(local, durable Entry, cleanup map[string]bool) Entry {
+	local = clone(local)
+	for k, t := range durable.Keys {
+		if cleanup[k] {
+			continue
+		}
+		if current, ok := local.Keys[k]; !ok || t.State == "sent" && current.State != "sent" {
+			local.Keys[k] = t
+		}
+	}
+	if durable.LastMessageID > local.LastMessageID {
+		local.LastMessageID = durable.LastMessageID
+	}
+	local.CreatedByDeck = local.CreatedByDeck || durable.CreatedByDeck
+	return local
+}
+
+// reconcile applies a finished write under mu. When the local entry changed
+// during the I/O, its newer state is kept, the durable state folded in, and
+// the entry stays dirty for the next write.
+func (r *Registry) reconcile(id, version uint64, written Entry, rev uint64, deleted bool, cleanup map[string]bool) {
+	if rev > r.revisions[id] {
+		r.revisions[id] = rev
+	}
+	if r.versions[id] != version {
+		if local, ok := r.entries[id]; ok && !deleted {
+			r.entries[id] = fold(local, written, cleanup)
+		}
+		return
+	}
+	if deleted {
+		delete(r.entries, id)
+	} else {
+		r.entries[id] = clone(written)
+	}
+	delete(r.dirty, id)
+	for k := range cleanup {
+		delete(r.cleanup[id], k)
+	}
+	if len(r.cleanup[id]) == 0 {
+		delete(r.cleanup, id)
+	}
+}
+
+func copySet(s map[string]bool) map[string]bool {
+	out := make(map[string]bool, len(s))
+	for k, v := range s {
+		out[k] = v
+	}
+	return out
+}
+
+// mark records a local change under mu.
+func (r *Registry) mark(id uint64, e Entry) {
+	r.entries[id] = e
+	r.versions[id]++
+	r.dirty[id] = true
 }
 
 // RegisterPost makes routing visible immediately and retries persistence until stop.
 func (r *Registry) RegisterPost(id uint64, e Entry, keyName string) error {
 	r.mu.Lock()
-	defer r.mu.Unlock()
-	if old, ok := r.entries[id]; ok {
+	old, existed := r.entries[id]
+	before := existed && visible(old)
+	if existed {
 		if old.Bot != e.Bot {
+			r.mu.Unlock()
 			return &BotConflictError{Owner: clone(old)}
 		}
 		created := e.CreatedByDeck
@@ -278,17 +406,27 @@ func (r *Registry) RegisterPost(id uint64, e Entry, keyName string) error {
 	if e.LastMessageID == 0 {
 		e.LastMessageID = id
 	}
-	r.entries[id] = e
-	r.dirty[id] = true
+	r.mark(id, e)
+	r.mu.Unlock()
+	r.notify(id, e, before)
 	return nil
 }
 
-// BeginReply persists pending before Discord is called, using the pre-send boundary.
+// BeginReply persists pending before Discord is called, using the pre-send
+// boundary. The in-memory entry changes only after the write succeeds, and
+// the write runs without mu.
 func (r *Registry) BeginReply(ctx context.Context, id uint64, e Entry, name string) error {
+	unlock, err := r.lock(ctx, id)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	r.mu.Lock()
-	defer r.mu.Unlock()
-	if old, ok := r.entries[id]; ok {
+	old, existed := r.entries[id]
+	before := existed && visible(old)
+	if existed {
 		if old.Bot != e.Bot {
+			r.mu.Unlock()
 			return &BotConflictError{Owner: clone(old)}
 		}
 		e = clone(old)
@@ -305,9 +443,24 @@ func (r *Registry) BeginReply(ctx context.Context, id uint64, e Entry, name stri
 	if e.LastMessageID == 0 {
 		e.LastMessageID = id
 	}
-	if err := r.writeLocked(ctx, id, e); err != nil {
+	version, cleanup := r.versions[id], copySet(r.cleanup[id])
+	delete(cleanup, name)
+	r.mu.Unlock()
+	written, rev, _, err := r.write(ctx, id, e, cleanup)
+	if err != nil {
 		return err
 	}
+	r.mu.Lock()
+	r.reconcile(id, version, written, rev, false, cleanup)
+	if local, ok := r.entries[id]; ok && r.versions[id] != version {
+		// A concurrent local change kept its state; the touch written above
+		// must be in memory as well.
+		if _, has := local.Keys[name]; !has {
+			local.Keys[name] = written.Keys[name]
+		}
+		r.entries[id] = local
+	}
+	delete(r.cleanup[id], name)
 	k := fmt.Sprintf("%d:%s", id, name)
 	a := r.attempts[k]
 	if a == nil {
@@ -315,52 +468,61 @@ func (r *Registry) BeginReply(ctx context.Context, id uint64, e Entry, name stri
 		r.attempts[k] = a
 	}
 	a.count++
+	now := r.entries[id]
+	r.mu.Unlock()
+	r.notify(id, now, before)
 	return nil
 }
 
 // FinishReply distinguishes a known rejection from an unknown REST outcome.
 func (r *Registry) FinishReply(id uint64, name string, success, unknown bool) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	e, ok := r.entries[id]
 	if !ok {
+		r.mu.Unlock()
 		return
 	}
 	k := fmt.Sprintf("%d:%s", id, name)
 	a := r.attempts[k]
 	if a == nil {
+		r.mu.Unlock()
 		return
 	}
 	a.count--
 	a.unknown = a.unknown || unknown
 	if success {
+		e = clone(e)
 		t := e.Keys[name]
 		t.State = "sent"
 		e.Keys[name] = t
 		e.ActiveAt = time.Now().UTC()
-		r.entries[id] = e
-		r.dirty[id] = true
+		r.mark(id, e)
 	}
 	if a.count > 0 {
+		r.mu.Unlock()
 		return
 	}
 	delete(r.attempts, k)
-	if !success && !a.unknown && a.removable && e.Keys[name].State == "pending" {
+	cleanup := !success && !a.unknown && a.removable && e.Keys[name].State == "pending"
+	if cleanup {
+		e = clone(e)
 		delete(e.Keys, name)
 		if r.cleanup[id] == nil {
 			r.cleanup[id] = map[string]bool{}
 		}
 		r.cleanup[id][name] = true
-		r.entries[id] = e
-		r.dirty[id] = true
-		ctx, cancel := context.WithTimeout(r.ctx, time.Second)
-		defer cancel()
-		_ = r.writeLocked(ctx, id, e)
+		r.mark(id, e)
 	}
-
+	r.mu.Unlock()
+	if cleanup {
+		ctx, cancel := context.WithTimeout(r.ctx, writeTimeout)
+		defer cancel()
+		_ = r.flushOne(ctx, id)
+	}
 }
 
-// Advance is monotonic. Task 7 calls it only after its recovery/pending gate allows it.
+// Advance is monotonic. The gateway calls it only after its recovery/pending
+// gate allows the boundary to move.
 func (r *Registry) Advance(id, message uint64) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -368,23 +530,92 @@ func (r *Registry) Advance(id, message uint64) {
 	if !ok {
 		return
 	}
+	e = clone(e)
 	if message > e.LastMessageID {
 		e.LastMessageID = message
 	}
 	e.ActiveAt = time.Now().UTC()
-	r.entries[id] = e
-	r.dirty[id] = true
+	r.mark(id, e)
 }
+
+// Delete removes a thread's entry from the bucket and memory, unless the
+// thread changed locally while the delete was in flight.
 func (r *Registry) Delete(ctx context.Context, id uint64) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if err := r.KV.Delete(ctx, key(id), jetstream.LastRevision(r.revisions[id])); err != nil {
+	unlock, err := r.lock(ctx, id)
+	if err != nil {
 		return err
 	}
-	delete(r.entries, id)
-	delete(r.dirty, id)
+	defer unlock()
+	r.mu.RLock()
+	rev, version := r.revisions[id], r.versions[id]
+	r.mu.RUnlock()
+	if err := r.KV.Delete(ctx, key(id), jetstream.LastRevision(rev)); err != nil {
+		return err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.versions[id] == version {
+		delete(r.entries, id)
+		delete(r.dirty, id)
+		delete(r.cleanup, id)
+	}
 	return nil
 }
+
+// flushOne writes one dirty entry; it returns nil when the entry is clean.
+func (r *Registry) flushOne(ctx context.Context, id uint64) error {
+	unlock, err := r.lock(ctx, id)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	r.mu.RLock()
+	e, ok := r.entries[id]
+	dirty := r.dirty[id]
+	version, cleanup := r.versions[id], copySet(r.cleanup[id])
+	r.mu.RUnlock()
+	if !dirty {
+		return nil
+	}
+	if !ok {
+		r.mu.Lock()
+		delete(r.dirty, id)
+		r.mu.Unlock()
+		return nil
+	}
+	written, rev, deleted, err := r.write(ctx, id, e, cleanup)
+	if err != nil {
+		return err
+	}
+	r.mu.Lock()
+	r.reconcile(id, version, written, rev, deleted, cleanup)
+	r.mu.Unlock()
+	return nil
+}
+
+func (r *Registry) dirtyIDs() []uint64 {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	ids := make([]uint64, 0, len(r.dirty))
+	for id := range r.dirty {
+		ids = append(ids, id)
+	}
+	return ids
+}
+
+// Flush writes every dirty entry within ctx. Shutdown calls it with a budget
+// before cancelling the registry, so writes made while serving reach the
+// bucket when NATS is reachable; it returns how many entries stay unwritten.
+func (r *Registry) Flush(ctx context.Context) int {
+	for _, id := range r.dirtyIDs() {
+		if ctx.Err() != nil {
+			break
+		}
+		_ = r.flushOne(ctx, id)
+	}
+	return r.Pending()
+}
+
 func (r *Registry) retry(maxAge time.Duration) {
 	defer r.wg.Done()
 	t := time.NewTicker(100 * time.Millisecond)
@@ -395,25 +626,41 @@ func (r *Registry) retry(maxAge time.Duration) {
 		case <-r.ctx.Done():
 			return
 		case <-t.C:
-			r.mu.Lock()
-			for id := range r.dirty {
-				ctx, cancel := context.WithTimeout(r.ctx, time.Second)
-				_ = r.writeLocked(ctx, id, r.entries[id])
+			for _, id := range r.dirtyIDs() {
+				ctx, cancel := context.WithTimeout(r.ctx, writeTimeout)
+				_ = r.flushOne(ctx, id)
 				cancel()
 			}
-			r.mu.Unlock()
 			if maxAge > 0 && time.Since(sweep) >= time.Hour {
 				sweep = time.Now()
-				for id, e := range r.Snapshot() {
-					if time.Since(e.ActiveAt) > maxAge {
-						ctx, cancel := context.WithTimeout(r.ctx, time.Second)
-						_ = r.Delete(ctx, id)
-						cancel()
-					}
-				}
+				r.Sweep(maxAge)
 			}
 		}
 	}
 }
+
+// Sweep deletes every clean entry whose latest touch or publish is older
+// than maxAge. A delete, unlike an expiry, reaches every watcher.
+func (r *Registry) Sweep(maxAge time.Duration) {
+	r.mu.RLock()
+	stale := []uint64{}
+	for id, e := range r.entries {
+		if !r.dirty[id] && time.Since(e.ActiveAt) > maxAge {
+			stale = append(stale, id)
+		}
+	}
+	r.mu.RUnlock()
+	for _, id := range stale {
+		ctx, cancel := context.WithTimeout(r.ctx, writeTimeout)
+		_ = r.Delete(ctx, id)
+		cancel()
+	}
+}
 func (r *Registry) Pending() int { r.mu.RLock(); defer r.mu.RUnlock(); return len(r.dirty) }
-func (r *Registry) Close()       { r.cancel(); _ = r.watcher.Stop(); r.wg.Wait() }
+func (r *Registry) Close() {
+	r.cancel()
+	if r.watcher != nil {
+		_ = r.watcher.Stop()
+	}
+	r.wg.Wait()
+}
