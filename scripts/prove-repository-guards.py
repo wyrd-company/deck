@@ -8,6 +8,7 @@ import io
 from pathlib import Path
 import subprocess
 import shutil
+import sys
 import tarfile
 import tempfile
 from unittest.mock import patch
@@ -15,9 +16,9 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parent.parent
 
 
-def run(command, marker=None, cwd=ROOT):
+def run(command, marker=None, cwd=ROOT, timeout=120):
     result = subprocess.run(command, cwd=cwd, text=True, stdout=subprocess.PIPE,
-                            stderr=subprocess.STDOUT, timeout=120)
+                            stderr=subprocess.STDOUT, timeout=timeout)
     if marker is None:
         if result.returncode:
             raise RuntimeError(result.stdout)
@@ -96,6 +97,30 @@ def checksum_guard(source):
         return False
 
 
+def development_cancellation_guard():
+    # Mutate a disposable copy so the live Taskfile and tests stay untouched.
+    with tempfile.TemporaryDirectory(prefix="deck-dev-guard-") as directory:
+        root = Path(directory)
+        test = root / "scripts/tests/test_repository.py"
+        test.parent.mkdir(parents=True)
+        shutil.copyfile(ROOT / "scripts/tests/test_repository.py", test)
+        taskfile = root / "Taskfile.yml"
+        source = (ROOT / "Taskfile.yml").read_text()
+        taskfile.write_text(source)
+        command = [sys.executable, str(test),
+                   "DevelopmentTaskTests.test_watch_cancellation_stops_the_service_before_restart"]
+        run(command, cwd=root, timeout=650)
+        target = ('      - task: build\n'
+                  '      - ./bin/deck service start --config {{shellQuote .CONFIG}}')
+        if source.count(target) != 1:
+            raise RuntimeError("Development command mutation target changed")
+        taskfile.write_text(source.replace(
+            target, '      - go run ./cmd/deck service start --config {{shellQuote .CONFIG}}'))
+        run(command, "watch cancellation left the service running", cwd=root, timeout=650)
+    print("PASS guard: development service stops and releases its port; old go run leaves an orphan and fails",
+          flush=True)
+
+
 def main():
     run(["task", "lint:markdown"])
     run(["task", "lint:yaml"])
@@ -106,6 +131,7 @@ def main():
                     ["task", "lint:yaml"], "key-duplicates")
     print("PASS guard: YAML lint rejects duplicate keys", flush=True)
     ignored_lint_guard()
+    development_cancellation_guard()
     with tempfile.TemporaryDirectory(prefix="deck-commit-probe-") as directory:
         message = Path(directory) / "message"
         for header in ("fix(cli): preserve unread activity", "feat!: update the contract",

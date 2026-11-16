@@ -89,11 +89,17 @@ func main() {
                                               cwd=root, env=environment, stdout=output,
                                               stderr=subprocess.STDOUT, start_new_session=True)
                     try:
-                        deadline = time.monotonic() + 30
+                        # This includes a real cold Go build while task check
+                        # compiles other tools in parallel on a small machine.
+                        # Startup gets its own budget; watch cancellation below
+                        # must still stop the service within Task's 2 seconds.
+                        deadline = time.monotonic() + 300
                         while not ready.exists() and runner.poll() is None and time.monotonic() < deadline:
                             time.sleep(0.02)
                         output.seek(0)
-                        self.assertTrue(ready.exists(), output.read())
+                        self.assertTrue(ready.exists(),
+                                        f"service did not start within 300s (task exit: {runner.poll()}):\n"
+                                        + output.read())
                         state = json.loads(ready.read_text())
                         service_pids.append(state["pid"])
                         address = state["address"]
