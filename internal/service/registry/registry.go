@@ -56,6 +56,15 @@ func (e *BotConflictError) Unwrap() error { return ErrBotConflict }
 // writeTimeout bounds one background write attempt of one entry.
 const writeTimeout = time.Second
 
+// watchedState is a bucket revision the watch delivered while the entry had
+// local changes or a write in flight; the write's reconciliation, or the
+// entry's settling afterwards, applies it so it is never lost.
+type watchedState struct {
+	rev     uint64
+	entry   Entry
+	deleted bool
+}
+
 type attempt struct {
 	count              int
 	removable, unknown bool
@@ -70,6 +79,8 @@ type Registry struct {
 	attempts  map[string]*attempt
 	cleanup   map[uint64]map[string]bool
 	writers   map[uint64]chan struct{}
+	writing   map[uint64]int
+	watched   map[uint64]watchedState
 	hooks     []func(uint64, Entry)
 	ctx       context.Context
 	cancel    context.CancelFunc
@@ -112,7 +123,7 @@ func bucketFailure(message string, cause error) error {
 
 func newRegistry(ctx context.Context, kv jetstream.KeyValue) *Registry {
 	ctx, cancel := context.WithCancel(ctx)
-	return &Registry{KV: kv, entries: map[uint64]Entry{}, revisions: map[uint64]uint64{}, dirty: map[uint64]bool{}, versions: map[uint64]uint64{}, attempts: map[string]*attempt{}, cleanup: map[uint64]map[string]bool{}, writers: map[uint64]chan struct{}{}, ctx: ctx, cancel: cancel}
+	return &Registry{KV: kv, entries: map[uint64]Entry{}, revisions: map[uint64]uint64{}, dirty: map[uint64]bool{}, versions: map[uint64]uint64{}, attempts: map[string]*attempt{}, cleanup: map[uint64]map[string]bool{}, writers: map[uint64]chan struct{}{}, writing: map[uint64]int{}, watched: map[uint64]watchedState{}, ctx: ctx, cancel: cancel}
 }
 
 func New(ctx context.Context, kv jetstream.KeyValue, maxAge time.Duration) (*Registry, error) {
@@ -209,26 +220,54 @@ func (r *Registry) apply(v jetstream.KeyValueEntry) {
 	if err != nil {
 		return
 	}
+	var now Entry
+	deleted := v.Operation() != jetstream.KeyValuePut
+	if !deleted && json.Unmarshal(v.Value(), &now) != nil {
+		return
+	}
 	r.mu.Lock()
-	if r.dirty[id] || v.Revision() <= r.revisions[id] {
+	if v.Revision() <= r.revisions[id] {
+		r.mu.Unlock()
+		return
+	}
+	if r.dirty[id] || r.writing[id] > 0 {
+		// Local changes or a write are pending: keep the newer revision for
+		// the write's reconciliation, or for settle once the entry is clean.
+		if w, ok := r.watched[id]; !ok || v.Revision() > w.rev {
+			r.watched[id] = watchedState{rev: v.Revision(), entry: now, deleted: deleted}
+		}
 		r.mu.Unlock()
 		return
 	}
 	old, existed := r.entries[id]
 	before := existed && visible(old)
-	var now Entry
-	if v.Operation() != jetstream.KeyValuePut {
+	if deleted {
 		delete(r.entries, id)
 	} else {
-		if json.Unmarshal(v.Value(), &now) != nil {
-			r.mu.Unlock()
-			return
-		}
 		r.entries[id] = now
 	}
 	r.revisions[id] = v.Revision()
 	r.mu.Unlock()
 	r.notify(id, now, before)
+}
+
+// settle applies a revision the watch delivered during a write once the
+// entry has no write in flight and no local change; call with mu held.
+func (r *Registry) settle(id uint64) {
+	w, ok := r.watched[id]
+	if !ok || r.writing[id] > 0 || r.dirty[id] {
+		return
+	}
+	delete(r.watched, id)
+	if w.rev <= r.revisions[id] {
+		return
+	}
+	if w.deleted {
+		delete(r.entries, id)
+	} else {
+		r.entries[id] = clone(w.entry)
+	}
+	r.revisions[id] = w.rev
 }
 func (r *Registry) watch() {
 	defer r.wg.Done()
@@ -356,6 +395,22 @@ func (r *Registry) reconcile(id, version uint64, written Entry, rev uint64, dele
 	if rev > r.revisions[id] {
 		r.revisions[id] = rev
 	}
+	if w, ok := r.watched[id]; ok && w.rev > rev {
+		// A later revision, built on this write by another writer, arrived
+		// through the watch before this reconciliation: it is the durable
+		// state, and must not be overwritten with this older write.
+		delete(r.watched, id)
+		r.revisions[id] = w.rev
+		if r.versions[id] != version {
+			if local, ok := r.entries[id]; ok && !w.deleted {
+				r.entries[id] = fold(local, w.entry, cleanup)
+			}
+			return
+		}
+		written, deleted = w.entry, w.deleted
+	} else if ok {
+		delete(r.watched, id)
+	}
 	if r.versions[id] != version {
 		if local, ok := r.entries[id]; ok && !deleted {
 			r.entries[id] = fold(local, written, cleanup)
@@ -452,12 +507,16 @@ func (r *Registry) BeginReply(ctx context.Context, id uint64, e Entry, name stri
 	}
 	version, cleanup := r.versions[id], copySet(r.cleanup[id])
 	delete(cleanup, name)
+	r.writing[id]++
 	r.mu.Unlock()
 	written, rev, _, err := r.write(ctx, id, e, cleanup)
+	r.mu.Lock()
+	r.writing[id]--
 	if err != nil {
+		r.settle(id)
+		r.mu.Unlock()
 		return err
 	}
-	r.mu.Lock()
 	r.reconcile(id, version, written, rev, false, cleanup)
 	if local, ok := r.entries[id]; ok && r.versions[id] != version {
 		// A concurrent local change kept its state; the touch written above
@@ -475,6 +534,7 @@ func (r *Registry) BeginReply(ctx context.Context, id uint64, e Entry, name stri
 		r.attempts[k] = a
 	}
 	a.count++
+	r.settle(id)
 	now := r.entries[id]
 	r.mu.Unlock()
 	r.notify(id, now, before)
@@ -553,20 +613,21 @@ func (r *Registry) Delete(ctx context.Context, id uint64) error {
 		return err
 	}
 	defer unlock()
-	r.mu.RLock()
+	r.mu.Lock()
 	rev, version := r.revisions[id], r.versions[id]
-	r.mu.RUnlock()
-	if err := r.KV.Delete(ctx, key(id), jetstream.LastRevision(rev)); err != nil {
-		return err
-	}
+	r.writing[id]++
+	r.mu.Unlock()
+	err = r.KV.Delete(ctx, key(id), jetstream.LastRevision(rev))
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.versions[id] == version {
+	r.writing[id]--
+	if err == nil && r.versions[id] == version {
 		delete(r.entries, id)
 		delete(r.dirty, id)
 		delete(r.cleanup, id)
 	}
-	return nil
+	r.settle(id)
+	return err
 }
 
 // flushOne writes one dirty entry; it returns nil when the entry is clean.
@@ -576,27 +637,31 @@ func (r *Registry) flushOne(ctx context.Context, id uint64) error {
 		return err
 	}
 	defer unlock()
-	r.mu.RLock()
+	r.mu.Lock()
 	e, ok := r.entries[id]
 	dirty := r.dirty[id]
 	version, cleanup := r.versions[id], copySet(r.cleanup[id])
-	r.mu.RUnlock()
 	if !dirty {
-		return nil
-	}
-	if !ok {
-		r.mu.Lock()
-		delete(r.dirty, id)
 		r.mu.Unlock()
 		return nil
 	}
+	if !ok {
+		delete(r.dirty, id)
+		r.settle(id)
+		r.mu.Unlock()
+		return nil
+	}
+	r.writing[id]++
+	r.mu.Unlock()
 	written, rev, deleted, err := r.write(ctx, id, e, cleanup)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.writing[id]--
 	if err != nil {
 		return err
 	}
-	r.mu.Lock()
 	r.reconcile(id, version, written, rev, deleted, cleanup)
-	r.mu.Unlock()
+	r.settle(id)
 	return nil
 }
 

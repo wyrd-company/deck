@@ -315,3 +315,93 @@ func TestSweepDeletesStaleEntries(t *testing.T) {
 		t.Fatal("swept entry still local")
 	}
 }
+
+// afterUpdate runs a hook once a revision-checked write has landed, before
+// the writer reconciles: another instance's newer write arrives there.
+type afterUpdate struct {
+	jetstream.KeyValue
+	after func()
+}
+
+func (k afterUpdate) Update(ctx context.Context, name string, value []byte, revision uint64) (uint64, error) {
+	rev, err := k.KeyValue.Update(ctx, name, value, revision)
+	if err == nil && k.after != nil {
+		k.after()
+	}
+	return rev, err
+}
+
+// newerRemote writes another instance's change on top of the current
+// revision and delivers it through the watch path, as the real watch does.
+func newerRemote(t *testing.T, r *Registry, kv jetstream.KeyValue, id uint64) {
+	t.Helper()
+	ctx := context.Background()
+	v, err := kv.Get(ctx, key(id))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var remote Entry
+	if err = json.Unmarshal(v.Value(), &remote); err != nil {
+		t.Fatal(err)
+	}
+	remote.Keys["remote"] = Touch{State: "sent"}
+	remote.LastMessageID = 999
+	raw, _ := json.Marshal(remote)
+	if _, err = kv.Update(ctx, key(id), raw, v.Revision()); err != nil {
+		t.Fatal(err)
+	}
+	if v, err = kv.Get(ctx, key(id)); err != nil {
+		t.Fatal(err)
+	}
+	r.apply(v)
+}
+
+// R1-02: a newer bucket revision delivered by the watch while this
+// instance's write is in flight survives the write's reconciliation, for a
+// pre-send write and for a background write of a dirty entry.
+func TestWatchedRevisionDuringWriteSurvives(t *testing.T) {
+	for _, path := range []string{"begin-reply", "flush"} {
+		t.Run(path, func(t *testing.T) {
+			_, _, js := testutil.NATS(t)
+			ctx := context.Background()
+			kv, err := js.CreateKeyValue(ctx, jetstream.KeyValueConfig{Bucket: "watched"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			r := newRegistry(ctx, kv)
+			defer r.cancel()
+			if err = r.RegisterPost(7, Entry{Bot: "bot", ServerID: 1, ChannelID: 2, LastMessageID: 10}, "initial"); err != nil {
+				t.Fatal(err)
+			}
+			if err = r.flushOne(ctx, 7); err != nil {
+				t.Fatal(err)
+			}
+			once := false
+			r.KV = afterUpdate{KeyValue: kv, after: func() {
+				if !once {
+					once = true
+					newerRemote(t, r, kv, 7)
+				}
+			}}
+			if path == "begin-reply" {
+				err = r.BeginReply(ctx, 7, Entry{Bot: "bot"}, "caller")
+			} else {
+				r.Advance(7, 20)
+				err = r.flushOne(ctx, 7)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			local, _ := r.Lookup(7)
+			if local.Keys["remote"].State != "sent" || local.LastMessageID != 999 {
+				t.Fatalf("reconciliation erased the newer watched revision: %+v pending %d", local, r.Pending())
+			}
+			if path == "begin-reply" && local.Keys["caller"].State != "pending" {
+				t.Fatal("the pre-send touch was lost", local)
+			}
+			if r.Pending() != 0 {
+				t.Fatal("entry left dirty although the bucket holds every change")
+			}
+		})
+	}
+}
