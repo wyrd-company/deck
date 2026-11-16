@@ -33,6 +33,7 @@ type Client struct{ Bot *bot.Client }
 func New(token string, options ...bot.ConfigOpt) (*Client, error) {
 	logger := DisgoLogger(slog.Default().Handler())
 	httpClient := &http.Client{Timeout: 30 * time.Second, Transport: &http.Transport{Proxy: nil, DialContext: (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext, TLSHandshakeTimeout: 10 * time.Second}}
+	// DISGO-WORKAROUND(poll-votes): raw gateway events are enabled to read poll votes disgo never decodes; see wyrd-company/deck#14 (upstream disgoorg/disgo#660).
 	opts := []bot.ConfigOpt{bot.WithLogger(logger), bot.WithRestClientConfigOpts(rest.WithLogger(logger), rest.WithRateLimiter(rateLimiter{rest.NewRateLimiter(rest.WithRateLimiterLogger(logger))}), rest.WithHTTPClient(httpClient)), bot.WithGatewayConfigOpts(gateway.WithIntents(gateway.IntentGuilds|gateway.IntentGuildMessages|gateway.IntentMessageContent|gateway.IntentGuildMessagePolls), gateway.WithEnableRawEvents(true)), bot.WithCacheConfigOpts(cache.WithCaches(cache.FlagGuilds | cache.FlagChannels | cache.FlagMembers))}
 	c, err := disgo.New(token, append(opts, options...)...)
 	if err != nil {

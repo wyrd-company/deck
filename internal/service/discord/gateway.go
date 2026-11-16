@@ -89,6 +89,7 @@ func NewGateway(ctx context.Context, name string, client *Client, reg *registry.
 		bot.NewListenerFunc(g.onGuildsReady),
 		bot.NewListenerFunc(g.onMessage),
 		bot.NewListenerFunc(g.onComponent),
+		// DISGO-WORKAROUND(poll-votes): the raw listener carries poll votes disgo never decodes; see wyrd-company/deck#14 (upstream disgoorg/disgo#660).
 		bot.NewListenerFunc(g.onRaw),
 	)
 	reg.OnRegister(g.registered)
@@ -405,7 +406,7 @@ type rawVote struct {
 	AnswerID  int           `json:"answer_id"`
 }
 
-// DISGO-WORKAROUND(poll-votes): votes are read from raw gateway events because disgo never decodes them; see wyrd-company/deck issue (pending).
+// DISGO-WORKAROUND(poll-votes): votes are read from raw gateway events because disgo never decodes them; see wyrd-company/deck#14 (upstream disgoorg/disgo#660).
 // onRaw reads poll votes from the raw gateway events: disgo v0.20.0 does not
 // decode MESSAGE_POLL_VOTE_ADD or _REMOVE (gateway.UnmarshalEventData has no
 // case for them), so its typed vote events never fire. The raw event is
