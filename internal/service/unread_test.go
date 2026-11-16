@@ -452,3 +452,31 @@ func TestRepeatThroughIndexAcrossRestart(t *testing.T) {
 	t.Cleanup(h.Wait)
 	check(h)
 }
+
+// R1-05: a cursor ahead of the index in the stream's epoch stays the
+// listener's position after its empty enumerations: activity at or below it
+// is never sent.
+func TestListenKeepsACursorAhead(t *testing.T) {
+	s := setupIndexed(t)
+	register(t, s.reg, 100, registry.Entry{Bot: "a", ServerID: 1, ChannelID: 10}, "key")
+	p := s.position(t)
+	ahead := &pb.StreamPosition{Epoch: p.Epoch, Sequence: p.Sequence + 3}
+	ctx, cancel := context.WithCancel(s.ctx)
+	defer cancel()
+	stream, err := s.client.Listen(ctx, &pb.ListenRequest{Cursors: []*pb.Cursor{at(100, ahead)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first := recv(t, stream); len(first.Activity) != 0 {
+		t.Fatal("activity at or below the cursor", first)
+	}
+	// Each publish wakes the listener for an enumeration; none of the first
+	// three lies after the cursor.
+	for n := range uint64(4) {
+		s.publishActivity(t, person(100, 6000+n, 0))
+	}
+	next := recv(t, stream)
+	if len(next.Activity) != 1 || next.Activity[0].Id != 6003 || next.Through.Sequence != ahead.Sequence+1 {
+		t.Fatal("listener sent activity at or below its cursor", next)
+	}
+}

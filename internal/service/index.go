@@ -199,7 +199,9 @@ func (h *Handler) Listen(r *pb.ListenRequest, stream grpc.ServerStreamingServer[
 				}
 			}
 			for thread := range positions {
-				positions[thread] = next.Through
+				// A cursor ahead of the index in the same epoch stays where
+				// it is: activity is what lies strictly after it.
+				positions[thread] = later(positions[thread], next.Through)
 			}
 		}
 		select {
