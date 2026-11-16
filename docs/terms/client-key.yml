@@ -1,0 +1,4 @@
+$schema: https://refinery.systems/ontology/term
+title: Client key
+description: >-
+  An ed25519 key in an OpenBao or Vault Transit engine that authenticates a client. The service registers its public key with a configured name and grants; the CLI asks Transit to sign without holding the private key.

@@ -1,0 +1,4 @@
+$schema: https://refinery.systems/ontology/term
+title: Session
+description: >-
+  The program the CLI acts for, identified by an ordered list of configured ambient variables or an explicit --session identifier. Its thread associations and read cursors live on the client's machine.
