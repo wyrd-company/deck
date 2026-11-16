@@ -106,7 +106,7 @@
             },
             "manage": {
               "type": "boolean",
-              "description": "Create and update the stream. Default true."
+              "description": "Create the stream at startup when it is missing, and update its settings. Default true."
             }
           }
         },

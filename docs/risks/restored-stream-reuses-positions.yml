@@ -32,9 +32,20 @@ description: >-
   stream-recreation measures the consumer-deleted error and reconnect triggers
   and fresh consumers' sequence coverage; it does not measure the end trigger
   or the RPC gate. Recreation with the service stopped is detected at startup.
-  With nats.stream.manage true, a running service can create the missing
-  stream itself, so operators stop it before deleting a stream they intend to
-  restore.
+  The service creates a missing stream only at startup, so one stop-first
+  procedure covers deleting, recreating and restoring the stream: stop the
+  service; delete the stream and wait for the delete command to return;
+  recreate it or restore the snapshot; for a restore, delete
+  `stream.generation`; then start the service, which creates the stream at
+  startup when it is still missing. A stream deleted while the service runs
+  leaves it unavailable until someone acts (its healthcheck reports the stream
+  missing and it logs the remedy): gateway activity waits in the publisher,
+  messages are read back by recovery after a restart, and component uses and
+  poll votes still waiting at a stop are lost. On a standalone server the
+  delete API answers only after the stream's files are removed (nats-server
+  2.11.9 jetstream_api.go:3259-3265), so waiting for the command is reliable
+  there; clustered servers are unverified, and a restart during someone else's
+  deletion can still race it.
 categories:
   - operational
 likelihood: 1

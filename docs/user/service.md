@@ -52,9 +52,30 @@ unknown, as described in [Posting](posting.md).
 Messages sent while the service was stopped are read back from Discord when it
 starts. Button presses and poll votes in that time are lost.
 
-To restore the event stream from a snapshot, stop the service, restore the
-stream, delete the `stream.generation` key from the thread bucket, and start
-the service: every retained activity is then unread again rather than missed.
+## Deleting, recreating or restoring the event stream
+
+The service creates a missing event stream only when it starts. Use one
+procedure to delete, recreate or restore the stream:
+
+1. Stop the service.
+2. Delete the stream, and wait for the delete command to return.
+3. Recreate the stream, or restore it from a snapshot. After a restore, also
+   delete the `stream.generation` key from the thread bucket.
+4. Start the service. It creates the stream if it is still missing.
+
+After a restore, every retained activity is unread again rather than missed.
+
+If the stream is deleted while the service runs, the service stops answering
+calls (UNAVAILABLE), its healthcheck reports the stream as missing, and it logs
+the remedy: restart it once the deletion has finished, or create the stream.
+It recovers by itself once the stream exists. Until then it keeps retrying the
+activity it has received; after a restart it reads missed messages back from
+Discord, but button presses and poll votes that were still waiting are lost.
+
+On a single NATS server, the delete command returns only after the stream's
+files are gone, so waiting for it is enough. This has not been verified on a
+clustered NATS server. A service that restarts while someone else's deletion is
+still running can still collide with it.
 
 The complete startup, retention and health contract is in the
 [service design](../technical-designs/service.yml).

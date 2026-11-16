@@ -395,21 +395,36 @@ proposed-design:
     itself, because nats.go calls it while holding its consumer lock. The
     worker invalidates the old context's application token, stops the old
     context and waits for Closed, rejecting all callbacks from that token,
-    including callbacks that arrive after Closed. It runs the same stream
-    create/check step as startup, under nats.stream.manage, before reading
-    creation time: with manage true an existing stream is updated and a
-    missing stream is created 2 seconds later, because nats-server (2.11.9)
-    removes a deleted stream from its account before its files and the
-    consumer-deleted notice arrives in between, so a stream created at once
-    from another connection shares the directory the deletion then removes and
-    every write to it fails; a deletion slower than that wait remains a
-    residual; with manage false the index stays unavailable and retries until
-    the operator supplies the stream. A failed management or generation
-    read/write leaves the gate closed and is retried, and a newer trigger
-    cancels the running check's requests, so one lost across a reconnect does
-    not hold the check for its timeout. The check reads the stream's
-    information and the bucket's `stream.generation`; when the record is
-    missing or its `created` differs from the stream's creation time, the
+    including callbacks that arrive after Closed. Before reading creation time
+    it runs stream management: with manage true it updates an existing
+    stream's settings, with manage false it checks the stream, and in either
+    case it never creates one. Only startup creates a missing stream.
+    nats-server (2.11.9) removes a deleted stream from its account before its
+    files, and the consumer-deleted notice arrives in between, so a stream
+    created then from another connection would share the directory the
+    deletion removes and every write to it would fail; no elapsed time bounds
+    that deletion. A stream missing after startup, managed or not, leaves the
+    index unavailable: calls that read it answer UNAVAILABLE as during a
+    replay, the healthcheck's index check reports `missing`, one error log per
+    episode names the stream and the remedy (restart the service once the
+    deletion has finished, or create the stream), and the check retries until
+    the stream exists, when the index replays it as a new generation. That is
+    a named residual: the service stays unavailable until someone acts.
+    Activity in the gap: gateway messages, component uses and poll votes wait
+    in the publisher, which retries them for as long as the process runs
+    (beyond 10,000 waiting the gateway drops activity and leaves a dropped
+    message to recovery); their boundaries do not rise until they are
+    published, so after a restart recovery at the next READY reads the
+    messages back, while component uses and poll votes still waiting at the
+    stop are lost (risk gateway-gap-loses-interactions); sends end UNAVAILABLE
+    without calling Discord, because their repeat lookup and starting position
+    wait for the index. A stream an outside client recreates while the service
+    runs is detected and replayed as described here. A failed management or
+    generation read/write leaves the gate closed and is retried, and a newer
+    trigger cancels the running check's requests, so one lost across a
+    reconnect does not hold the check for its timeout. The check reads the
+    stream's information and the bucket's `stream.generation`; when the record
+    is missing or its `created` differs from the stream's creation time, the
     service writes a new record whose epoch is the current time in Unix
     nanoseconds, or the recorded epoch plus one when the clock is not ahead of
     it, with a revision-checked write. A revision conflict retries the read;
@@ -442,17 +457,23 @@ proposed-design:
     refreshes the stream's first sequence and prunes entries the stream no
     longer holds. Errors, ends or reconnects during replay mark another check
     due. The measured connected-error and reconnect traces detect a newly
-    created stream and replay all retained sequences; deletion alone with
-    management on creates a replacement before checking, while management off
-    waits for an operator-supplied stream. At startup, a changed creation time
-    or missing record also selects a new epoch. Across generations, epochs
-    grow while the record survives, and a client follows a generation change
-    whichever way the epoch moved, since positions of different epochs do not
-    order and its cursor update accepts any other epoch. A restore from a
-    snapshot keeps the stream's creation time (measured by the round 2
-    review), so its documented procedure is to stop the service before
-    deleting/restoring the stream, restore it, delete `stream.generation`, and
-    then start the service. Live delete-and-restore is unsupported: the
+    created stream and replay all retained sequences; deletion alone, managed
+    or not, leaves the index unavailable until a restart or an outside client
+    creates the stream. At startup, a changed creation time or missing record
+    also selects a new epoch. Across generations, epochs grow while the record
+    survives, and a client follows a generation change whichever way the epoch
+    moved, since positions of different epochs do not order and its cursor
+    update accepts any other epoch. A restore from a snapshot keeps the
+    stream's creation time (measured by the round 2 review). One stop-first
+    procedure covers deleting, recreating and restoring the stream: stop the
+    service; delete the stream and wait for the delete command to return;
+    recreate it or restore the snapshot; for a restore, delete
+    `stream.generation`; then start the service, which creates the stream at
+    startup when it is still missing. On a standalone server the delete API
+    answers only after the stream's files are removed (nats-server 2.11.9
+    jetstream_api.go:3259-3265), so waiting for the command is reliable there;
+    clustered servers are unverified, and a restart during someone else's
+    deletion can still race it. Live delete-and-restore is unsupported: the
     consumer error cannot distinguish a restored stream with its preserved
     creation time (risk restored-stream-reuses-positions). Between deletion
     and detection, an index-only count can still return the old generation's
@@ -520,13 +541,15 @@ proposed-design:
     The health listener serves `GET /livez`, 200 while the process runs, and
     `GET /healthz`, 200 when every bot's gateway status is Ready, the NATS
     connection is CONNECTED, and the activity index has finished its replay;
-    otherwise 503. Both bodies are JSON: `{"status": "ok"}` or `{"status":
-    "fail", "bots": {"helper": "disconnected"}, "nats": "reconnecting",
-    "index": "replaying"}`, naming every check. A gateway session that is
-    reconnecting or resuming counts as disconnected. The container image runs
-    `deck service health` as its HEALTHCHECK, every 10 seconds with 3 retries
-    and a 60-second start period, which covers the index's headers-only replay
-    of the stream. `deck service health` exits 0 on 200, 1 on 503, 4 when the
+    otherwise 503. The index check reports `ready`, `replaying`, `unavailable`
+    (NATS disconnected) or `missing` (the events stream does not exist). Both
+    bodies are JSON: `{"status": "ok"}` or `{"status": "fail", "bots":
+    {"helper": "disconnected"}, "nats": "reconnecting", "index":
+    "replaying"}`, naming every check. A gateway session that is reconnecting
+    or resuming counts as disconnected. The container image runs `deck service
+    health` as its HEALTHCHECK, every 10 seconds with 3 retries and a
+    60-second start period, which covers the index's headers-only replay of
+    the stream. `deck service health` exits 0 on 200, 1 on 503, 4 when the
     listener cannot be reached within 2 seconds, and 2 for a usage or
     configuration error; a container runtime counts any other status than 0 as
     a failed check.

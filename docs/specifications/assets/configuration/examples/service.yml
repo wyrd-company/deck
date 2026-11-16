@@ -35,7 +35,7 @@ nats:
     max_age: 168h        # how long component uses and poll votes are kept
     duplicate_window: 2m
     replicas: 1
-    manage: true         # create the stream, and correct its settings
+    manage: true         # create the stream at startup when missing, and correct its settings
   threads:
     bucket: deck-threads
     replicas: 1

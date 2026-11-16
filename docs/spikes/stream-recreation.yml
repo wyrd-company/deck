@@ -127,7 +127,11 @@ conclusion: >-
   trigger, production RPC gates or concurrency, epoch record writes,
   overlapping resets, the creation-time race, or snapshot restoration.
   These remain design requirements with build validation in events and the
-  stop-before-restore operating procedure in service.
+  stop-before-restore operating procedure in service. The build later found
+  a race these cases did not exercise: a stream created from one connection
+  while another connection's deletion was still removing its files shares
+  the deleted stream's directory, and every write to it fails (JetStream
+  10077), so the service creates a missing stream only at startup.
 next-steps:
   - The service's embedded-NATS tests exercise CountUnread, ListUnread and
     Listen across the same recreation trace and concurrent calls.
