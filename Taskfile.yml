@@ -105,7 +105,8 @@ tasks:
       vars: [CONFIG]
     sources: ['*.go', 'cmd/**/*.go', 'internal/**/*.go', 'go.mod', 'go.sum']
     cmds:
-      - go run ./cmd/deck service start --config {{shellQuote .CONFIG}}
+      - task: build
+      - ./bin/deck service start --config {{shellQuote .CONFIG}}
   release:plan:
     desc: Save an intentional release plan outside tracked files
     requires:
