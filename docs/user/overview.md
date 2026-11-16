@@ -25,8 +25,11 @@ name and a parent channel ID they can grant you. The
    executable, so use that link to obtain the example. APT/RPM packages provide
    `/usr/share/doc/deck/client.example.yml`; release archives include
    `client.example.yml`. Set `service.address`, `service.host_key`, `vault.address`,
-   `key.mount` and `key.name`. Replace the sample channel alias with your granted
-   `BOT/CHANNEL_ID`, and remove sample allow/deny entries and the default persona
+   `key.mount` and `key.name`. For a direct Vault connection, also set
+   `vault.auth.token_file` or `vault.auth.approle`; omit `vault.auth` only when
+   your socket proxy authenticates for you. Replace the sample channel alias with
+   your granted `BOT/CHANNEL_ID`, and remove sample allow/deny entries and the
+   default persona
    if you do not need them. See [configuration](configuration.md).
 2. Validate the configuration and print your client's public key:
 
@@ -39,8 +42,8 @@ name and a parent channel ID they can grant you. The
    register it with grants for your bot, server and parent channel, and restart
    the service. If you operate the service, add the line and grants under `keys`
    and restart it as [authentication](authentication.md) describes. Continue
-   after registration is confirmed; an unregistered key or missing grant causes
-   an access refusal (exit 3).
+   after registration is confirmed. An unregistered key fails with
+   `SSH authentication failed` (exit 1); a missing grant is refused (exit 3).
 3. Check the available channels:
 
    ```sh
@@ -77,7 +80,8 @@ identifiers from the ordered `session.variables` list.
 
 For an agent's operating instructions, run `deck skill`. For structured output,
 add `--json`; session commands include `unread`, while configuration, service,
-resolve and help commands do not make an unread request. Exit 2 means invalid
-input, 3 means access refused, 4 means unavailable or an unknown send outcome,
-and 5 means a listen timeout. Inspect an unknown send before retrying it with
+resolve and help commands do not make an unread request. Exit 1 covers
+authentication, host-key and local failures; 2 means invalid input; 3 means a
+target or grant refusal; 4 means unavailable or an unknown send outcome; and 5
+means a listen timeout. Inspect an unknown send before retrying it with
 the nonce printed in its diagnostic.

@@ -9,8 +9,9 @@ order: 2
 The CLI and service each read one YAML file. Start with the complete annotated
 [client example](https://github.com/wyrd-company/deck/blob/main/docs/specifications/assets/configuration/examples/client.yml)
 or [service example](https://github.com/wyrd-company/deck/blob/main/docs/specifications/assets/configuration/examples/service.yml)
-in a release archive. The examples contain public sample keys and invented IDs;
-replace them with your own before connecting.
+linked above, or use the copies included in a release archive. The examples
+contain public sample keys and invented IDs; replace them with your own before
+connecting.
 
 ## Client
 

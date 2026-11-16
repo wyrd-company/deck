@@ -4,7 +4,33 @@ product: deck
 order: 7
 ---
 
-Validate the service configuration, then start the service in the foreground:
+## Set up your own service
+
+For an operator running both the service and a client, use this order:
+
+1. Provision the [Discord bot and NATS connection](#discord-and-nats-prerequisites).
+   Store the bot token and NATS credentials in KV v2, and give the service's
+   Vault identity read access to those paths.
+2. [Create and store the SSH host key](authentication.md), then configure the
+   service's Vault connection, secret references, NATS settings and bots using
+   the [service example](configuration.md#service). Replace sample addresses,
+   secret references, bot names and IDs. Save it as `/etc/deck/config.yml`, or
+   pass your chosen path to each service command. Leave the sample public-key
+   entries until step 5 so the key-printing command can validate the config;
+   start only after replacing them.
+3. Run `deck service host-key --config /etc/deck/config.yml` using that service
+   configuration and Vault access. Put the printed public line in the client's
+   `service.host_key`; the service need not be running for this command.
+4. [Create the client's Transit identity](authentication.md), configure its
+   [Vault access and client settings](configuration.md#client), and run
+   `deck config key --config ./client.yml` to print its public line.
+5. Replace the sample entries under the service's `keys` with that public line
+   and its bot/server/parent-channel grants. [Validate](configuration.md#service)
+   and start the service with the commands below, or use the [container](#container).
+6. Follow the [first-message walkthrough](overview.md#send-your-first-message)
+   from `deck channels` onward. Check [health](#health) if it cannot connect.
+
+Validate the completed service configuration, then start it in the foreground:
 
 ```sh
 deck service validate --config /etc/deck/config.yml
