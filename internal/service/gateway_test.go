@@ -196,18 +196,31 @@ func TestHeldEventsReleasedOnRegistration(t *testing.T) {
 // forum post's poll is the thread's second message.
 func TestOwnMessagesPublishedBySendOnly(t *testing.T) {
 	g := setupGateways(t)
-	g.fakeGW["a"].Dispatch("MESSAGE_CREATE", messageEvent(100, 100, "123", 0)) // gateway copy first
+	// A new post's starter reaches the gateway before Discord answers the
+	// post: its thread is young and not registered, so the copy is held and
+	// released when the post registers the thread, before the send publishes.
+	young := uint64(snowflake.New(time.Now()))
+	g.fake.mu.Lock()
+	g.fake.postThread = strconv.FormatUint(young, 10)
+	g.fake.mu.Unlock()
+	g.fakeGW["a"].Dispatch("MESSAGE_CREATE", messageEvent(young, young, "123", 0))
+	time.Sleep(200 * time.Millisecond) // the copy is held
 	c := content()
 	c.Poll = &pb.PollCreate{Question: "?", Answers: []string{"y", "n"}}
 	post, err := g.client.Post(g.ctx, &pb.PostRequest{Channel: &pb.ChannelRef{Bot: "a", ChannelId: 10}, Title: "t", Content: c, Nonce: "own"})
-	if err != nil {
-		t.Fatal(err)
+	if err != nil || post.Message.Id != young {
+		t.Fatal(post, err)
 	}
-	g.fakeGW["a"].Dispatch("MESSAGE_CREATE", messageEvent(100, 100, "123", 0)) // and later
-	g.fakeGW["a"].Dispatch("MESSAGE_CREATE", messageEvent(101, 100, "123", 0))
+	g.fakeGW["a"].Dispatch("MESSAGE_CREATE", messageEvent(young, young, "123", 0)) // and a later copy
+	g.fakeGW["a"].Dispatch("MESSAGE_CREATE", messageEvent(post.PollMessage.Id, young, "123", 0))
 	got := g.eventually(t, 2)
-	if got[0].a.Id != post.Message.Id || got[1].a.Id != post.PollMessage.Id || got[0].header["Deck-Sent-By"] != "key" || got[0].header["Deck-Nonce"] != "own" || got[0].header["Deck-Sender-Key"] != g.h.fingerprints["key"] || got[0].header["Deck-Send-Start"] == "" {
+	if got[0].a.Id != post.Message.Id || got[1].a.Id != post.PollMessage.Id {
 		t.Fatal("send publication", got)
+	}
+	for _, e := range got {
+		if e.header["Deck-Sent-By"] != "key" || e.header["Deck-Nonce"] != "own" || e.header["Deck-Sender-Key"] != g.h.fingerprints["key"] || e.header["Deck-Send-Start"] == "" {
+			t.Fatal("a gateway copy took the place of the send's publication", e.header)
+		}
 	}
 }
 

@@ -60,6 +60,7 @@ type fakeDiscord struct {
 	onSend           func()
 	history          func(path string, query url.Values) (int, any)
 	channel          func(id string) (int, any)
+	postThread       string
 }
 
 func threadJSON(id, parent string) map[string]any {
@@ -85,7 +86,7 @@ func (f *fakeDiscord) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	archived, locked := f.archived, f.locked
 	metadataStatus, metadataCode := f.metadataStatus, f.metadataCode
 	startReject, startLose, historyMore, threadName := f.startReject, f.startLose, f.historyMore, f.threadName
-	replyID, history, channel := f.replyID, f.history, f.channel
+	replyID, history, channel, postThread := f.replyID, f.history, f.channel, f.postThread
 	f.mu.Unlock()
 	w.Header().Set("Content-Type", "application/json")
 	respond := func(v any) { _ = json.NewEncoder(w).Encode(v) }
@@ -191,7 +192,11 @@ func (f *fakeDiscord) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	switch path {
 	case "/channels/10/threads":
-		respond(map[string]any{"id": "100", "guild_id": "1", "parent_id": "10", "type": 11, "name": "post", "last_message_id": "100", "thread_metadata": map[string]any{"archived": false, "locked": false}, "message": messageJSON("100", "100", body["message"].(map[string]any))})
+		post := "100"
+		if postThread != "" {
+			post = postThread
+		}
+		respond(map[string]any{"id": post, "guild_id": "1", "parent_id": "10", "type": 11, "name": "post", "last_message_id": post, "thread_metadata": map[string]any{"archived": false, "locked": false}, "message": messageJSON(post, post, body["message"].(map[string]any))})
 	case "/channels/20/messages":
 		respond(messageJSON("200", "20", body))
 	case "/channels/20/messages/200/threads":
