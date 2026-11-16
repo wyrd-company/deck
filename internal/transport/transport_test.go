@@ -597,7 +597,7 @@ func TestStartupAndShutdown(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan error, 1)
-	go func() { done <- serveUntilCanceled(ctx, server, listener) }()
+	go func() { done <- Serve(ctx, server, listener) }()
 	defer server.Close()
 	cfg := &config.Client{Service: config.ServiceEndpoint{Address: listener.Addr().String(), HostKey: DescribeKey(host.PublicKey(), "").PublicKey}}
 	dialCtx, dialCancel := context.WithTimeout(context.Background(), 3*time.Second)

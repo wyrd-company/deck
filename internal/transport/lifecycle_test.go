@@ -79,7 +79,7 @@ func TestCancellationBeforeServe(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 		done := make(chan error, 1)
-		go func() { done <- serveUntilCanceled(ctx, server, listener) }()
+		go func() { done <- Serve(ctx, server, listener) }()
 		select {
 		case err := <-done:
 			if err != nil {
@@ -355,4 +355,27 @@ func TestConnectionResourceLimits(t *testing.T) {
 		_, err = stream.Recv()
 	}
 	requireCode(t, err, codes.DeadlineExceeded)
+}
+
+// A bind on an occupied address, held until a stop arrives, reports the
+// bind failure rather than the stop.
+func TestBindFailureDuringStopIsReported(t *testing.T) {
+	occupied, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer occupied.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	BeforeBind = func(ctx context.Context) { cancel(); <-ctx.Done() }
+	defer func() { BeforeBind = nil }()
+	listener, err := Bind(ctx, occupied.Addr().String())
+	if listener != nil || !errors.Is(err, ErrBind) || errors.Is(err, context.Canceled) {
+		t.Fatalf("bind failure during stop: %v", err)
+	}
+	BeforeBind = nil
+	free, err := Bind(ctx, "127.0.0.1:0")
+	if err != nil {
+		t.Fatal("a free address must still bind after a stop", err)
+	}
+	_ = free.Close()
 }
