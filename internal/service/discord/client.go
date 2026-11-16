@@ -2,7 +2,6 @@ package discord
 
 import (
 	"context"
-	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -32,7 +31,7 @@ type API interface {
 type Client struct{ Bot *bot.Client }
 
 func New(token string, options ...bot.ConfigOpt) (*Client, error) {
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	logger := DisgoLogger(slog.Default().Handler())
 	httpClient := &http.Client{Timeout: 30 * time.Second, Transport: &http.Transport{Proxy: nil, DialContext: (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext, TLSHandshakeTimeout: 10 * time.Second}}
 	opts := []bot.ConfigOpt{bot.WithLogger(logger), bot.WithRestClientConfigOpts(rest.WithLogger(logger), rest.WithRateLimiter(rateLimiter{rest.NewRateLimiter(rest.WithRateLimiterLogger(logger))}), rest.WithHTTPClient(httpClient)), bot.WithGatewayConfigOpts(gateway.WithIntents(gateway.IntentGuilds|gateway.IntentGuildMessages|gateway.IntentMessageContent|gateway.IntentGuildMessagePolls), gateway.WithEnableRawEvents(true)), bot.WithCacheConfigOpts(cache.WithCaches(cache.FlagGuilds | cache.FlagChannels | cache.FlagMembers))}
 	c, err := disgo.New(token, append(opts, options...)...)
