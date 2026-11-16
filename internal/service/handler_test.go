@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -57,6 +58,7 @@ type fakeDiscord struct {
 	threadName       string
 	replyID          string
 	onSend           func()
+	history          func(path string, query url.Values) (int, any)
 }
 
 func threadJSON(id, parent string) map[string]any {
@@ -82,7 +84,7 @@ func (f *fakeDiscord) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	archived, locked := f.archived, f.locked
 	metadataStatus, metadataCode := f.metadataStatus, f.metadataCode
 	startReject, startLose, historyMore, threadName := f.startReject, f.startLose, f.historyMore, f.threadName
-	replyID := f.replyID
+	replyID, history := f.replyID, f.history
 	f.mu.Unlock()
 	w.Header().Set("Content-Type", "application/json")
 	respond := func(v any) { _ = json.NewEncoder(w).Encode(v) }
@@ -113,6 +115,12 @@ func (f *fakeDiscord) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		case "/guilds/1/channels":
 			respond([]any{map[string]any{"id": "10", "guild_id": "1", "type": 15, "name": "forum", "flags": 16, "available_tags": []any{map[string]any{"id": "5", "name": "tag"}}}, map[string]any{"id": "20", "guild_id": "1", "type": 0, "name": "text"}, map[string]any{"id": "30", "guild_id": "2", "type": 0, "name": "outside"}, map[string]any{"id": "40", "guild_id": "1", "type": 2, "name": "voice"}})
 		default:
+			if strings.HasSuffix(path, "/messages") && history != nil {
+				code, body := history(path, r.URL.Query())
+				w.WriteHeader(code)
+				respond(body)
+				return
+			}
 			if strings.HasSuffix(path, "/messages") {
 				if r.URL.Query().Get("limit") == "1" {
 					if historyMore {
@@ -282,6 +290,8 @@ func setup(t *testing.T) *harness {
 	listener := bufconn.Listen(1 << 20)
 	grpcServer := grpc.NewServer(grpc.UnaryInterceptor(func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
 		return handler(peer.NewContext(ctx, &peer.Peer{AuthInfo: transport.KeyAuthInfo{Name: "key"}}), req)
+	}), grpc.StreamInterceptor(func(srv any, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
+		return handler(srv, keyedStream{ss, peer.NewContext(ss.Context(), &peer.Peer{AuthInfo: transport.KeyAuthInfo{Name: "key"}})})
 	}))
 	pb.RegisterDeckServiceServer(grpcServer, h)
 	go func() { _ = grpcServer.Serve(listener) }()
@@ -293,6 +303,14 @@ func setup(t *testing.T) *harness {
 	t.Cleanup(func() { _ = conn.Close() })
 	return &harness{h: h, ctx: transport.WithKeyName(ctx, "key"), cfg: cfg, fake: fakes["a"], fakes: fakes, js: js, reg: reg, client: pb.NewDeckServiceClient(conn)}
 }
+
+type keyedStream struct {
+	grpc.ServerStream
+	ctx context.Context
+}
+
+func (k keyedStream) Context() context.Context { return k.ctx }
+
 func content() *pb.Content { return &pb.Content{Text: "hello"} }
 func TestForumPollAndHeaders(t *testing.T) {
 	s := setup(t)
