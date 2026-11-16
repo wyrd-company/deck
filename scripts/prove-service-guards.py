@@ -105,8 +105,8 @@ probe('unmapped REST errors never expose upstream messages', 'discord/errors.go'
       'if r != nil {\n\t\treturn status.Error(codes.Internal, "Discord operation failed: "+r.Message)',
       './internal/service/discord', 'TestSanitizedErrors')
 probe('registry durable sent touch wins over stale pending', 'registry/registry.go',
-      't.State == "sent" && current.State != "sent"',
-      't.State == "sent" && current.State != "sent" && false',
+      'if current, ok := e.Keys[k]; !ok || t.State == "sent" && current.State != "sent" {',
+      'if current, ok := e.Keys[k]; !ok || t.State == "sent" && current.State != "sent" && false {',
       './internal/service/registry', 'TestDurableMergePrecedence')
 probe('registry durable higher boundary wins over stale local', 'registry/registry.go',
       'if previous.LastMessageID > e.LastMessageID {', 'if false {',
@@ -231,7 +231,7 @@ probe_source('a real startup failure after a signal is still reported', 'cmd/dec
       'if ctx.Err() != nil && (err == nil || errors.Is(err, ctx.Err())) {',
       'if ctx.Err() != nil {', './cmd/deck', 'TestServiceStartRealFailureAfterSignal')
 probe('sanitized startup failures preserve cancellation identity', 'runtime.go',
-      'if errors.Is(cause, context.Canceled) {', 'if false {',
+      'case errors.Is(cause, context.Canceled):', 'case false:',
       './cmd/deck', 'TestServiceStartSignal')
 probe('bucket open preserves native startup cancellation', 'registry/registry.go',
       'bucketFailure("nats.threads: cannot open bucket", err)',
@@ -248,6 +248,92 @@ probe('bucket errors retain deadline identity', 'registry/registry.go',
       'if errors.Is(cause, context.DeadlineExceeded) {', 'if false {',
       './internal/service/registry', 'TestOpenStartupErrors')
 probe('real Run-path secret failures remain failures after a stop', 'runtime.go',
-      'if errors.Is(cause, context.Canceled) {', 'if true {',
+      'case errors.Is(cause, context.Canceled):', 'case true:',
       './internal/service', 'TestServiceStartupIndependentFailure')
+# Task 7: activity index, unread API, gateway, registry I/O, process lifecycle.
+probe('expired sequences count as indexed', 'activity/index.go',
+      'if first > 0 && i.last < first-1 {', 'if false {',
+      './internal/service/activity', 'TestAllExpiredStreamOpens')
+probe('creation time re-read after the fresh consumer', 'activity/index.go',
+      'if err != nil || !after.Created.Equal(info.Created) {', 'if err != nil || after == nil {',
+      './internal/service/activity', 'TestRecreationBeforeConsumerRepeatsCheck')
+probe('reconnect callback marks the check due', 'activity/index.go',
+      'events.OnReconnect(func() { i.markDue("reconnect") })', 'events.OnReconnect(func() {})',
+      './internal/service/activity', 'TestReconnectCases')
+probe('a different record epoch replays the generation', 'activity/index.go',
+      'if !gen.Created.Equal(info.Created) || gen.Epoch != i.epoch {', 'if !gen.Created.Equal(info.Created) {',
+      './internal/service/activity', 'TestRecordEpochAdoption')
+probe('bodies are verified against their generation', 'activity/index.go',
+      'if !info.Created.Equal(s.created) {', 'if false {',
+      './internal/service/activity', 'TestBodiesNeverCrossGenerations')
+probe('the audit catches a recreation without a consumer trigger', 'activity/index.go',
+      'if !info.Created.Equal(created) || info.State.LastSeq < last {', 'if false {',
+      './internal/service/activity', 'TestAuditCatchesSilentRecreation')
+probe('a lost acknowledgement adopts the landed record', 'activity/index.go',
+      'if rev != 0 && g.Epoch != 0 && g.Created.Equal(created) && !(lost && g.Epoch == epoch) {', 'if false {',
+      './internal/service/activity', 'TestRecordEpochAdoption')
+probe('own lists every counted deck-sent copy', 'activity/index.go',
+      'if e.SenderKey != "" && e.Nonce != "" {\n\t\t\tc.Own', 'if e.SentBy == "key" && e.Nonce != "" {\n\t\t\tc.Own',
+      './internal/service', 'TestOwnAcrossRotationRenameAndNonce')
+probe('only touched threads are read from the index', 'index.go',
+      'if states[n] == pb.ThreadState_THREAD_STATE_TOUCHED {\n\t\t\ttouched', 'if true {\n\t\t\ttouched',
+      './internal/service', 'TestUnreadStatePrecedence')
+probe('listen re-reads state for live activity', 'index.go',
+      'cursors = append(cursors, &pb.Cursor{ThreadId: thread, After: after})', 'cursors = append(cursors, &pb.Cursor{ThreadId: thread})',
+      './internal/service', 'TestListenAndRecreatedStream')
+probe('attachment URLs are refreshed', 'index.go',
+      'f.Url = url', '_ = url',
+      './internal/service', 'TestAttachmentURLsRefreshed')
+probe('gateway drops the bot\'s own type 0 and 19 copies', 'discord/gateway.go',
+      'return // deck\'s own messages are published by their send alone', '_ = 0',
+      './internal/service', 'TestOwnMessagesPublishedBySendOnly')
+probe('only the thread\'s bot publishes its messages', 'discord/gateway.go',
+      'return // only the thread\'s bot publishes its messages', '_ = 0',
+      './internal/service', 'TestOtherBotsIgnoreMessagesAndVotes')
+probe('a pending recovery freezes the boundary', 'discord/gateway.go',
+      'if !message || frozen {', 'if !message {',
+      './internal/service', 'TestRecoveryAtReady')
+probe('held events are released when their thread registers', 'discord/gateway.go',
+      'reg.OnRegister(g.registered)', '_ = g.registered',
+      './internal/service', 'TestHeldEventsReleasedOnRegistration')
+probe('components are acknowledged before publishing', 'discord/gateway.go',
+      'if err := e.DeferUpdateMessage(); err != nil {', 'if err := error(nil); err != nil {',
+      './internal/service', 'TestComponentsAndStarterRouting')
+probe('poll votes are read from raw gateway events', 'discord/gateway.go',
+      'case gateway.EventTypeMessagePollVoteAdd:', 'case "never":',
+      './internal/service', 'TestGatewayPublishesTouchedThreads')
+probe('registry lookups never wait on bucket I/O', 'registry/registry.go',
+      'written, rev, deleted, err := r.write(ctx, id, e, cleanup)', 'r.mu.Lock(); written, rev, deleted, err := r.write(ctx, id, e, cleanup); r.mu.Unlock()',
+      './internal/service/registry', 'TestLookupsStayResponsiveDuringStalledBucket')
+probe('a change during a write stays dirty', 'registry/registry.go',
+      'if r.versions[id] != version {\n\t\tif local', 'if false {\n\t\tif local',
+      './internal/service/registry', 'TestChangeDuringWriteStaysDirty')
+probe('a stop during the bucket load is cancellation', 'registry/registry.go',
+      'if err != nil {\n\t\t\t\t\treturn nil, err\n\t\t\t\t}\n\t\t\t\treturn nil, errors.New("nats.threads: registry watch ended during load")', 'return nil, errors.New("nats.threads: registry watch ended during load")',
+      './internal/service/registry', 'TestStopDuringLoadIsCancellation')
+probe('shutdown waits for sends before closing resources', 'runtime.go',
+      'go func() { r.Handler.Wait(); close(done) }()', 'go func() { close(done) }()',
+      './internal/service', 'TestCloseFinishesSendsBeforeResources')
+probe('shutdown publishes waiting activity', 'runtime.go',
+      'if !r.Publisher.Drain(ctx) {', 'if ctx == nil {',
+      './internal/service', 'TestClosePublishesAndFlushes')
+probe('shutdown flushes dirty registry entries', 'runtime.go',
+      'if left := r.Registry.Flush(ctx); left > 0 {', 'if left := r.Registry.Pending(); left > 0 && ctx != nil {',
+      './internal/service', 'TestClosePublishesAndFlushes')
+probe('health reports a disconnected gateway', 'discord/gateway.go',
+      'if g.client.Bot.Gateway != nil && g.client.Bot.Gateway.Status() == gateway.StatusReady {', 'if true {',
+      './internal/service', 'TestHealthFollowsGatewayAndNATS')
+probe('stream step keeps a stop\'s cancellation', 'runtime.go',
+      '"cannot create or check stream", err)', '"cannot create or check stream", nil)',
+      './cmd/deck', 'TestServiceStartSignal/stream')
+probe('disgo logs drop response bodies', 'discord/logger.go',
+      'return slog.Attr{}, false', 'return a, true',
+      './internal/service/discord', 'TestDisgoLoggerRedacts')
+probe_source('a bind failure during a stop stays a failure', 'internal/transport/startup.go',
+      'if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {\n\t\t\treturn nil, ctx.Err()',
+      'if ctx.Err() != nil || errors.Is(err, context.Canceled) {\n\t\t\treturn nil, ctx.Err()',
+      './cmd/deck', 'TestServiceStartSignal/bind')
+probe_source('a Vault failure during a stop stays a failure', 'internal/vault/client.go',
+      'if ctx.Err() != nil && errors.Is(err, ctx.Err()) {', 'if ctx.Err() != nil {',
+      './internal/vault', 'TestFailureDuringStopIsNotCancellation')
 print(f'PASS all {completed} targeted service mutation probes completed', flush=True)
