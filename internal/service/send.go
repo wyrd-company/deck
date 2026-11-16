@@ -99,7 +99,7 @@ func (h *Handler) Post(ctx context.Context, r *pb.PostRequest) (*pb.PostResponse
 	response, err := h.send(ctx, k, r.Nonce, "post", func(run context.Context) (proto.Message, error) {
 		restCtx, restCancel := detachedREST(run, ctx)
 		defer restCancel()
-		completed, err := h.Index.Completed(run, h.fingerprints[k.Name], r.Nonce)
+		completed, err := h.Index.Completed(restCtx, h.fingerprints[k.Name], r.Nonce)
 		if err != nil {
 			return nil, unavailable()
 		}
@@ -120,7 +120,7 @@ func (h *Handler) Post(ctx context.Context, r *pb.PostRequest) (*pb.PostResponse
 		if h.Registry.Check(run) != nil {
 			return nil, unavailable()
 		}
-		position, err := h.Index.Position(run)
+		position, err := h.Index.Position(restCtx)
 		if err != nil {
 			return nil, unavailable()
 		}
@@ -232,7 +232,7 @@ func (h *Handler) Reply(ctx context.Context, r *pb.ReplyRequest) (*pb.ReplyRespo
 	response, err := h.send(ctx, k, r.Nonce, "reply", func(run context.Context) (proto.Message, error) {
 		restCtx, restCancel := detachedREST(run, ctx)
 		defer restCancel()
-		completed, err := h.Index.Completed(run, h.fingerprints[k.Name], r.Nonce)
+		completed, err := h.Index.Completed(restCtx, h.fingerprints[k.Name], r.Nonce)
 		if err != nil {
 			return nil, unavailable()
 		}
@@ -256,7 +256,7 @@ func (h *Handler) Reply(ctx context.Context, r *pb.ReplyRequest) (*pb.ReplyRespo
 			}
 			return nil, unavailable()
 		}
-		position, err := h.Index.Position(run)
+		position, err := h.Index.Position(restCtx)
 		if err != nil {
 			h.Registry.FinishReply(id, k.Name, false, false)
 			return nil, unavailable()

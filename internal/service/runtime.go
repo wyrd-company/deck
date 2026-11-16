@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -11,7 +10,6 @@ import (
 
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
-	pb "github.com/wyrd-company/deck/internal/api/deckv1"
 	"github.com/wyrd-company/deck/internal/config"
 	"github.com/wyrd-company/deck/internal/service/activity"
 	discord "github.com/wyrd-company/deck/internal/service/discord"
@@ -29,6 +27,7 @@ type Runtime struct {
 	Publisher *activity.Publisher
 	Bots      map[string]*discord.Client
 	Events    *activity.ConnectionEvents
+	Index     *activity.Index
 	cancel    context.CancelFunc
 	close     sync.Once
 }
@@ -67,6 +66,8 @@ func open(ctx context.Context, cfg *config.Service, secrets SecretReader, newBot
 	if err != nil {
 		return nil, err
 	}
+	// The index registers its connection callbacks before its replay starts.
+	r.Index = activity.NewIndex(ctx, r.JetStream, r.Registry.KV, cfg.NATS, r.Events, slog.Default())
 	r.Publisher = activity.New(ctx, r.JetStream, cfg.NATS.SubjectPrefix)
 	apis := map[string]discord.API{}
 	for i, b := range cfg.Bots {
@@ -82,7 +83,7 @@ func open(ctx context.Context, cfg *config.Service, secrets SecretReader, newBot
 		r.Bots[b.Name] = client
 		apis[b.Name] = client
 	}
-	r.Handler, err = NewHandler(cfg, Dependencies{Context: ctx, Bots: apis, Registry: r.Registry, Publisher: r.Publisher, Index: &bootstrapIndex{js: r.JetStream, kv: r.Registry.KV, stream: cfg.NATS.Stream.Name}})
+	r.Handler, err = NewHandler(cfg, Dependencies{Context: ctx, Bots: apis, Registry: r.Registry, Publisher: r.Publisher, Index: streamIndex{r.Index}, Activity: r.Index})
 	if err != nil {
 		return nil, err
 	}
@@ -115,6 +116,9 @@ func (r *Runtime) Close() {
 		if r.Publisher != nil {
 			r.Publisher.Close()
 		}
+		if r.Index != nil {
+			r.Index.Close()
+		}
 		if r.Registry != nil {
 			if pending := r.Registry.Pending(); pending > 0 {
 				slog.Warn("thread registry writes lost at shutdown", "entries", pending)
@@ -127,66 +131,3 @@ func (r *Runtime) Close() {
 		}
 	})
 }
-
-// bootstrapIndex supplies a starting position while task 7's replay/index layer
-// is absent. Task 7 replaces it before serving: completed-send lookup and replay
-// gates belong to that task, alongside the unread APIs.
-type bootstrapIndex struct {
-	js     jetstream.JetStream
-	kv     jetstream.KeyValue
-	stream string
-}
-
-func (i *bootstrapIndex) Completed(context.Context, string, string) (*CompletedSend, error) {
-	return nil, nil
-}
-func (i *bootstrapIndex) Position(ctx context.Context) (*pb.StreamPosition, error) {
-	for {
-		stream, err := i.js.Stream(ctx, i.stream)
-		if err != nil {
-			return nil, err
-		}
-		info, err := stream.Info(ctx)
-		if err != nil {
-			return nil, err
-		}
-		record, err := i.kv.Get(ctx, "stream.generation")
-		var generation struct {
-			Epoch   uint64    `json:"epoch"`
-			Created time.Time `json:"created"`
-		}
-		var revision uint64
-		if err != nil && !errors.Is(err, jetstream.ErrKeyNotFound) {
-			return nil, err
-		}
-		if err == nil {
-			revision = record.Revision()
-			if err = json.Unmarshal(record.Value(), &generation); err != nil {
-				return nil, err
-			}
-		}
-		if generation.Epoch == 0 || !generation.Created.Equal(info.Created) {
-			next := uint64(time.Now().UnixNano())
-			if next <= generation.Epoch {
-				next = generation.Epoch + 1
-			}
-			generation.Epoch = next
-			generation.Created = info.Created
-			raw, _ := json.Marshal(generation)
-			if revision == 0 {
-				_, err = i.kv.Create(ctx, "stream.generation", raw)
-			} else {
-				_, err = i.kv.Update(ctx, "stream.generation", raw, revision)
-			}
-			if errors.Is(err, jetstream.ErrKeyExists) {
-				continue
-			}
-			if err != nil {
-				return nil, err
-			}
-		}
-		return &pb.StreamPosition{Epoch: generation.Epoch, Sequence: info.State.LastSeq}, nil
-	}
-}
-
-func (i *bootstrapIndex) Confirm(context.Context, *CompletedSend) error { return nil }

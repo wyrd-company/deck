@@ -51,6 +51,8 @@ type Dependencies struct {
 	Registry  *registry.Registry
 	Publisher *activity.Publisher
 	Index     SendIndex
+	// Activity serves CountUnread, ListUnread and Listen; Index defaults to it.
+	Activity *activity.Index
 }
 type flight struct {
 	done      chan struct{}
@@ -67,6 +69,7 @@ type Handler struct {
 	Registry     *registry.Registry
 	Publisher    *activity.Publisher
 	Index        SendIndex
+	Activity     *activity.Index
 	mu           sync.Mutex
 	flights      map[string]*flight
 	wg           sync.WaitGroup
@@ -76,10 +79,13 @@ func NewHandler(cfg *config.Service, deps Dependencies) (*Handler, error) {
 	if deps.Context == nil {
 		deps.Context = context.Background()
 	}
+	if deps.Index == nil && deps.Activity != nil {
+		deps.Index = streamIndex{deps.Activity}
+	}
 	if deps.Registry == nil || deps.Publisher == nil || deps.Index == nil {
 		return nil, errors.New("service: registry, publisher and index are required")
 	}
-	h := &Handler{ctx: deps.Context, bots: deps.Bots, keys: map[string]config.Key{}, fingerprints: map[string]string{}, Registry: deps.Registry, Publisher: deps.Publisher, Index: deps.Index, flights: map[string]*flight{}}
+	h := &Handler{ctx: deps.Context, bots: deps.Bots, keys: map[string]config.Key{}, fingerprints: map[string]string{}, Registry: deps.Registry, Publisher: deps.Publisher, Index: deps.Index, Activity: deps.Activity, flights: map[string]*flight{}}
 	for _, k := range cfg.Keys {
 		pub, _, _, _, err := ssh.ParseAuthorizedKey([]byte(k.PublicKey))
 		if err != nil {
