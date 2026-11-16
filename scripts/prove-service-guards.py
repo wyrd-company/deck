@@ -297,7 +297,7 @@ probe('held events are released when their thread registers', 'discord/gateway.g
       'reg.OnRegister(g.registered)', '_ = g.registered',
       './internal/service', 'TestHeldEventsReleasedOnRegistration')
 probe('components are acknowledged before publishing', 'discord/gateway.go',
-      'if err := e.DeferUpdateMessage(); err != nil {', 'if err := error(nil); err != nil {',
+      'err := e.DeferUpdateMessage(rest.WithCtx(ack))', 'err := error(nil); _ = ack',
       './internal/service', 'TestComponentsAndStarterRouting')
 probe('poll votes are read from raw gateway events', 'discord/gateway.go',
       'case gateway.EventTypeMessagePollVoteAdd:', 'case "never":',
@@ -339,4 +339,13 @@ probe_source('a Vault failure during a stop stays a failure', 'internal/vault/cl
 probe('a missing stream is created only after its deletion ends', 'activity/index.go',
       '\trecreateDelay = 2 * time.Second', '\trecreateDelay = 0 * time.Second',
       './internal/service/activity', 'TestRecreationWaitsForTheDeletion')
+probe('shutdown joins gateway callbacks before closing their resources', 'runtime.go',
+      'if !g.JoinCallbacks(callbackBudget, callbackGrace) {', 'if g == nil {',
+      './internal/service', 'TestCloseJoinsComponentAcknowledgements')
+probe('an independent gateway failure during a stop stays a failure', 'runtime.go',
+      'if ctx.Err() == nil || !errors.Is(err, ctx.Err()) {', 'if ctx.Err() == nil {',
+      './internal/service', 'TestGatewayFailureDuringStop')
+probe('a watched revision during a write survives reconciliation', 'registry/registry.go',
+      'if w, ok := r.watched[id]; ok && w.rev > rev {', 'if w, ok := r.watched[id]; ok && w.rev > rev && w.rev == 0 {',
+      './internal/service/registry', 'TestWatchedRevisionDuringWriteSurvives')
 print(f'PASS all {completed} targeted service mutation probes completed', flush=True)
