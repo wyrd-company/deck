@@ -26,9 +26,6 @@ var (
 	auditInterval = 10 * time.Second
 	catchUpPoll   = time.Second
 	closeWait     = time.Second
-	// recreateDelay is how long a check waits before it creates a missing
-	// stream; see ensure.
-	recreateDelay = 2 * time.Second
 )
 
 // Test hooks: muteConsumerTriggers silences the consumer's own triggers and
@@ -105,6 +102,7 @@ type Index struct {
 	cc            jetstream.ConsumeContext
 	audited       uint64
 	state         string
+	missing       bool
 	checkCancel   context.CancelFunc
 }
 
@@ -154,7 +152,9 @@ func (i *Index) markDue(reason string) {
 	i.mu.Lock()
 	i.invalidate()
 	i.due++
-	i.state = "replaying"
+	if !i.missing {
+		i.state = "replaying"
+	}
 	if i.checkCancel != nil {
 		// A newer trigger supersedes the running check; its requests may be
 		// waiting on a connection that has since been replaced.
@@ -258,6 +258,18 @@ func (i *Index) check() {
 func (i *Index) checkOnce(ctx context.Context, target uint64, retry func() bool) bool {
 	i.stopConsumer()
 	stream, err := i.ensure(ctx)
+	if errors.Is(err, errStreamMissing) {
+		i.mu.Lock()
+		first := !i.missing
+		i.missing, i.state = true, "missing"
+		i.broadcast()
+		i.mu.Unlock()
+		if first {
+			i.log.Error("activity stream missing; restart the service once its deletion has finished, or create the stream", "stream", i.cfg.Stream.Name, "manage", i.cfg.Stream.Manage)
+		}
+		retry()
+		return false
+	}
 	if err != nil {
 		if ctx.Err() == nil {
 			i.log.Warn("activity stream unavailable", "stream", i.cfg.Stream.Name, "manage", i.cfg.Stream.Manage)
@@ -265,6 +277,12 @@ func (i *Index) checkOnce(ctx context.Context, target uint64, retry func() bool)
 		retry()
 		return false
 	}
+	i.mu.Lock()
+	if i.missing {
+		i.missing, i.state = false, "replaying"
+		i.log.Info("activity stream present again; replaying", "stream", i.cfg.Stream.Name)
+	}
+	i.mu.Unlock()
 	info, err := stream.Info(ctx)
 	if err != nil {
 		retry()
@@ -339,32 +357,29 @@ func (i *Index) checkOnce(ctx context.Context, target uint64, retry func() bool)
 	return i.catchUp(ctx, target, token, captured, stream, consumer)
 }
 
-// ensure runs the check's stream management. With nats.stream.manage it
-// updates an existing stream; a missing stream is created only after
-// recreateDelay. nats-server (v2.11.9 stream.stop) removes a deleted stream
-// from its account before it removes the stream's files, and the
-// consumer-deleted notice that triggers this check arrives in between: a
-// stream created from another connection in that window gets the same
-// directory, which the deletion then removes, and every write to it fails
-// (JetStream error 10077). Waiting lets the deletion finish first.
+// errStreamMissing means the events stream does not exist after startup.
+var errStreamMissing = errors.New("activity stream missing")
+
+// ensure runs the check's stream management. Only startup creates a missing
+// stream (runtime's EnsureStream); after it, a check updates an existing
+// stream's settings when nats.stream.manage is true and otherwise checks it,
+// and a missing stream is errStreamMissing, never created here. nats-server
+// (v2.11.9 stream.stop) removes a deleted stream from its account before it
+// removes the stream's files, and the consumer-deleted notice that triggers
+// this check arrives in between: a stream created then from this connection
+// would share the directory the deletion removes, and every write to it
+// would fail (JetStream error 10077). No elapsed time bounds that deletion,
+// so the service leaves recreation to startup or to an outside client.
 func (i *Index) ensure(ctx context.Context) (jetstream.Stream, error) {
-	if !i.cfg.Stream.Manage {
-		return EnsureStream(ctx, i.js, i.cfg)
+	var stream jetstream.Stream
+	var err error
+	if i.cfg.Stream.Manage {
+		stream, err = i.js.UpdateStream(ctx, StreamConfig(i.cfg))
+	} else {
+		stream, err = EnsureStream(ctx, i.js, i.cfg)
 	}
-	stream, err := i.js.UpdateStream(ctx, StreamConfig(i.cfg))
-	if !errors.Is(err, jetstream.ErrStreamNotFound) {
-		return stream, err
-	}
-	t := time.NewTimer(recreateDelay)
-	defer t.Stop()
-	select {
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	case <-t.C:
-	}
-	stream, err = i.js.CreateStream(ctx, StreamConfig(i.cfg))
-	if errors.Is(err, jetstream.ErrStreamNameAlreadyInUse) {
-		return i.js.UpdateStream(ctx, StreamConfig(i.cfg))
+	if errors.Is(err, jetstream.ErrStreamNotFound) {
+		return nil, errStreamMissing
 	}
 	return stream, err
 }

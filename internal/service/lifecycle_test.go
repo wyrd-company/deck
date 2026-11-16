@@ -38,6 +38,8 @@ import (
 	"github.com/wyrd-company/deck/internal/service/testutil"
 	"github.com/wyrd-company/deck/internal/transport"
 	"golang.org/x/crypto/ssh"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 type lifecycle struct {
@@ -47,6 +49,7 @@ type lifecycle struct {
 	fake     *fakeDiscord
 	gateways map[string]*testutil.Gateway
 	cfg      *config.Service
+	open     func() (*Runtime, error)
 }
 
 func freeAddress(t *testing.T) string {
@@ -76,19 +79,24 @@ func openRuntime(t *testing.T) *lifecycle {
 		Keys:   []config.Key{{Name: "key", PublicKey: newAuthorizedKey(t), Grants: []config.Grant{{Bot: "a", Server: "1", Channels: []string{"*"}}}}},
 	}
 	secrets := &startupSecrets{credentials: credentials}
-	r, err := open(context.Background(), l.cfg, secrets, func(name, token string) (*discord.Client, error) {
-		return discord.New(token, options(name)...)
-	})
+	// open runs the production startup steps once more: a restart.
+	l.open = func() (*Runtime, error) {
+		r, err := open(context.Background(), l.cfg, secrets, func(name, token string) (*discord.Client, error) {
+			return discord.New(token, options(name)...)
+		})
+		if err != nil {
+			return nil, err
+		}
+		t.Cleanup(r.Close)
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		return r, r.OpenGateways(ctx)
+	}
+	r, err := l.open()
 	if err != nil {
 		t.Fatal(err)
 	}
 	l.runtime = r
-	t.Cleanup(r.Close)
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-	if err = r.OpenGateways(ctx); err != nil {
-		t.Fatal(err)
-	}
 	admin, err := nats.Connect(natsServer.ClientURL(), nats.UserCredentialBytes([]byte(credentials)))
 	if err != nil {
 		t.Fatal(err)
@@ -413,5 +421,60 @@ func TestCloseJoinsComponentAcknowledgements(t *testing.T) {
 				t.Fatal("the component use was not published before the publisher closed")
 			}
 		})
+	}
+}
+
+// A stream deleted while the service runs leaves it unavailable, with the
+// healthcheck naming the missing stream and calls answering UNAVAILABLE,
+// until a restart creates the stream at startup (R1-01 ruling).
+func TestDeletedStreamUntilRestart(t *testing.T) {
+	l := openRuntime(t)
+	r := l.runtime
+	probe, err := health.Listen(l.cfg.Listen.Health, r.Checks())
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := func() (int, map[string]any) {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		code, raw, err := health.Probe(ctx, probe.Addr().String())
+		if err != nil {
+			t.Fatal(err)
+		}
+		var body map[string]any
+		_ = json.Unmarshal(raw, &body)
+		return code, body
+	}
+	testutil.Until(t, func() bool { code, _ := state(); return code == http.StatusOK })
+	registerBot(t, r.Registry, 100, 10, "a", 100)
+	if err = l.admin.DeleteStream(context.Background(), "DECK"); err != nil {
+		t.Fatal(err)
+	}
+	testutil.Until(t, func() bool {
+		code, body := state()
+		return code == http.StatusServiceUnavailable && body["index"] == "missing"
+	})
+	call, cancel := context.WithTimeout(transport.WithKeyName(context.Background(), "key"), 300*time.Millisecond)
+	_, err = r.Handler.CountUnread(call, &pb.CountUnreadRequest{Cursors: []*pb.Cursor{{ThreadId: 100}}})
+	cancel()
+	if status.Code(err) != codes.Unavailable {
+		t.Fatal("a call answered without the stream", err)
+	}
+	if _, err = l.admin.Stream(context.Background(), "DECK"); !errors.Is(err, jetstream.ErrStreamNotFound) {
+		t.Fatal("the running service recreated the stream", err)
+	}
+	probe.Close(context.Background())
+	r.Close()
+	restarted, err := l.open()
+	if err != nil {
+		t.Fatal("restart failed", err)
+	}
+	if _, err = l.admin.Stream(context.Background(), "DECK"); err != nil {
+		t.Fatal("startup did not create the missing stream", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err = restarted.Index.Position(ctx); err != nil {
+		t.Fatal("the restarted index did not open", err)
 	}
 }

@@ -1,12 +1,15 @@
 package activity
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -250,36 +253,79 @@ func TestRecreationTraceReplaysNewGeneration(t *testing.T) {
 	}
 }
 
-// Deleting the stream with management on creates a replacement before the
-// generation check; with management off the index waits for the operator.
-func TestMissingStreamManagedAndUnmanaged(t *testing.T) {
+// countingJS counts stream creations sent through the index's connection.
+type countingJS struct {
+	jetstream.JetStream
+	creates atomic.Int32
+}
+
+func (j *countingJS) CreateStream(ctx context.Context, cfg jetstream.StreamConfig) (jetstream.Stream, error) {
+	j.creates.Add(1)
+	return j.JetStream.CreateStream(ctx, cfg)
+}
+func (j *countingJS) CreateOrUpdateStream(ctx context.Context, cfg jetstream.StreamConfig) (jetstream.Stream, error) {
+	j.creates.Add(1)
+	return j.JetStream.CreateOrUpdateStream(ctx, cfg)
+}
+
+// syncBuffer is a log destination safe for concurrent writers.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+func (b *syncBuffer) String() string { b.mu.Lock(); defer b.mu.Unlock(); return b.buf.String() }
+
+// A stream deleted while the service runs is not recreated by it, whatever
+// nats.stream.manage says (only startup creates a missing stream): the index
+// reports the stream missing, calls get UNAVAILABLE, one error log names the
+// stream and the remedy, and the index replays new sequences 1-7 once an
+// outside client creates the stream.
+func TestStreamDeletedWhileRunning(t *testing.T) {
 	for _, manage := range []bool{true, false} {
 		t.Run(fmt.Sprint("manage=", manage), func(t *testing.T) {
 			f := newFixture(t, manage)
-			f.start()
+			counting := &countingJS{JetStream: f.service}
+			kv, err := f.service.KeyValue(context.Background(), "threads")
+			if err != nil {
+				t.Fatal(err)
+			}
+			logs := &syncBuffer{}
+			f.index = NewIndex(context.Background(), counting, kv, f.cfg, f.events, slog.New(slog.NewJSONHandler(logs, nil)))
+			t.Cleanup(f.index.Close)
 			publish(t, f.admin, 1, 5)
 			f.sequences(5)
 			old := f.epoch()
-			if err := f.admin.DeleteStream(context.Background(), "DECK"); err != nil {
+			if err = f.admin.DeleteStream(context.Background(), "DECK"); err != nil {
 				t.Fatal(err)
 			}
-			if !manage {
-				time.Sleep(300 * time.Millisecond)
-				ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
-				_, err := f.index.Position(ctx)
-				cancel()
-				if !errors.Is(err, ErrUnavailable) || f.index.State() == "ready" {
-					t.Fatal("unmanaged index answered without a stream", err)
-				}
-				if _, err = EnsureStream(context.Background(), f.admin, natsCfg(true)); err != nil {
-					t.Fatal(err)
-				}
+			testutil.Until(t, func() bool { return f.index.State() == "missing" })
+			f.events.fire(true) // later triggers find it missing again
+			time.Sleep(1500 * time.Millisecond)
+			ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+			_, err = f.index.Position(ctx)
+			cancel()
+			if !errors.Is(err, ErrUnavailable) || f.index.State() != "missing" {
+				t.Fatal("index answered without its stream", err, f.index.State())
 			}
-			testutil.Until(t, func() bool { _, err := f.admin.Stream(context.Background(), "DECK"); return err == nil })
-			publish(t, f.service, 1, 7)
+			if _, err = f.admin.Stream(context.Background(), "DECK"); !errors.Is(err, jetstream.ErrStreamNotFound) || counting.creates.Load() != 0 {
+				t.Fatalf("the service recreated the stream while running: %v, %d creates", err, counting.creates.Load())
+			}
+			if n := strings.Count(logs.String(), `"msg":"activity stream missing; restart the service once its deletion has finished, or create the stream"`); n != 1 || !strings.Contains(logs.String(), `"level":"ERROR"`) || !strings.Contains(logs.String(), `"stream":"DECK"`) {
+				t.Fatalf("want one error log naming the stream and the remedy, got %d: %s", n, logs.String())
+			}
+			if _, err = EnsureStream(context.Background(), f.admin, natsCfg(true)); err != nil {
+				t.Fatal(err)
+			}
+			publish(t, f.admin, 1, 7)
 			expectSequences(t, f.sequences(7), 1, 2, 3, 4, 5, 6, 7)
-			if f.epoch() == old {
-				t.Fatal("epoch unchanged after recreation")
+			if f.epoch() == old || f.index.State() != "ready" {
+				t.Fatal("index did not replay the stream an outside client created")
 			}
 		})
 	}
@@ -310,6 +356,8 @@ func TestConsumerOnlyDeletionKeepsGeneration(t *testing.T) {
 
 // Spike cases (a)-(d), each run five times: the connection's reconnect
 // callback marks the check due, and every retained new sequence is indexed.
+// In (c) and (d) the stream stays deleted: the service does not recreate it
+// while running, managed or not, and indexes it once someone creates it.
 func TestReconnectCases(t *testing.T) {
 	cases := []struct {
 		name                     string
@@ -317,8 +365,8 @@ func TestReconnectCases(t *testing.T) {
 	}{
 		{"a-published-while-disconnected", true, true, true},
 		{"b-service-publishes-after-reconnect", true, false, true},
-		{"c-management-recreates-missing-stream", false, false, true},
-		{"d-unmanaged-waits-for-operator", false, false, false},
+		{"c-managed-missing-stream-waits-for-a-creator", false, false, true},
+		{"d-unmanaged-missing-stream-waits-for-a-creator", false, false, false},
 	}
 	for _, c := range cases {
 		for run := range 5 {
@@ -348,10 +396,13 @@ func TestReconnectCases(t *testing.T) {
 				f.relay.online.Store(true)
 				// The reconnect callback itself marks the check due.
 				testutil.Until(t, func() bool { f.index.mu.Lock(); defer f.index.mu.Unlock(); return f.index.due > due })
-				if !c.manage {
-					time.Sleep(200 * time.Millisecond)
-					if f.index.State() == "ready" {
-						t.Fatal("unmanaged index opened without a stream")
+				if !c.recreate {
+					// Only startup creates a missing stream: managed or not,
+					// the index stays unavailable until an outside client
+					// creates it (or the service restarts).
+					testutil.Until(t, func() bool { return f.index.State() == "missing" })
+					if _, err := f.admin.Stream(ctx, "DECK"); !errors.Is(err, jetstream.ErrStreamNotFound) {
+						t.Fatal("the service recreated the stream while running", err)
 					}
 					if _, err := EnsureStream(ctx, f.admin, natsCfg(true)); err != nil {
 						t.Fatal(err)
@@ -727,40 +778,6 @@ func TestReconnectCallbackAloneTriggersCheck(t *testing.T) {
 	if f.epoch() == old {
 		t.Fatal("reconnect did not change the generation")
 	}
-}
-
-// A stream deleted from another connection is recreated only after its
-// deletion has finished. nats-server removes a deleted stream from its
-// account before its files, and the consumer-deleted notice that triggers
-// the check arrives in between; a stream created in that window shares the
-// directory the deletion removes, and every write to it then fails with
-// JetStream error 10077. Many consumers widen the deletion's window.
-func TestRecreationWaitsForTheDeletion(t *testing.T) {
-	f := newFixture(t, true)
-	f.start()
-	publish(t, f.admin, 1, 3)
-	f.sequences(3)
-	ctx := context.Background()
-	for n := range 300 {
-		if _, err := f.admin.CreateOrUpdateConsumer(ctx, "DECK", jetstream.ConsumerConfig{Durable: fmt.Sprint("widen", n)}); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := f.admin.DeleteStream(ctx, "DECK"); err != nil {
-		t.Fatal(err)
-	}
-	deadline := time.Now().Add(10 * time.Second)
-	for {
-		if _, err := f.admin.Stream(ctx, "DECK"); err == nil {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("the index did not recreate the stream")
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-	publish(t, f.service, 1, 3) // fails with 10077 if created inside the deletion
-	expectSequences(t, f.sequences(3), 1, 2, 3)
 }
 
 // stalledManagement holds the check's first stream-management request until
