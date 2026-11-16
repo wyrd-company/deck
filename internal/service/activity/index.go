@@ -26,6 +26,9 @@ var (
 	auditInterval = 10 * time.Second
 	catchUpPoll   = time.Second
 	closeWait     = time.Second
+	// recreateDelay is how long a check waits before it creates a missing
+	// stream; see ensure.
+	recreateDelay = 2 * time.Second
 )
 
 // Test hooks: muteConsumerTriggers silences the consumer's own triggers and
@@ -102,6 +105,7 @@ type Index struct {
 	cc            jetstream.ConsumeContext
 	audited       uint64
 	state         string
+	checkCancel   context.CancelFunc
 }
 
 // NewIndex registers the index's connection callbacks and starts its check
@@ -151,6 +155,11 @@ func (i *Index) markDue(reason string) {
 	i.invalidate()
 	i.due++
 	i.state = "replaying"
+	if i.checkCancel != nil {
+		// A newer trigger supersedes the running check; its requests may be
+		// waiting on a connection that has since been replaced.
+		i.checkCancel()
+	}
 	i.mu.Unlock()
 	i.log.Debug("activity index check due", "reason", reason)
 	select {
@@ -233,101 +242,131 @@ func (i *Index) check() {
 		i.mu.Lock()
 		target := i.due
 		i.invalidate()
+		ctx, cancel := context.WithCancel(i.ctx)
+		i.checkCancel = cancel
 		i.mu.Unlock()
-		i.stopConsumer()
-		stream, err := EnsureStream(i.ctx, i.js, i.cfg)
-		if err != nil {
-			if i.ctx.Err() == nil {
-				i.log.Warn("activity stream unavailable", "stream", i.cfg.Stream.Name, "manage", i.cfg.Stream.Manage)
-			}
-			if !retry() {
-				return
-			}
-			continue
-		}
-		info, err := stream.Info(i.ctx)
-		if err != nil {
-			if !retry() {
-				return
-			}
-			continue
-		}
-		captured := info.State.LastSeq
-		i.mu.Lock()
-		lost := i.epoch != 0 && i.created.Equal(info.Created) && info.State.LastSeq < i.last
-		i.mu.Unlock()
-		gen, err := i.generation(info.Created, lost)
-		if err != nil {
-			if i.ctx.Err() == nil {
-				i.log.Warn("stream generation record unavailable")
-			}
-			if !retry() {
-				return
-			}
-			continue
-		}
-		i.mu.Lock()
-		if !gen.Created.Equal(info.Created) || gen.Epoch != i.epoch {
-			if i.epoch != 0 {
-				i.log.Info("activity stream generation changed; replaying", "epoch", gen.Epoch)
-			}
-			i.epoch, i.created = gen.Epoch, info.Created
-			i.last, i.audited = 0, 0
-			i.threads = map[uint64][]*Entry{}
-			i.held = map[uint64]map[string]bool{}
-			i.sends = map[string][]*Entry{}
-			i.version++
-		}
-		i.first = info.State.FirstSeq
-		i.skipExpired(info.State.FirstSeq)
-		start := i.last + 1
-		i.tokens++
-		token := i.tokens
-		i.token = token
-		i.stream = stream
-		i.mu.Unlock()
-		if beforeConsumer != nil {
-			beforeConsumer()
-		}
-		config := jetstream.OrderedConsumerConfig{FilterSubjects: []string{i.cfg.SubjectPrefix + ".>"}, HeadersOnly: true, DeliverPolicy: jetstream.DeliverAllPolicy}
-		if start > 1 {
-			config.DeliverPolicy = jetstream.DeliverByStartSequencePolicy
-			config.OptStartSeq = start
-		}
-		consumer, err := i.js.OrderedConsumer(i.ctx, i.cfg.Stream.Name, config)
-		if err != nil {
-			if !retry() {
-				return
-			}
-			continue
-		}
-		cc, err := consumer.Consume(i.ingest(token), jetstream.ConsumeErrHandler(func(_ jetstream.ConsumeContext, err error) {
-			// nats.go calls this holding its consumer lock: only mark due.
-			if i.current(token) && !muteConsumerTriggers.Load() {
-				i.markDue("consumer error")
-			}
-		}))
-		if err != nil {
-			if !retry() {
-				return
-			}
-			continue
-		}
-		i.cc, i.consumer = cc, consumer
-		go func() {
-			<-cc.Closed()
-			if i.current(token) && !muteConsumerTriggers.Load() {
-				i.markDue("consume context ended")
-			}
-		}()
-		after, err := stream.Info(i.ctx)
-		if err != nil || !after.Created.Equal(info.Created) {
-			continue // recreated while the consumer was made: check again
-		}
-		if i.catchUp(target, token, captured, stream, consumer) {
+		if i.checkOnce(ctx, target, retry) {
+			cancel()
 			return
 		}
+		cancel()
 	}
+}
+
+// checkOnce runs one attempt of the check under ctx, which a newer trigger
+// cancels. It reports whether the gate opened.
+func (i *Index) checkOnce(ctx context.Context, target uint64, retry func() bool) bool {
+	i.stopConsumer()
+	stream, err := i.ensure(ctx)
+	if err != nil {
+		if ctx.Err() == nil {
+			i.log.Warn("activity stream unavailable", "stream", i.cfg.Stream.Name, "manage", i.cfg.Stream.Manage)
+		}
+		retry()
+		return false
+	}
+	info, err := stream.Info(ctx)
+	if err != nil {
+		retry()
+		return false
+	}
+	captured := info.State.LastSeq
+	i.mu.Lock()
+	lost := i.epoch != 0 && i.created.Equal(info.Created) && info.State.LastSeq < i.last
+	i.mu.Unlock()
+	gen, err := i.generation(ctx, info.Created, lost)
+	if err != nil {
+		if ctx.Err() == nil {
+			i.log.Warn("stream generation record unavailable")
+		}
+		retry()
+		return false
+	}
+	i.mu.Lock()
+	if !gen.Created.Equal(info.Created) || gen.Epoch != i.epoch {
+		if i.epoch != 0 {
+			i.log.Info("activity stream generation changed; replaying", "epoch", gen.Epoch)
+		}
+		i.epoch, i.created = gen.Epoch, info.Created
+		i.last, i.audited = 0, 0
+		i.threads = map[uint64][]*Entry{}
+		i.held = map[uint64]map[string]bool{}
+		i.sends = map[string][]*Entry{}
+		i.version++
+	}
+	i.first = info.State.FirstSeq
+	i.skipExpired(info.State.FirstSeq)
+	start := i.last + 1
+	i.tokens++
+	token := i.tokens
+	i.token = token
+	i.stream = stream
+	i.mu.Unlock()
+	if beforeConsumer != nil {
+		beforeConsumer()
+	}
+	config := jetstream.OrderedConsumerConfig{FilterSubjects: []string{i.cfg.SubjectPrefix + ".>"}, HeadersOnly: true, DeliverPolicy: jetstream.DeliverAllPolicy}
+	if start > 1 {
+		config.DeliverPolicy = jetstream.DeliverByStartSequencePolicy
+		config.OptStartSeq = start
+	}
+	consumer, err := i.js.OrderedConsumer(ctx, i.cfg.Stream.Name, config)
+	if err != nil {
+		retry()
+		return false
+	}
+	cc, err := consumer.Consume(i.ingest(token), jetstream.ConsumeErrHandler(func(_ jetstream.ConsumeContext, err error) {
+		// nats.go calls this holding its consumer lock: only mark due.
+		if i.current(token) && !muteConsumerTriggers.Load() {
+			i.markDue("consumer error")
+		}
+	}))
+	if err != nil {
+		retry()
+		return false
+	}
+	i.cc, i.consumer = cc, consumer
+	go func() {
+		<-cc.Closed()
+		if i.current(token) && !muteConsumerTriggers.Load() {
+			i.markDue("consume context ended")
+		}
+	}()
+	after, err := stream.Info(ctx)
+	if err != nil || !after.Created.Equal(info.Created) {
+		return false // recreated while the consumer was made: check again
+	}
+	return i.catchUp(ctx, target, token, captured, stream, consumer)
+}
+
+// ensure runs the check's stream management. With nats.stream.manage it
+// updates an existing stream; a missing stream is created only after
+// recreateDelay. nats-server (v2.11.9 stream.stop) removes a deleted stream
+// from its account before it removes the stream's files, and the
+// consumer-deleted notice that triggers this check arrives in between: a
+// stream created from another connection in that window gets the same
+// directory, which the deletion then removes, and every write to it fails
+// (JetStream error 10077). Waiting lets the deletion finish first.
+func (i *Index) ensure(ctx context.Context) (jetstream.Stream, error) {
+	if !i.cfg.Stream.Manage {
+		return EnsureStream(ctx, i.js, i.cfg)
+	}
+	stream, err := i.js.UpdateStream(ctx, StreamConfig(i.cfg))
+	if !errors.Is(err, jetstream.ErrStreamNotFound) {
+		return stream, err
+	}
+	t := time.NewTimer(recreateDelay)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-t.C:
+	}
+	stream, err = i.js.CreateStream(ctx, StreamConfig(i.cfg))
+	if errors.Is(err, jetstream.ErrStreamNameAlreadyInUse) {
+		return i.js.UpdateStream(ctx, StreamConfig(i.cfg))
+	}
+	return stream, err
 }
 
 // skipExpired treats sequences below the stream's first as indexed: they can
@@ -340,7 +379,7 @@ func (i *Index) skipExpired(first uint64) {
 
 // catchUp waits for the index to reach the captured last sequence, then opens
 // the gate if no newer check became due.
-func (i *Index) catchUp(target, token, captured uint64, stream jetstream.Stream, consumer jetstream.Consumer) bool {
+func (i *Index) catchUp(ctx context.Context, target, token, captured uint64, stream jetstream.Stream, consumer jetstream.Consumer) bool {
 	for {
 		i.mu.Lock()
 		if i.due != target || i.token != token {
@@ -367,11 +406,11 @@ func (i *Index) catchUp(target, token, captured uint64, stream jetstream.Stream,
 		}
 		// Messages can expire or be deleted after the capture: a sequence
 		// the consumer can no longer deliver must not hold the gate shut.
-		info, err := stream.Info(i.ctx)
+		info, err := stream.Info(ctx)
 		if err != nil {
 			continue
 		}
-		ci, err := consumer.Info(i.ctx)
+		ci, err := consumer.Info(ctx)
 		i.mu.Lock()
 		if i.token == token {
 			i.skipExpired(info.State.FirstSeq)
@@ -393,14 +432,14 @@ func (i *Index) current(token uint64) bool {
 // generation reads the stream's generation record, writing a new epoch when
 // it is missing, its created differs from the stream's, or the stream lost
 // messages the index holds while keeping its creation time.
-func (i *Index) generation(created time.Time, lost bool) (generation, error) {
+func (i *Index) generation(ctx context.Context, created time.Time, lost bool) (generation, error) {
 	i.mu.Lock()
 	epoch := i.epoch
 	i.mu.Unlock()
 	for {
 		var g generation
 		var rev uint64
-		record, err := i.kv.Get(i.ctx, GenerationKey)
+		record, err := i.kv.Get(ctx, GenerationKey)
 		if err != nil && !errors.Is(err, jetstream.ErrKeyNotFound) {
 			return g, err
 		}
@@ -423,9 +462,9 @@ func (i *Index) generation(created time.Time, lost bool) (generation, error) {
 			return g, err
 		}
 		if rev == 0 {
-			_, err = i.kv.Create(i.ctx, GenerationKey, raw)
+			_, err = i.kv.Create(ctx, GenerationKey, raw)
 		} else {
-			_, err = i.kv.Update(i.ctx, GenerationKey, raw, rev)
+			_, err = i.kv.Update(ctx, GenerationKey, raw, rev)
 		}
 		if errors.Is(err, jetstream.ErrKeyExists) {
 			continue

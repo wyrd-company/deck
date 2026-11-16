@@ -26,10 +26,15 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// EnsureStream is also called by task 7's generation-check worker.
+// StreamConfig is the events stream's configuration under nats.stream.
+func StreamConfig(cfg config.NATS) jetstream.StreamConfig {
+	return jetstream.StreamConfig{Name: cfg.Stream.Name, Subjects: []string{cfg.SubjectPrefix + ".>"}, Storage: jetstream.FileStorage, Retention: jetstream.LimitsPolicy, Discard: jetstream.DiscardOld, MaxAge: cfg.Stream.MaxAge, Duplicates: cfg.Stream.DuplicateWindow, Replicas: cfg.Stream.Replicas}
+}
+
+// EnsureStream creates or checks the stream at startup, as nats.stream.manage says.
 func EnsureStream(ctx context.Context, js jetstream.JetStream, cfg config.NATS) (jetstream.Stream, error) {
 	if cfg.Stream.Manage {
-		return js.CreateOrUpdateStream(ctx, jetstream.StreamConfig{Name: cfg.Stream.Name, Subjects: []string{cfg.SubjectPrefix + ".>"}, Storage: jetstream.FileStorage, Retention: jetstream.LimitsPolicy, Discard: jetstream.DiscardOld, MaxAge: cfg.Stream.MaxAge, Duplicates: cfg.Stream.DuplicateWindow, Replicas: cfg.Stream.Replicas})
+		return js.CreateOrUpdateStream(ctx, StreamConfig(cfg))
 	}
 	s, err := js.Stream(ctx, cfg.Stream.Name)
 	if err != nil {

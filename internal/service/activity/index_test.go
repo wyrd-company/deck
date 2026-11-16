@@ -510,11 +510,11 @@ func TestLostNewestMessagesChangeEpoch(t *testing.T) {
 	publish(t, f.admin, 1, 3)
 	f.sequences(3)
 	old := f.epoch()
-	g, err := f.index.generation(f.created(), true)
+	g, err := f.index.generation(context.Background(), f.created(), true)
 	if err != nil || g.Epoch == old || !g.Created.Equal(f.created()) {
 		t.Fatal("lost messages kept the epoch", g, err)
 	}
-	if g, err = f.index.generation(f.created(), false); err != nil || g.Epoch == old {
+	if g, err = f.index.generation(context.Background(), f.created(), false); err != nil || g.Epoch == old {
 		t.Fatal("record not durable", g, err)
 	}
 }
@@ -688,7 +688,7 @@ func TestEpochRule(t *testing.T) {
 	if _, err := f.kv.Put(context.Background(), GenerationKey, raw); err != nil {
 		t.Fatal(err)
 	}
-	g, err := f.index.generation(f.created(), false)
+	g, err := f.index.generation(context.Background(), f.created(), false)
 	if err != nil || g.Epoch != ahead.Epoch+1 || !g.Created.Equal(f.created()) {
 		t.Fatal("epoch did not move past a record ahead of the clock", g, err)
 	}
@@ -696,7 +696,7 @@ func TestEpochRule(t *testing.T) {
 	if err = f.kv.Delete(context.Background(), GenerationKey); err != nil {
 		t.Fatal(err)
 	}
-	if g, err = f.index.generation(f.created(), false); err != nil || g.Epoch < before || g.Epoch > uint64(time.Now().UnixNano()) {
+	if g, err = f.index.generation(context.Background(), f.created(), false); err != nil || g.Epoch < before || g.Epoch > uint64(time.Now().UnixNano()) {
 		t.Fatal("epoch is not the current time", g, err)
 	}
 }
@@ -721,4 +721,38 @@ func TestReconnectCallbackAloneTriggersCheck(t *testing.T) {
 	if f.epoch() == old {
 		t.Fatal("reconnect did not change the generation")
 	}
+}
+
+// A stream deleted from another connection is recreated only after its
+// deletion has finished. nats-server removes a deleted stream from its
+// account before its files, and the consumer-deleted notice that triggers
+// the check arrives in between; a stream created in that window shares the
+// directory the deletion removes, and every write to it then fails with
+// JetStream error 10077. Many consumers widen the deletion's window.
+func TestRecreationWaitsForTheDeletion(t *testing.T) {
+	f := newFixture(t, true)
+	f.start()
+	publish(t, f.admin, 1, 3)
+	f.sequences(3)
+	ctx := context.Background()
+	for n := range 300 {
+		if _, err := f.admin.CreateOrUpdateConsumer(ctx, "DECK", jetstream.ConsumerConfig{Durable: fmt.Sprint("widen", n)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := f.admin.DeleteStream(ctx, "DECK"); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if _, err := f.admin.Stream(ctx, "DECK"); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the index did not recreate the stream")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	publish(t, f.service, 1, 3) // fails with 10077 if created inside the deletion
+	expectSequences(t, f.sequences(3), 1, 2, 3)
 }
