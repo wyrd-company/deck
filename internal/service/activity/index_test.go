@@ -762,3 +762,45 @@ func TestRecreationWaitsForTheDeletion(t *testing.T) {
 	publish(t, f.service, 1, 3) // fails with 10077 if created inside the deletion
 	expectSequences(t, f.sequences(3), 1, 2, 3)
 }
+
+// stalledManagement holds the check's first stream-management request until
+// its context ends, as a request lost across a reconnect would wait out its
+// timeout.
+type stalledManagement struct {
+	jetstream.JetStream
+	first   atomic.Bool
+	entered chan struct{}
+}
+
+func (j *stalledManagement) UpdateStream(ctx context.Context, cfg jetstream.StreamConfig) (jetstream.Stream, error) {
+	if j.first.CompareAndSwap(false, true) {
+		close(j.entered)
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	return j.JetStream.UpdateStream(ctx, cfg)
+}
+
+// R1-07: a newer trigger cancels the running check's requests, so a stalled
+// request does not hold the check; the index opens promptly after it.
+func TestNewerTriggerCancelsStalledCheck(t *testing.T) {
+	f := newFixture(t, true)
+	stalled := &stalledManagement{JetStream: f.service, entered: make(chan struct{})}
+	kv, err := f.service.KeyValue(context.Background(), "threads")
+	if err != nil {
+		t.Fatal(err)
+	}
+	index := NewIndex(context.Background(), stalled, kv, f.cfg, f.events, nil)
+	t.Cleanup(index.Close)
+	select {
+	case <-stalled.entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the check never reached stream management")
+	}
+	f.events.fire(true) // a reconnect: the newer trigger
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if _, err = index.Position(ctx); err != nil {
+		t.Fatal("the newer trigger did not release the stalled check", err)
+	}
+}
