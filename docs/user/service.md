@@ -18,11 +18,43 @@ stream and thread bucket before accepting SSH connections on `listen.ssh`.
 See [Configuration](configuration.md) and [Authentication](authentication.md)
 for credentials, host-key pinning and client grants.
 
+Once NATS and the stream are ready, the service opens every bot's gateway
+session, then listens for SSH on `listen.ssh` and for health checks on
+`listen.health`. It writes JSON log lines to stderr: start and stop, gateway
+and NATS state changes, refused calls with the key name and gRPC code, and
+publish failures. Logs never hold a token, a message's content or a Discord
+response body. A start that fails logs the step and the configuration field
+involved and exits 1; an invalid configuration exits 2.
+
+## Health
+
+`GET /healthz` on `listen.health` answers 200 while every bot's gateway session
+is ready, NATS is connected and the activity index has caught up with the
+stream; otherwise 503, with a JSON body naming each check. `GET /livez`
+answers 200 while the process runs. On the same machine, ask for it with:
+
+```sh
+deck service health --config /etc/deck/config.yml
+```
+
+It prints the body and exits 0 when healthy, 1 when unhealthy and 4 when the
+service cannot be reached. The container image runs it as its HEALTHCHECK.
+
+## Stopping
+
 Send SIGTERM or SIGINT to stop the service. It closes the SSH listener and ends
-open RPCs before closing bot clients and the NATS connection. A canceled caller
-does not by itself cancel an accepted Discord send; process shutdown does.
-Use the same nonce when retrying a send whose outcome is unknown, as described
-in [Posting](posting.md).
+open RPCs, closes the gateway sessions, gives sends in flight, waiting activity
+and registry writes a short budget each, and drains NATS, within 10 seconds. A
+canceled caller does not by itself cancel an accepted Discord send; process
+shutdown does. Use the same nonce when retrying a send whose outcome is
+unknown, as described in [Posting](posting.md).
+
+Messages sent while the service was stopped are read back from Discord when it
+starts. Button presses and poll votes in that time are lost.
+
+To restore the event stream from a snapshot, stop the service, restore the
+stream, delete the `stream.generation` key from the thread bucket, and start
+the service: every retained activity is then unread again rather than missed.
 
 The complete startup, retention and health contract is in the
 [service design](../technical-designs/service.yml).

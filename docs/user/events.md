@@ -5,9 +5,19 @@ order: 6
 ---
 
 The service publishes activity for touched Discord threads to the configured
-JetStream subject prefix, followed by server, channel and thread IDs. The
-[events specification](../specifications/events.yml) defines the payload and
-delivery guarantees. A relay on the client's machine can pass an event to deck:
+JetStream subject prefix, followed by server, channel and thread IDs: messages,
+button and select-menu uses, and poll votes. Threads nobody touched through deck
+publish nothing. The [events specification](../specifications/events.yml)
+defines the payload and delivery guarantees.
+
+Delivery is at least once. A message can arrive twice, for example when the
+service reads back messages it missed while stopped, so consumers should
+de-duplicate by the activity's `id`. Each poll vote, a repeated one included, is
+its own event with an `id` the service makes. Deck's own messages carry
+`sent_by`, `sender_key` and `nonce`. A button press is acknowledged to Discord
+at once, so nobody sees "This interaction failed".
+
+A relay on the client's machine can pass an event to deck:
 
 ```sh
 deck resolve --event - --json < activity.json

@@ -32,7 +32,9 @@ decision-outcome:
     cursor came through, and still needs a rule for which bot publishes.
 expected-outcomes:
   positive:
-    - Overlapping bots publish each activity once, from the thread's bot.
+    - Each activity has one publisher, the thread's bot for messages and poll
+      votes and the receiving bot for a component use, so overlapping bots
+      publish it once in a fault-free run.
     - A reply, a count and an event for one thread always use the same bot.
   negative:
     - A key granted a channel only through a second bot cannot reply in a

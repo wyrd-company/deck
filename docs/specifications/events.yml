@@ -97,7 +97,8 @@ validation-criteria: >-
   validates the bytes against the schema. An events test against an embedded
   JetStream server shows the subject, every header, de-duplication of a
   repeated activity, and that activity in a thread nobody touched publishes
-  nothing. Against a fake Discord it also shows: two bots that see one
+  nothing. Against a fake Discord it also shows, in fault-free scenarios
+  (single-publisher rules, not stronger delivery): two bots that see one
   touched thread publish each message once; a vote added, removed and added
   again within the duplicate window as three events; a deck reply and a
   forum post's starter each published once, with `sent_by`, `sender_key` and
