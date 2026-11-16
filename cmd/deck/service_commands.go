@@ -12,6 +12,9 @@ func init() {
 		if code, handled := keyCommand(ctx, args, stdout, stderr); handled {
 			return code, true
 		}
+		if code, handled := healthCommand(ctx, args, stdout, stderr); handled {
+			return code, true
+		}
 		return startCommand(ctx, args, stdout, stderr)
 	}
 }
