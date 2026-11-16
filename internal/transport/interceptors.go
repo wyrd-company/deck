@@ -2,6 +2,7 @@ package transport
 
 import (
 	"context"
+	"log/slog"
 
 	"github.com/wyrd-company/deck/internal/config"
 	"google.golang.org/grpc"
@@ -26,16 +27,29 @@ func identityInterceptors(keys []config.Key) (grpc.UnaryServerInterceptor, grpc.
 		if err != nil {
 			return nil, err
 		}
-		return handler(ctx, req)
+		response, err := handler(ctx, req)
+		logRefused(ctx, info.FullMethod, err)
+		return response, err
 	}
 	stream := func(srv any, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
 		ctx, err := authenticate(ss.Context())
 		if err != nil {
 			return err
 		}
-		return handler(srv, &authenticatedStream{ServerStream: ss, ctx: ctx})
+		err = handler(srv, &authenticatedStream{ServerStream: ss, ctx: ctx})
+		logRefused(ctx, info.FullMethod, err)
+		return err
 	}
 	return unary, stream
+}
+
+// logRefused logs a call that ended with an error status: the key's name,
+// the method and the gRPC code, never the status message or the request.
+// A call the client ended itself is not a refusal.
+func logRefused(ctx context.Context, method string, err error) {
+	if code := status.Code(err); err != nil && code != codes.Canceled {
+		slog.Warn("call refused", "key", KeyName(ctx), "method", method, "code", code.String())
+	}
 }
 
 type authenticatedStream struct {

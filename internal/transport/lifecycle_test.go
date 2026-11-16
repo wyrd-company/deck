@@ -1,13 +1,16 @@
 package transport
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/pem"
 	"errors"
 	"io"
+	"log/slog"
 	"net"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -17,6 +20,7 @@ import (
 	"golang.org/x/crypto/ssh"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 type startupSecret struct {
@@ -378,4 +382,21 @@ func TestBindFailureDuringStopIsReported(t *testing.T) {
 		t.Fatal("a free address must still bind after a stop", err)
 	}
 	_ = free.Close()
+}
+
+// A refused call logs the key's name, the method and the gRPC code, never
+// the status message; a call the client canceled is not logged.
+func TestRefusedCallsAreLogged(t *testing.T) {
+	var out bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&out, nil)))
+	defer slog.SetDefault(previous)
+	ctx := WithKeyName(context.Background(), "alice")
+	logRefused(ctx, "/deck.v1.DeckService/Post", status.Error(codes.PermissionDenied, "target 123 secret detail"))
+	logRefused(ctx, "/deck.v1.DeckService/Listen", status.Error(codes.Canceled, "client went away"))
+	logRefused(ctx, "/deck.v1.DeckService/Reply", nil)
+	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
+	if len(lines) != 1 || !strings.Contains(lines[0], `"key":"alice"`) || !strings.Contains(lines[0], `"code":"PermissionDenied"`) || !strings.Contains(lines[0], `"method":"/deck.v1.DeckService/Post"`) || strings.Contains(lines[0], "secret detail") {
+		t.Fatalf("refused-call log: %q", out.String())
+	}
 }
