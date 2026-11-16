@@ -93,6 +93,26 @@ tasks:
     desc: Run opt-in API and gateway tests against the configured test Discord server
     cmds:
       - go test -count=1 -tags discordlive -run '^TestDiscordLive' -v ./internal/service
+  test:acceptance:
+    desc: Run the container/Discord/Trowel acceptance (skips without the test bot fixture)
+    vars:
+      FIXTURE: '{{.FIXTURE | default "/workspace/tools/deck/.env"}}'
+      EVIDENCE: '{{.EVIDENCE | default ""}}'
+      HUMAN_WAIT: '{{.HUMAN_WAIT | default "0s"}}'
+    cmds:
+      - go test -count=1 -timeout 15m -tags discordlive -v ./tests/acceptance -args -fixture {{shellQuote .FIXTURE}} -evidence {{shellQuote .EVIDENCE}} -human-wait {{shellQuote .HUMAN_WAIT}}
+  test:acceptance:relay:
+    desc: Prove the acceptance relay and recording stand-in without external services
+    cmds:
+      - python3 -m unittest discover -s tests/acceptance -p 'test_*.py'
+  test:acceptance:diagnostic:
+    desc: Debug the native live stack (does not prove container acceptance)
+    vars:
+      FIXTURE: '{{.FIXTURE | default "/workspace/tools/deck/.env"}}'
+      EVIDENCE: '{{.EVIDENCE | default ""}}'
+      HUMAN_WAIT: '{{.HUMAN_WAIT | default "0s"}}'
+    cmds:
+      - go test -count=1 -timeout 15m -tags discordlive -v ./tests/acceptance -args -native-diagnostic -fixture {{shellQuote .FIXTURE}} -evidence {{shellQuote .EVIDENCE}} -human-wait {{shellQuote .HUMAN_WAIT}}
   config:home:check:
     desc: Prove passwd-home lookup with the real CLI in bubblewrap (Linux)
     cmds:
@@ -110,6 +130,7 @@ tasks:
       - release:check
       - release:scripts:check
       - npm:check
+      - test:acceptance:relay
       - task: '{{default "test" .TEST_TASK}}'
 
   release:check:
