@@ -267,7 +267,7 @@ probe('bodies are verified against their generation', 'activity/index.go',
       'if !info.Created.Equal(s.created) {', 'if info == nil {',
       './internal/service/activity', 'TestBodiesNeverCrossGenerations')
 probe('the audit catches a recreation without a consumer trigger', 'activity/index.go',
-      'if !info.Created.Equal(created) || info.State.LastSeq < last {', 'if false && !info.Created.Equal(created) || info.State.LastSeq < last {',
+      'if !open || stream == nil || muteAudit.Load() {', 'if open || !open || stream == nil {',
       './internal/service/activity', 'TestAuditCatchesSilentRecreation')
 probe('a lost acknowledgement adopts the landed record', 'activity/index.go',
       'if rev != 0 && g.Epoch != 0 && g.Created.Equal(created) && !(lost && g.Epoch == epoch) {', 'if false && !(lost && g.Epoch == epoch) {',
