@@ -27,7 +27,6 @@ import (
 	discord "github.com/wyrd-company/deck/internal/service/discord"
 	"github.com/wyrd-company/deck/internal/service/registry"
 	"github.com/wyrd-company/deck/internal/service/testutil"
-	"google.golang.org/protobuf/encoding/protojson"
 )
 
 type gatewayHarness struct {
@@ -79,56 +78,6 @@ func componentEvent(id, channel, message uint64, application string) map[string]
 		"member":  map[string]any{"user": map[string]any{"id": "7", "username": "person"}, "roles": []any{}, "joined_at": "2026-01-01T00:00:00Z", "permissions": "0"},
 		"data":    map[string]any{"custom_id": "approve", "component_type": 2},
 		"message": messageEvent(message, channel, application, 0), "entitlements": []any{}, "authorizing_integration_owners": map[string]any{}, "context": 0}
-}
-
-type event struct {
-	seq     uint64
-	subject string
-	header  map[string]string
-	a       *pb.Activity
-}
-
-// events reads every event the stream holds.
-func (s *harness) events(t *testing.T) []event {
-	t.Helper()
-	ctx := context.Background()
-	stream, err := s.js.Stream(ctx, "DECK")
-	if err != nil {
-		t.Fatal(err)
-	}
-	info, err := stream.Info(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	out := []event{}
-	for seq := info.State.FirstSeq; seq > 0 && seq <= info.State.LastSeq; seq++ {
-		m, err := stream.GetMsg(ctx, seq)
-		if err != nil {
-			continue
-		}
-		e := event{seq: seq, subject: m.Subject, header: map[string]string{}, a: &pb.Activity{}}
-		for k := range m.Header {
-			e.header[k] = m.Header.Get(k)
-		}
-		if err = protojson.Unmarshal(m.Data, e.a); err != nil {
-			t.Fatal(err)
-		}
-		out = append(out, e)
-	}
-	return out
-}
-
-// eventually waits until the stream holds n events and returns them.
-func (s *harness) eventually(t *testing.T, n int) []event {
-	t.Helper()
-	var got []event
-	testutil.Until(t, func() bool { got = s.events(t); return len(got) >= n })
-	time.Sleep(150 * time.Millisecond) // nothing more arrives
-	got = s.events(t)
-	if len(got) != n {
-		t.Fatalf("stream holds %d events, want %d: %v", len(got), n, got)
-	}
-	return got
 }
 
 func registerBot(t *testing.T, reg *registry.Registry, id, channel uint64, botName string, boundary uint64) {
