@@ -20,6 +20,7 @@ import (
 	"golang.org/x/crypto/ssh"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -406,4 +407,48 @@ func TestUnreadWaitsForIndex(t *testing.T) {
 	if r, err := s.client.CountUnread(s.ctx, &pb.CountUnreadRequest{Cursors: []*pb.Cursor{{ThreadId: 600}}}); err != nil || r.Threads[0].State != pb.ThreadState_THREAD_STATE_NOT_TOUCHED {
 		t.Fatal("untouched threads need no index", r, err)
 	}
+}
+
+// A repeat of a completed send returns the first result through the index
+// and Deck-Send-Start without sending, before and after a restart that
+// rebuilds the index from the stream.
+func TestRepeatThroughIndexAcrossRestart(t *testing.T) {
+	s := setupIndexed(t)
+	c := content()
+	c.Poll = &pb.PollCreate{Question: "?", Answers: []string{"y"}}
+	s.fake.mu.Lock()
+	s.fake.pollFail = true
+	s.fake.mu.Unlock()
+	first, err := s.client.Post(s.ctx, &pb.PostRequest{Channel: &pb.ChannelRef{Bot: "a", ChannelId: 10}, Title: "t", Content: c, Nonce: "again"})
+	if err != nil || first.PollError == "" {
+		t.Fatal(first, err)
+	}
+	reply, err := s.client.Reply(s.ctx, &pb.ReplyRequest{Thread: &pb.ThreadRef{Bot: "a", ThreadId: 100}, Content: content(), Nonce: "again2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sent := len(s.fake.posts())
+	check := func(h *Handler) {
+		t.Helper()
+		post, err := h.Post(s.ctx, &pb.PostRequest{Channel: &pb.ChannelRef{Bot: "a", ChannelId: 10}, Title: "t", Content: c, Nonce: "again"})
+		if err != nil || post.Message.Id != first.Message.Id || post.Message.Sequence != first.Message.Sequence || !proto.Equal(post.Position, first.Position) || post.PollError != first.PollError {
+			t.Fatal("repeated post", post, err)
+		}
+		again, err := h.Reply(s.ctx, &pb.ReplyRequest{Thread: &pb.ThreadRef{Bot: "a", ThreadId: 100}, Content: content(), Nonce: "again2"})
+		if err != nil || again.Message.Id != reply.Message.Id || !proto.Equal(again.Position, reply.Position) {
+			t.Fatal("repeated reply", again, err)
+		}
+		if len(s.fake.posts()) != sent {
+			t.Fatal("a repeat sent to Discord again")
+		}
+	}
+	check(s.h)
+	restarted := activity.NewIndex(context.Background(), s.js, s.reg.KV, s.cfg.NATS, nil, quiet())
+	t.Cleanup(restarted.Close)
+	h, err := NewHandler(s.cfg, Dependencies{Context: s.h.ctx, Bots: s.h.bots, Registry: s.reg, Publisher: s.h.Publisher, Activity: restarted})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(h.Wait)
+	check(h)
 }
