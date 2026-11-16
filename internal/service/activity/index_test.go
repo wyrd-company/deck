@@ -700,3 +700,25 @@ func TestEpochRule(t *testing.T) {
 		t.Fatal("epoch is not the current time", g, err)
 	}
 }
+
+// The connection's reconnect callback alone marks the check due: with the
+// consumer's triggers and the audit silenced, a stream recreated while the
+// service was cut off is still replayed after the reconnect.
+func TestReconnectCallbackAloneTriggersCheck(t *testing.T) {
+	f := newFixture(t, true)
+	f.start()
+	publish(t, f.admin, 1, 5)
+	f.sequences(5)
+	old := f.epoch()
+	muteConsumerTriggers.Store(true)
+	muteAudit.Store(true)
+	t.Cleanup(func() { muteConsumerTriggers.Store(false); muteAudit.Store(false) })
+	f.relay.cut()
+	testutil.Until(t, func() bool { return f.index.State() != "ready" })
+	f.recreate(true)
+	f.relay.online.Store(true)
+	expectSequences(t, f.sequences(7), 1, 2, 3, 4, 5, 6, 7)
+	if f.epoch() == old {
+		t.Fatal("reconnect did not change the generation")
+	}
+}

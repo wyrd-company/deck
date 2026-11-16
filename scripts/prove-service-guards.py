@@ -259,7 +259,7 @@ probe('creation time re-read after the fresh consumer', 'activity/index.go',
       './internal/service/activity', 'TestRecreationBeforeConsumerRepeatsCheck')
 probe('reconnect callback marks the check due', 'activity/index.go',
       'events.OnReconnect(func() { i.markDue("reconnect") })', 'events.OnReconnect(func() {})',
-      './internal/service/activity', 'TestReconnectCases')
+      './internal/service/activity', 'TestReconnectCallbackAloneTriggersCheck')
 probe('a different record epoch replays the generation', 'activity/index.go',
       'if !gen.Created.Equal(info.Created) || gen.Epoch != i.epoch {', 'if !gen.Created.Equal(info.Created) {',
       './internal/service/activity', 'TestRecordEpochAdoption')

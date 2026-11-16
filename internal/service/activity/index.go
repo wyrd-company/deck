@@ -28,11 +28,13 @@ var (
 	closeWait     = time.Second
 )
 
-// Test hooks: muteConsumerTriggers silences the consumer's own triggers so a
-// test can exercise the audit alone; beforeConsumer runs between the
-// generation read and the fresh consumer's creation.
+// Test hooks: muteConsumerTriggers silences the consumer's own triggers and
+// muteAudit the audit, so a test can exercise one trigger alone;
+// beforeConsumer runs between the generation read and the fresh consumer's
+// creation.
 var (
 	muteConsumerTriggers atomic.Bool
+	muteAudit            atomic.Bool
 	beforeConsumer       func()
 )
 
@@ -509,7 +511,7 @@ func (i *Index) audit() {
 	open, stream, consumer, created, last, audited := i.open, i.stream, i.consumer, i.created, i.last, i.audited
 	i.audited = last
 	i.mu.Unlock()
-	if !open || stream == nil {
+	if !open || stream == nil || muteAudit.Load() {
 		return
 	}
 	info, err := stream.Info(i.ctx)
