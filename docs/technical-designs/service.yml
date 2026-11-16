@@ -394,72 +394,80 @@ proposed-design:
     context and waits for Closed, rejecting all callbacks from that token,
     including callbacks that arrive after Closed. It runs the same stream
     create/check step as startup, under nats.stream.manage, before reading
-    creation time: with manage true a missing stream is created; with manage
-    false the index stays unavailable and retries until the operator supplies
-    the stream. A failed management or generation read/write leaves the gate
-    closed and is retried. The check reads the stream's information and the
-    bucket's `stream.generation`; when the record is missing or its `created`
-    differs from the stream's creation time, the service writes a new record
-    whose epoch is the current time in Unix nanoseconds, or the recorded epoch
-    plus one when the clock is not ahead of it, with a revision-checked write.
-    A revision conflict retries the read; after a lost write acknowledgement
-    the retry adopts the record that landed. The generation is unchanged only
-    when the record's created matches the stream AND its epoch equals the
-    index's epoch. Otherwise the index adopts the record's epoch, discards its
-    entries and replays with a fresh ordered consumer and deliver policy all,
-    including when another instance already wrote the matching record. The
-    library's internal reset is never used to resume a new generation, because
-    it can keep the previous stream's last sequence and skip the new stream's
-    early activity. When the generation is unchanged, the index keeps its
-    entries and epoch and a fresh consumer resumes from its last indexed
-    sequence plus one. The check captures the stream's last sequence after
-    stream management. After creating the fresh consumer and before opening
-    the gate it re-reads the stream's creation time; a mismatch discards that
-    consumer and reruns the check. The gate opens once the index's last
-    indexed sequence is at or past the captured last sequence, including an
-    unchanged index already caught up and an empty stream. Later arrivals
-    continue live. A stream whose messages have all expired, or whose newest
-    messages were deleted, counts as caught up: sequences below its first
-    sequence are skipped, and when the consumer reports nothing pending the
-    captured sequence counts as reached. A stream whose last sequence falls
-    below the index's last indexed sequence while keeping its creation time
-    lost messages the index holds, and the check writes a new epoch as for a
-    changed creation time. Every 10 seconds while the gate is open an audit
-    reads the stream's and the consumer's information: a changed creation
-    time, a missing stream, a falling last sequence, a missing consumer, or
-    pending messages with no progress since the last audit mark a check due.
-    The audit backs the triggers above, refreshes the stream's first sequence
-    and prunes entries the stream no longer holds. Errors, ends or reconnects
-    during replay mark another check due. The measured connected-error and
-    reconnect traces detect a newly created stream and replay all retained
-    sequences; deletion alone with management on creates a replacement before
-    checking, while management off waits for an operator-supplied stream. At
-    startup, a changed creation time or missing record also selects a new
-    epoch. Across generations, epochs grow while the record survives, and a
-    client follows a generation change whichever way the epoch moved, since
-    positions of different epochs do not order and its cursor update accepts
-    any other epoch. A restore from a snapshot keeps the stream's creation
-    time (measured by the round 2 review), so its documented procedure is to
-    stop the service before deleting/restoring the stream, restore it, delete
-    `stream.generation`, and then start the service. Live delete-and-restore
-    is unsupported: the consumer error cannot distinguish a restored stream
-    with its preserved creation time (risk restored-stream-reuses-positions).
-    Between deletion and detection, an index-only count can still return the
-    old generation's view. Its cursor cannot skip the replacement stream:
-    after the check the epoch differs, so every retained entry is after that
-    cursor. A call reading bodies by sequence verifies the stream's creation
-    time before returning; missing messages, a changed creation time, or an
-    index invalidated during the call send it through the same check and retry
-    gate, rather than pairing a new body with an old epoch. A deletion after
-    that verification can leave a completed response from the old generation,
-    whose cursor is treated the same way. From detection until replay ends,
-    calls that read the index wait up to their deadline and then return
-    UNAVAILABLE. Existing Listen waiters stay registered and, after replay,
-    enumerate retained activity against their cursors before continuing live.
-    Responses already sent can be seen again; no retained activity of the new
-    generation is skipped. The index is the only source of unread counts,
-    lists, listens and completed sends, and every instance of the service that
-    follows the stream holds the same index.
+    creation time: with manage true an existing stream is updated and a
+    missing stream is created 2 seconds later, because nats-server (2.11.9)
+    removes a deleted stream from its account before its files and the
+    consumer-deleted notice arrives in between, so a stream created at once
+    from another connection shares the directory the deletion then removes and
+    every write to it fails; a deletion slower than that wait remains a
+    residual; with manage false the index stays unavailable and retries until
+    the operator supplies the stream. A failed management or generation
+    read/write leaves the gate closed and is retried, and a newer trigger
+    cancels the running check's requests, so one lost across a reconnect does
+    not hold the check for its timeout. The check reads the stream's
+    information and the bucket's `stream.generation`; when the record is
+    missing or its `created` differs from the stream's creation time, the
+    service writes a new record whose epoch is the current time in Unix
+    nanoseconds, or the recorded epoch plus one when the clock is not ahead of
+    it, with a revision-checked write. A revision conflict retries the read;
+    after a lost write acknowledgement the retry adopts the record that
+    landed. The generation is unchanged only when the record's created matches
+    the stream AND its epoch equals the index's epoch. Otherwise the index
+    adopts the record's epoch, discards its entries and replays with a fresh
+    ordered consumer and deliver policy all, including when another instance
+    already wrote the matching record. The library's internal reset is never
+    used to resume a new generation, because it can keep the previous stream's
+    last sequence and skip the new stream's early activity. When the
+    generation is unchanged, the index keeps its entries and epoch and a fresh
+    consumer resumes from its last indexed sequence plus one. The check
+    captures the stream's last sequence after stream management. After
+    creating the fresh consumer and before opening the gate it re-reads the
+    stream's creation time; a mismatch discards that consumer and reruns the
+    check. The gate opens once the index's last indexed sequence is at or past
+    the captured last sequence, including an unchanged index already caught up
+    and an empty stream. Later arrivals continue live. A stream whose messages
+    have all expired, or whose newest messages were deleted, counts as caught
+    up: sequences below its first sequence are skipped, and when the consumer
+    reports nothing pending the captured sequence counts as reached. A stream
+    whose last sequence falls below the index's last indexed sequence while
+    keeping its creation time lost messages the index holds, and the check
+    writes a new epoch as for a changed creation time. Every 10 seconds while
+    the gate is open an audit reads the stream's and the consumer's
+    information: a changed creation time, a missing stream, a falling last
+    sequence, a missing consumer, or pending messages with no progress since
+    the last audit mark a check due. The audit backs the triggers above,
+    refreshes the stream's first sequence and prunes entries the stream no
+    longer holds. Errors, ends or reconnects during replay mark another check
+    due. The measured connected-error and reconnect traces detect a newly
+    created stream and replay all retained sequences; deletion alone with
+    management on creates a replacement before checking, while management off
+    waits for an operator-supplied stream. At startup, a changed creation time
+    or missing record also selects a new epoch. Across generations, epochs
+    grow while the record survives, and a client follows a generation change
+    whichever way the epoch moved, since positions of different epochs do not
+    order and its cursor update accepts any other epoch. A restore from a
+    snapshot keeps the stream's creation time (measured by the round 2
+    review), so its documented procedure is to stop the service before
+    deleting/restoring the stream, restore it, delete `stream.generation`, and
+    then start the service. Live delete-and-restore is unsupported: the
+    consumer error cannot distinguish a restored stream with its preserved
+    creation time (risk restored-stream-reuses-positions). Between deletion
+    and detection, an index-only count can still return the old generation's
+    view. Its cursor cannot skip the replacement stream: after the check the
+    epoch differs, so every retained entry is after that cursor. A call
+    reading bodies by sequence verifies the stream's creation time before
+    returning; missing messages, a changed creation time, or an index
+    invalidated during the call send it through the same check and retry gate,
+    rather than pairing a new body with an old epoch. A deletion after that
+    verification can leave a completed response from the old generation, whose
+    cursor is treated the same way. From detection until replay ends, calls
+    that read the index wait up to their deadline and then return UNAVAILABLE.
+    Existing Listen waiters stay registered and, after replay, enumerate
+    retained activity against their cursors before continuing live. Responses
+    already sent can be seen again; no retained activity of the new generation
+    is skipped. The index is the only source of unread counts, lists, listens
+    and completed sends, and every instance of the service that follows the
+    stream holds the same index.
   unread: >-
     A thread's state for a key is NOT_TOUCHED unless the key is in the
     thread's registry entry, whatever its grants say, so a key cannot tell
