@@ -72,13 +72,17 @@ def main():
     print("PASS guard: YAML lint rejects duplicate keys", flush=True)
     with tempfile.TemporaryDirectory(prefix="deck-commit-probe-") as directory:
         message = Path(directory) / "message"
-        for header in ("fix(cli): preserve unread activity", "feat!: update the contract"):
+        for header in ("fix(cli): preserve unread activity", "feat!: update the contract",
+                       "Merge branch 'topic'", 'Revert "feat: add a command"',
+                       "fixup! feat: add a command", "squash! feat: add a command",
+                       "amend! feat: add a command"):
             message.write_text(header + "\n")
             run(["task", "lint:commit-msg", "--", str(message)])
-        for header in ("", "Update stuff", "fix: "):
+        for header in ("", "Update stuff", "fix: ", "Merge ", "fixup! ",
+                       "squash! ", "amend! ", 'Revert ""'):
             message.write_text(header + "\n")
             run(["task", "lint:commit-msg", "--", str(message)], "Use a Conventional Commit")
-    print("PASS guard: commit messages accept conventional headers and reject invalid ones", flush=True)
+    print("PASS guard: commit messages accept conventional/Git-generated headers and reject invalid ones", flush=True)
     source = (ROOT / "scripts/install-openbao.py").read_text()
     if not checksum_guard(source):
         raise RuntimeError("The installer accepted a corrupt download")

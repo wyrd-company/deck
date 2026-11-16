@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -31,6 +32,37 @@ class DevelopmentTaskTests(unittest.TestCase):
             self.assertEqual(log.read_text().splitlines(),
                              ["run ./cmd/deck service start --config service config.yml"] * 2)
             self.assertFalse((root / ".task").exists(), "dev must not record an up-to-date cache")
+
+
+
+class CommitMessageTests(unittest.TestCase):
+    def check_header(self, header):
+        with tempfile.TemporaryDirectory(prefix="deck-commit-message-") as directory:
+            message = Path(directory) / "message"
+            message.write_text(header + "\n\nBody does not affect header validation.\n")
+            return subprocess.run([sys.executable, str(ROOT / "scripts/check-commit-message.py"),
+                                   str(message)], text=True, stdout=subprocess.PIPE,
+                                  stderr=subprocess.STDOUT, timeout=10)
+
+    def test_conventional_and_git_generated_headers(self):
+        for header in (
+            "fix(cli): preserve unread activity", "feat!: update the contract",
+            "Merge branch 'topic'", "Merge remote-tracking branch 'origin/topic'",
+            "Merge tag '1.2.3'", 'Revert "feat: add a command"',
+            "fixup! feat: add a command", "squash! feat: add a command",
+            "amend! feat: add a command",
+        ):
+            with self.subTest(header=header):
+                result = self.check_header(header)
+                self.assertEqual(result.returncode, 0, result.stdout)
+
+    def test_invalid_headers_are_rejected(self):
+        for header in ("", "Update stuff", "fix: ", "Merge ", "fixup! ",
+                       "squash! ", "amend! ", 'Revert ""', "Revert a change"):
+            with self.subTest(header=header):
+                result = self.check_header(header)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("Use a Conventional Commit", result.stdout)
 
 
 if __name__ == "__main__":
