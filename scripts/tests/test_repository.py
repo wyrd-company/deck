@@ -127,6 +127,35 @@ func main() {
             self.assertNotEqual(*service_pids)
 
 
+class FormatTaskTests(unittest.TestCase):
+    def check_format(self, source, *, with_gofmt=True):
+        with tempfile.TemporaryDirectory(prefix="deck-format-task-") as directory:
+            root = Path(directory)
+            (root / "Taskfile.yml").write_bytes((ROOT / "Taskfile.yml").read_bytes())
+            (root / "probe.go").write_text(source)
+            commands = root / "commands"
+            commands.mkdir()
+            if with_gofmt:
+                (commands / "gofmt").symlink_to(shutil.which("gofmt"))
+            return subprocess.run([shutil.which("task"), "format:check"], cwd=root,
+                                  env=dict(os.environ, PATH=str(commands)), text=True,
+                                  stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=30)
+
+    def test_format_check_requires_gofmt(self):
+        result = self.check_format("package probe\n", with_gofmt=False)
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn("not found", result.stdout)
+
+    def test_format_check_rejects_unformatted_sources(self):
+        result = self.check_format("package probe\nfunc main(){}\n")
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn("probe.go", result.stdout)
+
+    def test_format_check_accepts_formatted_sources(self):
+        result = self.check_format("package probe\n\nfunc main() {}\n")
+        self.assertEqual(result.returncode, 0, result.stdout)
+
+
 class IntentTaskTests(unittest.TestCase):
     def test_intents_target_the_selected_release_unit(self):
         for arguments, unit, bump in (([], "deck", "patch"),

@@ -121,6 +121,36 @@ def development_cancellation_guard():
           flush=True)
 
 
+def format_check_guard():
+    with tempfile.TemporaryDirectory(prefix="deck-format-guard-") as directory:
+        root = Path(directory)
+        test = root / "scripts/tests/test_repository.py"
+        test.parent.mkdir(parents=True)
+        shutil.copyfile(ROOT / "scripts/tests/test_repository.py", test)
+        taskfile = root / "Taskfile.yml"
+        source = (ROOT / "Taskfile.yml").read_text()
+        taskfile.write_text(source)
+        command = [sys.executable, str(test), "FormatTaskTests"]
+        run(command, cwd=root)
+        checked_command = ('unformatted=$(gofmt -l .) || exit 1\n'
+                           '        if [ -n "$unformatted" ]; then\n'
+                           '          printf \'%s\\n\' "$unformatted"\n'
+                           '          exit 1\n'
+                           '        fi')
+        for target, replacement, marker in (
+            (checked_command, 'test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)',
+             'FAIL: test_format_check_requires_gofmt'),
+            ('if [ -n "$unformatted" ]; then', 'if false; then',
+             'FAIL: test_format_check_rejects_unformatted_sources'),
+        ):
+            if source.count(target) != 1:
+                raise RuntimeError("Formatting check mutation target changed")
+            taskfile.write_text(source.replace(target, replacement))
+            run(command, marker, cwd=root)
+    print("PASS guard: format check requires gofmt and formatted files; removing either check fails its regression",
+          flush=True)
+
+
 def main():
     run(["task", "lint:markdown"])
     run(["task", "lint:yaml"])
@@ -132,6 +162,7 @@ def main():
     print("PASS guard: YAML lint rejects duplicate keys", flush=True)
     ignored_lint_guard()
     development_cancellation_guard()
+    format_check_guard()
     with tempfile.TemporaryDirectory(prefix="deck-commit-probe-") as directory:
         message = Path(directory) / "message"
         for header in ("fix(cli): preserve unread activity", "feat!: update the contract",

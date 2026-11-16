@@ -79,7 +79,12 @@ tasks:
   format:check:
     desc: Check Go formatting
     cmds:
-      - test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
+      - |
+        unformatted=$(gofmt -l .) || exit 1
+        if [ -n "$unformatted" ]; then
+          printf '%s\n' "$unformatted"
+          exit 1
+        fi
   vet:
     desc: Run go vet
     cmds:
