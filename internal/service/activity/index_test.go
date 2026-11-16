@@ -676,3 +676,27 @@ func TestCountsHorizonAndPrune(t *testing.T) {
 		t.Fatal("prune or horizon wrong", u.Counts[0])
 	}
 }
+
+// The epoch is the current time in Unix nanoseconds, or the recorded epoch
+// plus one when the clock is not ahead of it.
+func TestEpochRule(t *testing.T) {
+	f := newFixture(t, true)
+	f.start()
+	f.sequences(0)
+	ahead := generation{Epoch: uint64(time.Now().Add(time.Hour).UnixNano()), Created: time.Unix(1, 0).UTC()}
+	raw, _ := json.Marshal(ahead)
+	if _, err := f.kv.Put(context.Background(), GenerationKey, raw); err != nil {
+		t.Fatal(err)
+	}
+	g, err := f.index.generation(f.created(), false)
+	if err != nil || g.Epoch != ahead.Epoch+1 || !g.Created.Equal(f.created()) {
+		t.Fatal("epoch did not move past a record ahead of the clock", g, err)
+	}
+	before := uint64(time.Now().UnixNano())
+	if err = f.kv.Delete(context.Background(), GenerationKey); err != nil {
+		t.Fatal(err)
+	}
+	if g, err = f.index.generation(f.created(), false); err != nil || g.Epoch < before || g.Epoch > uint64(time.Now().UnixNano()) {
+		t.Fatal("epoch is not the current time", g, err)
+	}
+}

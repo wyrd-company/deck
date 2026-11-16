@@ -266,3 +266,40 @@ func TestStopDuringLoadIsCancellation(t *testing.T) {
 		t.Fatal("no run stopped during the load")
 	}
 }
+
+// The hourly sweep deletes entries whose latest touch or publish is older
+// than max_age; the delete reaches every watcher, and fresh entries stay.
+func TestSweepDeletesStaleEntries(t *testing.T) {
+	_, _, js := testutil.NATS(t)
+	ctx := context.Background()
+	kv, err := js.CreateKeyValue(ctx, jetstream.KeyValueConfig{Bucket: "sweep"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := New(ctx, kv, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	watcher, err := New(ctx, kv, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer watcher.Close()
+	for _, id := range []uint64{1, 2} {
+		if err = r.RegisterPost(id, Entry{Bot: "bot", ServerID: 1, ChannelID: 2, CreatedByDeck: true}, "key"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	testutil.Until(t, func() bool { _, a := watcher.Lookup(1); _, b := watcher.Lookup(2); return a && b && r.Pending() == 0 })
+	r.mu.Lock()
+	stale := r.entries[1]
+	stale.ActiveAt = time.Now().Add(-2 * time.Hour)
+	r.entries[1] = stale
+	r.mu.Unlock()
+	r.Sweep(time.Hour)
+	testutil.Until(t, func() bool { _, gone := watcher.Lookup(1); _, kept := watcher.Lookup(2); return !gone && kept })
+	if _, ok := r.Lookup(1); ok {
+		t.Fatal("swept entry still local")
+	}
+}
