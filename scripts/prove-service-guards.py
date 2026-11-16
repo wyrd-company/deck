@@ -264,13 +264,13 @@ probe('a different record epoch replays the generation', 'activity/index.go',
       'if !gen.Created.Equal(info.Created) || gen.Epoch != i.epoch {', 'if !gen.Created.Equal(info.Created) {',
       './internal/service/activity', 'TestRecordEpochAdoption')
 probe('bodies are verified against their generation', 'activity/index.go',
-      'if !info.Created.Equal(s.created) {', 'if false {',
+      'if !info.Created.Equal(s.created) {', 'if info == nil {',
       './internal/service/activity', 'TestBodiesNeverCrossGenerations')
 probe('the audit catches a recreation without a consumer trigger', 'activity/index.go',
-      'if !info.Created.Equal(created) || info.State.LastSeq < last {', 'if false {',
+      'if !info.Created.Equal(created) || info.State.LastSeq < last {', 'if false && !info.Created.Equal(created) || info.State.LastSeq < last {',
       './internal/service/activity', 'TestAuditCatchesSilentRecreation')
 probe('a lost acknowledgement adopts the landed record', 'activity/index.go',
-      'if rev != 0 && g.Epoch != 0 && g.Created.Equal(created) && !(lost && g.Epoch == epoch) {', 'if false {',
+      'if rev != 0 && g.Epoch != 0 && g.Created.Equal(created) && !(lost && g.Epoch == epoch) {', 'if false && !(lost && g.Epoch == epoch) {',
       './internal/service/activity', 'TestRecordEpochAdoption')
 probe('own lists every counted deck-sent copy', 'activity/index.go',
       'if e.SenderKey != "" && e.Nonce != "" {\n\t\t\tc.Own', 'if e.SentBy == "key" && e.Nonce != "" {\n\t\t\tc.Own',
@@ -279,7 +279,7 @@ probe('only touched threads are read from the index', 'index.go',
       'if states[n] == pb.ThreadState_THREAD_STATE_TOUCHED {\n\t\t\ttouched', 'if true {\n\t\t\ttouched',
       './internal/service', 'TestUnreadStatePrecedence')
 probe('listen re-reads state for live activity', 'index.go',
-      'cursors = append(cursors, &pb.Cursor{ThreadId: thread, After: after})', 'cursors = append(cursors, &pb.Cursor{ThreadId: thread})',
+      'cursors = append(cursors, &pb.Cursor{ThreadId: thread, After: after})', 'cursors = append(cursors, &pb.Cursor{ThreadId: thread}); _ = after',
       './internal/service', 'TestListenAndRecreatedStream')
 probe('attachment URLs are refreshed', 'index.go',
       'f.Url = url', '_ = url',
@@ -291,7 +291,7 @@ probe('only the thread\'s bot publishes its messages', 'discord/gateway.go',
       'return // only the thread\'s bot publishes its messages', '_ = 0',
       './internal/service', 'TestOtherBotsIgnoreMessagesAndVotes')
 probe('a pending recovery freezes the boundary', 'discord/gateway.go',
-      'if !message || frozen {', 'if !message {',
+      'if !message || frozen {', 'if !message || frozen && false {',
       './internal/service', 'TestRecoveryAtReady')
 probe('held events are released when their thread registers', 'discord/gateway.go',
       'reg.OnRegister(g.registered)', '_ = g.registered',
@@ -309,7 +309,7 @@ probe('a change during a write stays dirty', 'registry/registry.go',
       'if r.versions[id] != version {\n\t\tif local', 'if false {\n\t\tif local',
       './internal/service/registry', 'TestChangeDuringWriteStaysDirty')
 probe('a stop during the bucket load is cancellation', 'registry/registry.go',
-      'if err != nil {\n\t\t\t\t\treturn nil, err\n\t\t\t\t}\n\t\t\t\treturn nil, errors.New("nats.threads: registry watch ended during load")', 'return nil, errors.New("nats.threads: registry watch ended during load")',
+      'if err != nil {\n\t\t\t\t\treturn nil, err\n\t\t\t\t}\n\t\t\t\treturn nil, errors.New("nats.threads: registry watch ended during load")', '_ = err\n\t\t\t\treturn nil, errors.New("nats.threads: registry watch ended during load")',
       './internal/service/registry', 'TestStopDuringLoadIsCancellation')
 probe('shutdown waits for sends before closing resources', 'runtime.go',
       'go func() { r.Handler.Wait(); close(done) }()', 'go func() { close(done) }()',
