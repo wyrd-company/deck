@@ -13,6 +13,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"sync"
 	"time"
@@ -155,6 +156,22 @@ func (p *Publisher) Publish(ctx context.Context, a *pb.Activity, start *pb.Strea
 	}
 }
 func (p *Publisher) Pending() int { p.mu.Lock(); defer p.mu.Unlock(); return len(p.queue) }
+
+// Drain waits until every accepted activity has been acknowledged or ctx
+// ends, reporting whether the queue emptied. Shutdown drains within its
+// budget before Close.
+func (p *Publisher) Drain(ctx context.Context) bool {
+	for p.Pending() > 0 {
+		select {
+		case <-ctx.Done():
+			return false
+		case <-p.ctx.Done():
+			return false
+		case <-time.After(20 * time.Millisecond):
+		}
+	}
+	return true
+}
 func (p *Publisher) run() {
 	defer p.wg.Done()
 	defer func() {
@@ -180,10 +197,18 @@ func (p *Publisher) run() {
 		q := p.queue[0]
 		p.mu.Unlock()
 		delay := 50 * time.Millisecond
+		failed := false
 		for {
 			ctx, cancel := context.WithTimeout(p.ctx, time.Second)
 			ack, err := p.js.PublishMsg(ctx, q.m)
 			cancel()
+			if err != nil && !failed && p.ctx.Err() == nil {
+				failed = true
+				slog.Warn("publish failed; retrying", "subject", q.m.Subject, "kind", q.m.Header.Get("Deck-Kind"), "id", q.m.Header.Get("Deck-Activity-Id"))
+			}
+			if err == nil && failed {
+				slog.Info("publish succeeded after retry", "subject", q.m.Subject, "id", q.m.Header.Get("Deck-Activity-Id"))
+			}
 			if err == nil {
 				q.done <- Result{Sequence: ack.Sequence}
 				close(q.done)
