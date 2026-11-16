@@ -8,9 +8,11 @@ mutate = helpers['mutate']
 node = ['node', '--test', 'npm/test/distribution.test.js']
 python = ['python3', '-m', 'unittest', 'discover', '-s', 'scripts/tests', '-p', 'test_release.py']
 source = ['python3', '-m', 'unittest', 'discover', '-s', 'scripts/tests', '-p', 'test_release_source.py']
+npm_publish = ['python3', '-m', 'unittest', 'discover', '-s', 'scripts/tests', '-p', 'test_release_npm.py']
 helpers['require_pass'](node)
 helpers['require_pass'](python)
 helpers['require_pass'](source)
+helpers['require_pass'](npm_publish)
 probes = [
     ('archive checksum verification', 'npm/install.js',
      '    verifyChecksum(archive, expected);', '    // mutation: omit checksum verification', node, 'regular expression /checksum mismatch|exactly one/'),
@@ -34,6 +36,9 @@ probes = [
      '          fetch-depth: 0\n          persist-credentials: false',
      '          fetch-depth: 0\n          persist-credentials: true',
      source, 'checkout must not persist its token'),
+    ('npm publish reads the packed tarball as a file', '.github/workflows/release.yml',
+     'npm publish ./dist/wyrd-company-deck-*.tgz', 'npm publish dist/wyrd-company-deck-*.tgz',
+     npm_publish, 'npm publish must read the packed tarball as a file'),
 ]
 for probe in probes:
     mutate(*probe)

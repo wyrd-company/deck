@@ -120,7 +120,8 @@ jobs:
         with:
           node-version: '24'
           registry-url: https://registry.npmjs.org
-      - run: npm publish dist/wyrd-company-deck-*.tgz --provenance --access public
+      # A ./ prefix keeps npm from reading dist/<file>.tgz as a GitHub repository.
+      - run: npm publish ./dist/wyrd-company-deck-*.tgz --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
   homebrew:
