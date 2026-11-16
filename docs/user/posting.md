@@ -48,6 +48,46 @@ starter's text. A poll failure does not undo its post; check the diagnostic or
 JSON `poll_error`. Text-channel posts send their content in the parent channel
 and create a thread on that message.
 
+Discord rejects a text-channel post that combines a poll and an attached file
+(`INVALID_POLL_ATTACHMENTS`); deck currently reports `Discord validation failed:
+poll` and exits 2. Post the poll first, then attach the file in a separate reply
+using the printed thread ID:
+
+```sh
+deck post team --title 'Pick a time' --poll 'When?' --answer Today --answer Tomorrow
+deck reply 1571484634081529857 --file agenda.txt
+```
+
+For forum and media posts, a file can stay on the starter because the poll is
+sent as a separate message. Guidance for a more actionable refusal is tracked
+in [issue #17](https://github.com/wyrd-company/deck/issues/17).
+
+## Embeds, buttons and personas
+
+Embed files contain a Discord embed object or an array of objects. Component
+files contain an array of Discord action rows. For example, save these as
+`summary.json` and `buttons.json`:
+
+```json
+{"title":"Release candidate","description":"The build is ready for a decision.","color":5636095}
+```
+
+```json
+[{"type":1,"components":[{"type":2,"style":1,"label":"Approve","custom_id":"release:approve"}]}]
+```
+
+```sh
+deck post team --title 'Review the release' --text 'Please review.' \
+  --embed summary.json --components buttons.json --no-persona
+```
+
+A button's `custom_id` comes back in the component activity. deck acknowledges
+it to Discord; your consumer decides what it means. Select menus also use raw
+Discord component JSON. To send as a configured persona, pass `--persona NAME`.
+A forum requiring tags needs one or more `--tag TAG_ID` flags on `post`.
+
+## Unknown send outcomes
+
 If a send reports `outcome unknown` and exits 4, inspect Discord before repeating
 it. The error prints a command with the send's original `--nonce`. Run that only
 intentionally, with the original content, target and session. A repeated nonce is
@@ -66,10 +106,10 @@ channel must be checked in Discord before choosing a new nonce.
 
 Each session command reports unread activity on stderr, or in `unread` with
 `--json`. Use [reading](reading.md) to handle replies. `deck skill` prints the
-embedded agent instructions. The [CLI specification](../specifications/command-line-interface.yml)
+embedded agent instructions. The [CLI specification](https://github.com/wyrd-company/deck/blob/main/docs/specifications/command-line-interface.yml)
 defines every flag and output field; `deck post --help` and `deck reply --help`
 are available without configuration.
 
-The [API specification](../specifications/grpc-api.yml) defines content limits,
-nonce behavior and response fields. [Configuration](../specifications/configuration.yml)
+The [API specification](https://github.com/wyrd-company/deck/blob/main/docs/specifications/grpc-api.yml) defines content limits,
+nonce behavior and response fields. [Configuration](https://github.com/wyrd-company/deck/blob/main/docs/specifications/configuration.yml)
 defines personas and bot grants.

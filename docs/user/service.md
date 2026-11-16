@@ -26,6 +26,87 @@ publish failures. Logs never hold a token, a message's content or a Discord
 response body. A start that fails logs the step and the configuration field
 involved and exits 1; an invalid configuration exits 2.
 
+## Discord and NATS prerequisites
+
+Create a bot in Discord's Developer Portal, enable the privileged **Message
+Content Intent**, and install it in each server with the `bot` scope. deck
+requests guild, guild-message, message-content and guild-poll gateway intents.
+Copy its token into a KV v2 field accessible only to the service's Vault identity.
+The CLI needs its Transit signing permissions; it needs no bot-token access.
+
+In every granted parent channel, give the bot View Channel, Send Messages, Send
+Messages in Threads, Create Public Threads, Create Polls, Embed Links, Attach
+Files and Read Message History. For a role that is not mentionable, Mention
+Everyone is also needed to notify it. Select forum tags from Discord when the
+channel requires them. A missing permission fails the send; inspect the named
+permission and the channel overrides.
+
+Use one service instance per configuration. Connect it to NATS with JetStream
+enabled and JWT credentials stored as a complete `.creds` value in KV v2. Its
+NATS identity needs publish access to `<prefix>.>`, publish/subscribe access to
+`$KV.<bucket>.>`, publish access to `$JS.FC.>` and the JetStream API
+`$JS.API.>`, and subscribe access to its request inboxes. Limit these permissions
+to the chosen stream, consumers and registry where your NATS policy supports it.
+Stream and bucket create/update permissions are needed when their `manage` flags
+are true. An event-only subscriber needs access to its subject and consumer API,
+without access to the registry bucket.
+
+Store secrets from protected files, rather than putting their values on a shell
+command line. For the paths in the annotated service example, an operator with
+an authenticated `bao` CLI and an existing `kv` KV v2 mount can write:
+
+```sh
+bao kv put -mount=kv deck/bots/helper token=@/secure/discord-token
+bao kv put -mount=kv deck/nats creds=@/secure/deck.creds
+```
+
+Create and store the host key as described in [authentication](authentication.md),
+then set the service's `keys` to the client public lines and grants. The example
+keys and IDs must be replaced. Restart to apply configuration and secret changes.
+
+## Container
+
+This example assumes an operator has placed the service file at
+`/srv/deck/config.yml` and provides an authenticating Vault socket at
+`/run/openbao/agent.sock` on the Docker host. Mount the containing socket directory
+so socket replacement stays visible:
+
+```sh
+docker run --detach --name deck --restart unless-stopped \
+  --stop-timeout 15 \
+  --publish 2222:2222 --publish 127.0.0.1:8080:8080 \
+  --mount type=bind,src=/srv/deck/config.yml,dst=/etc/deck/config.yml,readonly \
+  --mount type=bind,src=/run/openbao,dst=/run/openbao,readonly \
+  ghcr.io/wyrd-company/deck:1.2.3
+```
+
+Choose an existing release tag in place of `1.2.3`. UID/GID 10001 must be able to
+read the file and connect to the socket. For direct HTTPS Vault access, mount
+its configured token or AppRole secret-ID file instead, plus any private CA.
+The configured NATS URLs must resolve inside the container; `localhost` refers
+to the container itself. Persistent service state lives in NATS, whose storage
+and backups belong to its operator.
+
+```sh
+docker exec deck deck service health --config /etc/deck/config.yml
+docker logs deck
+docker stop deck
+```
+
+## Retention
+
+`nats.stream.max_age` keeps activity for seven days by default. Retained button
+uses and poll votes are available to read/listen; Discord history can recover
+messages after that window, but cannot recover those interactions. Clients
+report a retention gap when an unread cursor predates retained activity; use
+`deck history THREAD` to inspect older messages.
+
+`nats.threads.max_age` expires inactive key touches; omitted or zero keeps them
+indefinitely. This is service-managed expiry, not a bucket TTL. Losing the
+registry loses thread routes and notification eligibility. Back up the registry
+alongside the event stream. Client SQLite stores are separate: losing one loses
+that machine's session affinity, cursors and own-send records.
+
 ## Health
 
 `GET /healthz` on `listen.health` answers 200 while every bot's gateway session
@@ -60,10 +141,21 @@ procedure to delete, recreate or restore the stream:
 1. Stop the service.
 2. Delete the stream, and wait for the delete command to return.
 3. Recreate the stream, or restore it from a snapshot. After a restore, also
-   delete the `stream.generation` key from the thread bucket.
+   delete the `stream.generation` key from the thread bucket before starting
+   the service. For the default bucket, using an authenticated NATS CLI context:
+
+   ```sh
+   nats kv del deck-threads stream.generation
+   ```
+
+   Substitute `nats.threads.bucket` if configured differently; do not delete
+   the bucket or its thread records.
 4. Start the service. It creates the stream if it is still missing.
 
 After a restore, every retained activity is unread again rather than missed.
+Apply the same generation-key reset after restoring storage or losing the newest
+stream messages while preserving the stream's creation time. Restoring a
+snapshot while the service runs is unsupported.
 
 If the stream is deleted while the service runs, the service stops answering
 calls (UNAVAILABLE), its healthcheck reports the stream as missing, and it logs
@@ -78,4 +170,4 @@ clustered NATS server. A service that restarts while someone else's deletion is
 still running can still collide with it.
 
 The complete startup, retention and health contract is in the
-[service design](../technical-designs/service.yml).
+[service design](https://github.com/wyrd-company/deck/blob/main/docs/technical-designs/service.yml).

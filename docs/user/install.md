@@ -50,6 +50,7 @@ Archives are named `deck_<version>_<os>_<cpu>.tar.gz`, where `os` is `linux` or
 # Example for Linux x86-64, after downloading both files for 1.2.3:
 grep '  deck_1.2.3_linux_x86_64.tar.gz$' checksums.txt | sha256sum --check
 tar -xzf deck_1.2.3_linux_x86_64.tar.gz
+mkdir -p "$HOME/.local/bin"
 install -m 0755 deck "$HOME/.local/bin/deck"
 ```
 
@@ -60,7 +61,7 @@ example configurations, README and license.
 ## Configure the CLI
 
 Copy the archive's `client.example.yml` or the repository's
-[annotated example](../specifications/assets/configuration/examples/client.yml)
+[annotated example](https://github.com/wyrd-company/deck/blob/main/docs/specifications/assets/configuration/examples/client.yml)
 to `~/.config/deck/config.yml`, edit its service address, Transit identity and
 channel settings, then validate it:
 
@@ -77,7 +78,7 @@ registration and grants, and [posting](posting.md) to start a conversation.
 
 The image is `ghcr.io/wyrd-company/deck`, for Linux amd64 and arm64. Pin an exact
 release tag for a deployment. Configure the
-[service example](../specifications/assets/configuration/examples/service.yml),
+[service example](https://github.com/wyrd-company/deck/blob/main/docs/specifications/assets/configuration/examples/service.yml),
 then mount it read-only:
 
 ```sh
@@ -89,7 +90,8 @@ docker run --rm --name deck \
 
 The process runs as UID/GID 10001; mounted config, token files and sockets must
 be accessible to that identity. Mount any configured OpenBao socket or token
-file at its configured path as well. The service needs outbound access to
+file at its configured path as well; the [service guide](service.md#container)
+shows a socket mount. The service needs outbound access to
 Discord, NATS and its configured OpenBao/Vault address. It keeps state in NATS
 and needs no data volume. The default exposed ports are SSH 2222 and health 8080;
 `listen` in the service configuration controls the listeners.
@@ -98,4 +100,6 @@ The image runs `deck service start --config /etc/deck/config.yml`. Its healthche
 runs `deck service health --config /etc/deck/config.yml` every 10 seconds, with
 three retries and a 60-second startup period. Health requires every gateway,
 NATS and the activity index to be ready. The exact behavior is specified by the
-[service design](../technical-designs/service.yml).
+[service design](https://github.com/wyrd-company/deck/blob/main/docs/technical-designs/service.yml).
+
+Continue with [your first message](overview.md#send-your-first-message).
