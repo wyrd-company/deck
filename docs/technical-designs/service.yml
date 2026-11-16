@@ -86,7 +86,8 @@ design-challenges:
     (disgo dispatches a session's events in order), the service copies each of
     the bot's registered threads' boundary, the registry entry's
     last_message_id, so live traffic cannot move the boundary recovery uses.
-    Once disgo reports every server of the session ready (GuildsReady) and the
+    Once disgo reports every server of the session ready (GuildsReady), or 30
+    seconds after READY when a server stays unavailable, and the
     activity index has replayed, the service reads, for each of the bot's
     registered threads, the thread's channel object; when its last_message_id
     is beyond the copied boundary, it reads the messages after the boundary,
