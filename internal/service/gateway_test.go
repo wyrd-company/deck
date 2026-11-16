@@ -138,6 +138,14 @@ func TestComponentsAndStarterRouting(t *testing.T) {
 	g := setupGateways(t)
 	registerBot(t, g.reg, 100, 10, "a", 100)
 	registerBot(t, g.reg, 200, 20, "a", 200)
+	// Hold bot b after its acknowledgement request has arrived. The other
+	// session can publish while this HTTP response is still outstanding.
+	ackRelease := make(chan struct{})
+	releaseAck := sync.OnceFunc(func() { close(ackRelease) })
+	t.Cleanup(releaseAck)
+	g.fakes["b"].mu.Lock()
+	g.fakes["b"].interactionBlock = ackRelease
+	g.fakes["b"].mu.Unlock()
 	started := time.Now()
 	g.fakeGW["b"].Dispatch("INTERACTION_CREATE", componentEvent(5001, 100, 1000, "456"))
 	testutil.Until(t, func() bool {
@@ -155,12 +163,28 @@ func TestComponentsAndStarterRouting(t *testing.T) {
 	testutil.Until(t, func() bool {
 		return slices.ContainsFunc(g.fakes["a"].posts(), func(r request) bool { return strings.HasPrefix(r.path, "/interactions/5002/") })
 	})
-	got := g.eventually(t, 4)
-	use := got[0].a.GetComponent()
-	if use == nil || got[0].a.Id != 5001 || got[0].a.Bot != "a" || use.CustomId != "approve" || use.ComponentType != 2 || use.MessageId != 1000 || got[0].subject != "deck.1.10.100" {
-		t.Fatal("component use", got[0])
+	for _, e := range g.eventually(t, 3) {
+		if e.subject != "deck.1.20.200" || e.a.ThreadId != 200 {
+			t.Fatal("bot b published before its acknowledgement completed", e)
+		}
 	}
-	for _, e := range got[1:] {
+	releaseAck()
+	got := g.eventually(t, 4)
+	// The independent sessions have no total publication order. Match the
+	// component by identity rather than assuming its ack request put it first.
+	component := slices.IndexFunc(got, func(e event) bool { return e.a.Id == 5001 })
+	if component < 0 {
+		t.Fatal("component use missing", got)
+	}
+	e := got[component]
+	use := e.a.GetComponent()
+	if use == nil || e.a.Bot != "a" || use.CustomId != "approve" || use.ComponentType != 2 || use.MessageId != 1000 || e.subject != "deck.1.10.100" {
+		t.Fatal("component use", e)
+	}
+	for index, e := range got {
+		if index == component {
+			continue
+		}
 		if e.subject != "deck.1.20.200" || e.a.ThreadId != 200 {
 			t.Fatal("starter activity not on its thread", e)
 		}
