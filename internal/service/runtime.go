@@ -183,8 +183,11 @@ func (r *Runtime) OpenGateways(ctx context.Context) error {
 		err := r.Gateways[name].Open(open)
 		cancel()
 		if err != nil {
-			if ctx.Err() != nil {
-				err = ctx.Err()
+			// Only a failure the stop itself caused is cancellation: an
+			// independent failure (an invalid token, Discord refusing the
+			// session) stays a failure even when a stop arrived meanwhile.
+			if ctx.Err() == nil || !errors.Is(err, ctx.Err()) {
+				err = nil // a failure, not a stop: keep no cancellation identity
 			}
 			return startupFailure("open gateway sessions", fmt.Sprintf("bots[%d]", i), "cannot open the gateway session", err)
 		}

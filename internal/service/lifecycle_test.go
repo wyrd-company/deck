@@ -13,6 +13,8 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -20,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/disgoorg/disgo/gateway"
 	"github.com/nats-io/nats-server/v2/server"
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
@@ -279,4 +282,52 @@ func TestHealthFollowsGatewayAndNATS(t *testing.T) {
 		code, body := state()
 		return code == http.StatusServiceUnavailable && body["nats"] != "connected" && body["index"] != "ready"
 	})
+}
+
+// stopThenFail cancels the caller's context, then fails Open for a reason of
+// its own, as an authentication failure coinciding with a stop would.
+type stopThenFail struct {
+	gateway.Gateway
+	stop    context.CancelFunc
+	failure error
+}
+
+func (g stopThenFail) Open(ctx context.Context) error {
+	g.stop()
+	if g.failure == nil {
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	return g.failure
+}
+
+// R1-03: a gateway failure that coincides with a stop stays a failure (exit
+// 1), and only a failure the stop caused reads as cancellation (exit 0).
+func TestGatewayFailureDuringStop(t *testing.T) {
+	for _, independent := range []bool{true, false} {
+		t.Run(fmt.Sprint("independent=", independent), func(t *testing.T) {
+			s := setupIndexed(t)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			client := s.h.bots["a"].(*discord.Client)
+			previous := client.Bot.Gateway
+			var failure error
+			if independent {
+				failure = errors.New("independent gateway authentication failure")
+			}
+			client.Bot.Gateway = stopThenFail{Gateway: previous, stop: cancel, failure: failure}
+			defer func() { client.Bot.Gateway = previous }()
+			g := discord.NewGateway(context.Background(), "a", client, s.reg, s.h.Publisher, s.h.Activity, quiet())
+			defer func() { g.Close(context.Background()); g.Wait() }()
+			r := &Runtime{names: []string{"a"}, Gateways: map[string]*discord.Gateway{"a": g}}
+			err := r.OpenGateways(ctx)
+			var f *Failure
+			if !errors.As(err, &f) || f.Field != "bots[0]" || f.Step != "open gateway sessions" {
+				t.Fatalf("gateway failure not reported as a startup failure: %v", err)
+			}
+			if errors.Is(err, context.Canceled) == independent {
+				t.Fatalf("independent=%t, cancellation identity=%t: %v", independent, errors.Is(err, context.Canceled), err)
+			}
+		})
+	}
 }
