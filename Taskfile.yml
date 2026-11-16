@@ -1,5 +1,8 @@
 version: "3"
 
+# These names mean the same thing in every repository. CI, hooks and docs
+# call these tasks; the commands that run them live only here.
+
 vars:
   VERSION: '{{.VERSION | default "dev"}}'
   LDFLAGS: -s -w -X main.Version={{.VERSION}}
@@ -45,6 +48,7 @@ tasks:
   lint:commit-msg:
     desc: Check a Conventional Commit message file
     cmds:
+      # The commit-msg hook passes the message file path through CLI_ARGS.
       - python3 scripts/check-commit-message.py {{.CLI_ARGS}}
   lint:markdown:
     desc: Lint Markdown without rewriting files
@@ -90,10 +94,6 @@ tasks:
     desc: Run uncached tests and fail when OpenBao tests skip
     cmds:
       - bash scripts/test-ci.sh
-  ci:
-    desc: Run repository checks with mandatory real OpenBao coverage
-    cmds:
-      - task: check
   build:
     desc: Build deck into bin/
     cmds:
@@ -217,6 +217,7 @@ tasks:
       - bash scripts/prove-config-home.sh
   check:
     desc: Run all repository checks
+    aliases: [ci]
     deps:
       - lint
       - build

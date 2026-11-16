@@ -38,16 +38,14 @@ changing them requires the owner's decision.
 .
 ├── cmd/deck/       # executable and service adapters
 ├── internal/       # client, service, transport and local state
+├── .intentional/   # release intents for deck and deck-docs
 ├── npm/            # native-binary installer, not a separate product
 ├── docs/demo/      # offline CLI fixture and recording tape
 └── docs/brand/     # source and renderer for social preview
 ```
 
 Use `task check` before pushing; [CONTRIBUTING.md](CONTRIBUTING.md) covers setup
-and focused checks. Change the source proto and run `task generate` for API
-changes; `internal/api/deckv1/` is generated.
-
-## Thar be Dragons
-
-- The repository can be read without live credentials. Keep any live-test credentials outside tracked files and recordings.
-- A relay wakes sessions; deck only resolves their identifiers. Harness-specific behavior belongs in the relay's configuration.
+and focused checks. Record a user-visible change with `task intent:add` as described
+there. For API changes, edit
+`docs/specifications/assets/grpc-api/deck/v1/deck.proto` and run `task generate`;
+`internal/api/deckv1/` is generated.

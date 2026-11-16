@@ -41,8 +41,11 @@ set `BUMP=minor` or `BUMP=major` when that is the appropriate release bump.
 task check
 ```
 
-This runs the same mandatory repository checks as CI, including real OpenBao
-coverage. `task ci` is an equivalent entry point. For a focused Go test, use
+Pull requests also require the separate non-publishing release snapshot CI job
+and the macOS configuration-home job. The snapshot remains separate from
+`task check` because it produces distribution artifacts; run `task release:snapshot`
+locally when changing packaging. Real OpenBao coverage is mandatory in
+`task check`; `task ci` remains a compatibility alias. For a focused Go test, use
 `task test:unit -- ./internal/cli -run TestName`; `task test` runs the full Go suite
 and permits OpenBao tests to skip when its executable is unavailable.
 `task lint` checks without rewriting files; `task format` applies formatting.
@@ -55,10 +58,9 @@ message. They do not run the full suite on push.
 Run a configured local service with `task dev CONFIG=/path/to/service.yml --watch`
 to rebuild on source changes.
 
-`task release:snapshot` builds all four OS/CPU archives, DEB/RPM packages and a
-Homebrew formula in `dist/`, without publishing. `task release:compatibility
-PUBLISHER_ROOT=/path/to/repo.wyrd.foo` additionally exercises the pinned
-publisher's validation, immutable queue, package staging and AUR rendering.
+Use `task release:snapshot` to check packaging without publishing; artifacts are
+written to `dist/`. For publisher compatibility, run `task release:compatibility
+PUBLISHER_ROOT=/path/to/repo.wyrd.foo`.
 The compatibility task needs `rpm`, `dpkg-deb`, and a clean publisher checkout at
 the configured `PUBLISHER_COMMIT`; that pin already admits deck. Its source-tag
 provenance check requires the version's tag to be published and anonymously
@@ -69,13 +71,11 @@ in place of the HTTPS download; run that proof on a disposable machine.
 `task image:build VERSION=dev` builds and loads the service image locally.
 `task image:build:multiarch` writes `dist/deck-image.tar` as a multi-arch OCI
 archive using Docker Buildx; install QEMU/binfmt emulation when building for a
-foreign CPU. Neither task pushes an image. The image's HEALTHCHECK runs
-`deck service health --config /etc/deck/config.yml`.
+foreign CPU. Neither task pushes an image.
 
-CI builds the release snapshot without publishing and runs
-`task config:home:macos:check` on macOS. That probe builds with `CGO_ENABLED=0`,
-sets hostile home/user/config/proxy/Vault variables, and compares actual CLI
-config lookup to the macOS directory service. Linux has `task config:home:check`.
+For configuration-home changes, run `task config:home:macos:check` on macOS
+or `task config:home:check` on Linux. Use `task --list` for task descriptions;
+[Taskfile.yml](Taskfile.yml) defines their implementation.
 
 ## Releases
 
