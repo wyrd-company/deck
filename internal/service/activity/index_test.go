@@ -529,10 +529,16 @@ func TestAuditCatchesSilentRecreation(t *testing.T) {
 	muteConsumerTriggers.Store(true)
 	t.Cleanup(func() { muteConsumerTriggers.Store(false) })
 	f.recreate(true)
-	expectSequences(t, f.sequences(7), 1, 2, 3, 4, 5, 6, 7)
-	if f.epoch() == old {
-		t.Fatal("audit missed the recreation")
+	// The library's own reset can deliver new sequences 6 and 7 onto the old
+	// entries before the audit runs; wait for the audit's new generation.
+	deadline := time.Now().Add(5 * time.Second)
+	for f.epoch() == old {
+		if time.Now().After(deadline) {
+			t.Fatal("audit missed the recreation")
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
+	expectSequences(t, f.sequences(7), 1, 2, 3, 4, 5, 6, 7)
 }
 
 func sent(id, thread uint64, nonce string) *pb.Activity {
