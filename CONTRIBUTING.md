@@ -16,11 +16,9 @@ or newer, Node.js 22+, Python 3 and [Task](https://taskfile.dev/installation/), 
 task setup
 ```
 
-The setup task installs pinned Go tools into the user's Go binary directory,
-creates a Python virtual environment under `~/.local/share/deck/check-tools`,
-and exposes uv, intentional and OpenBao in `~/.local/bin`. Ensure the Go binary
-directory and `~/.local/bin` are on PATH. Python's `venv` module must be installed
-(on Debian/Ubuntu, the `python3-venv` package provides it). The mandatory real-OpenBao tests in `task check` require that executable. Live Discord and container acceptance tests are opt-in;
+Ensure the Go binary directory and `~/.local/bin` are on PATH before running
+setup. Python's `venv` module must be installed (on Debian/Ubuntu, install the
+`python3-venv` package). Live Discord and container acceptance tests are opt-in;
 their fixtures and requirements live in [tests/acceptance](tests/acceptance/README.md).
 
 ## Making a change
