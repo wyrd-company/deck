@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -403,5 +404,69 @@ func TestWatchedRevisionDuringWriteSurvives(t *testing.T) {
 				t.Fatal("entry left dirty although the bucket holds every change")
 			}
 		})
+	}
+}
+
+// heldDelete holds the first bucket delete until released.
+type heldDelete struct {
+	jetstream.KeyValue
+	first            atomic.Bool
+	entered, release chan struct{}
+}
+
+func (k *heldDelete) Delete(ctx context.Context, name string, opts ...jetstream.KVDeleteOpt) error {
+	if k.first.CompareAndSwap(false, true) {
+		close(k.entered)
+		<-k.release
+	}
+	return k.KeyValue.Delete(ctx, name, opts...)
+}
+
+// R2-01: the sweep keeps a thread touched or published after it was chosen
+// as stale, both one whose delete is already in flight and one still
+// waiting its turn.
+func TestSweepKeepsThreadsActiveSinceSelection(t *testing.T) {
+	_, _, js := testutil.NATS(t)
+	ctx := context.Background()
+	kv, err := js.CreateKeyValue(ctx, jetstream.KeyValueConfig{Bucket: "sweeprace"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	held := &heldDelete{KeyValue: kv, entered: make(chan struct{}), release: make(chan struct{})}
+	r := newRegistry(ctx, held)
+	defer r.cancel()
+	for _, id := range []uint64{7, 8} {
+		stale := Entry{Bot: "bot", ServerID: 1, ChannelID: 2, CreatedByDeck: true, ActiveAt: time.Now().Add(-2 * time.Hour), Keys: map[string]Touch{"caller": {State: "sent"}}}
+		raw, _ := json.Marshal(stale)
+		if _, err = kv.Put(ctx, key(id), raw); err != nil {
+			t.Fatal(err)
+		}
+		record, err := kv.Get(ctx, key(id))
+		if err != nil {
+			t.Fatal(err)
+		}
+		r.apply(record)
+	}
+	done := make(chan struct{})
+	go func() { r.Sweep(time.Hour); close(done) }()
+	<-held.entered // both chosen; the first delete is in flight
+	r.Advance(7, 999)
+	r.Advance(8, 999)
+	close(held.release)
+	<-done
+	for _, id := range []uint64{7, 8} {
+		e, ok := r.Lookup(id)
+		if !ok || e.LastMessageID != 999 || e.Keys["caller"].State != "sent" {
+			t.Fatalf("sweep erased thread %d made active after its selection: %+v %t", id, e, ok)
+		}
+	}
+	// The in-flight delete landed; the active entry is written back.
+	for _, id := range []uint64{7, 8} {
+		if err = r.flushOne(ctx, id); err != nil {
+			t.Fatal(err)
+		}
+		if got := durable(t, kv, id); got.LastMessageID != 999 || got.Keys["caller"].State != "sent" {
+			t.Fatalf("thread %d not durable after the sweep: %+v", id, got)
+		}
 	}
 }

@@ -712,21 +712,58 @@ func (r *Registry) retry(maxAge time.Duration) {
 }
 
 // Sweep deletes every clean entry whose latest touch or publish is older
-// than maxAge. A delete, unlike an expiry, reaches every watcher.
+// than maxAge. A delete, unlike an expiry, reaches every watcher. Each
+// candidate is judged again under its write lock just before it is deleted,
+// and the delete is conditioned on the revision judged stale, so a thread
+// touched or published since the candidates were chosen is kept.
 func (r *Registry) Sweep(maxAge time.Duration) {
 	r.mu.RLock()
 	stale := []uint64{}
 	for id, e := range r.entries {
-		if !r.dirty[id] && time.Since(e.ActiveAt) > maxAge {
+		if r.sweepable(id, e, maxAge) {
 			stale = append(stale, id)
 		}
 	}
 	r.mu.RUnlock()
 	for _, id := range stale {
 		ctx, cancel := context.WithTimeout(r.ctx, writeTimeout)
-		_ = r.Delete(ctx, id)
+		_ = r.sweepOne(ctx, id, maxAge)
 		cancel()
 	}
+}
+
+// sweepable reports whether an entry is clean and older than maxAge; call
+// with mu held.
+func (r *Registry) sweepable(id uint64, e Entry, maxAge time.Duration) bool {
+	return !r.dirty[id] && r.writing[id] == 0 && time.Since(e.ActiveAt) > maxAge
+}
+
+func (r *Registry) sweepOne(ctx context.Context, id uint64, maxAge time.Duration) error {
+	unlock, err := r.lock(ctx, id)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	r.mu.Lock()
+	e, ok := r.entries[id]
+	if !ok || !r.sweepable(id, e, maxAge) {
+		r.mu.Unlock()
+		return nil // touched, published or gone since it was chosen
+	}
+	rev, version := r.revisions[id], r.versions[id]
+	r.writing[id]++
+	r.mu.Unlock()
+	err = r.KV.Delete(ctx, key(id), jetstream.LastRevision(rev))
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.writing[id]--
+	if err == nil && r.versions[id] == version {
+		delete(r.entries, id)
+		delete(r.dirty, id)
+		delete(r.cleanup, id)
+	}
+	r.settle(id)
+	return err
 }
 func (r *Registry) Pending() int { r.mu.RLock(); defer r.mu.RUnlock(); return len(r.dirty) }
 func (r *Registry) Close() {
