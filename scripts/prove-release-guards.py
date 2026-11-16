@@ -39,6 +39,12 @@ probes = [
     ('npm publish reads the packed tarball as a file', '.github/workflows/release.yml',
      'npm publish ./dist/wyrd-company-deck-*.tgz', 'npm publish dist/wyrd-company-deck-*.tgz',
      npm_publish, 'npm publish must read the packed tarball as a file'),
+    ('npm publish guard stays offline', 'scripts/tests/test_release_npm.py',
+     "            'npm_config_offline': 'true',\n", '',
+     npm_publish, 'npm publish dry run must not reach the network'),
+    ('npm guard suppresses the update check', 'scripts/tests/test_release_npm.py',
+     "            'npm_config_update_notifier': 'false',\n", '',
+     npm_publish, 'npm publish dry run must not reach the network'),
 ]
 for probe in probes:
     mutate(*probe)
