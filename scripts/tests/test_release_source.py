@@ -4,6 +4,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import tempfile
@@ -124,6 +125,16 @@ class ReleaseSourceTest(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertFalse(sentinel.exists())
         self.assertTrue(self.requests)
+
+    def test_github_release_body_uses_intentional_notes(self):
+        workflow = (ROOT / '.github/workflows/release.yml').read_text()
+        self.assertIn('--release-notes=${{ runner.temp }}/release-notes.md', workflow)
+        # GoReleaser loads --release-notes in its changelog pipe, which
+        # changelog.disable skips, leaving the release body empty.
+        config = (ROOT / '.goreleaser.yaml').read_text()
+        changelog = re.search(r'^changelog:\n((?:[ #].*\n|\n)*)', config, re.MULTILINE)
+        disabled = changelog and re.search(r'^\s+disable:\s*(?!false\b)\S', changelog.group(1), re.MULTILINE)
+        self.assertFalse(disabled, 'changelog.disable drops --release-notes from the GitHub release')
 
     def test_workflow_gates_every_publishing_job(self):
         workflow = (ROOT / '.github/workflows/release.yml').read_text()

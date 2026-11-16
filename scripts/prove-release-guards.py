@@ -45,6 +45,9 @@ probes = [
     ('npm guard suppresses the update check', 'scripts/tests/test_release_npm.py',
      "            'npm_config_update_notifier': 'false',\n", '',
      npm_publish, 'npm publish dry run must not reach the network'),
+    ('GitHub release body keeps intentional notes', '.goreleaser.yaml',
+     'release:\n  mode: replace\n', 'release:\n  mode: replace\nchangelog:\n  disable: true\n',
+     source, 'changelog.disable drops --release-notes from the GitHub release'),
 ]
 for probe in probes:
     mutate(*probe)

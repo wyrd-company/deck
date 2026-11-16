@@ -44,5 +44,6 @@ checksum:
   name_template: checksums.txt
 release:
   mode: replace
-changelog:
-  disable: true
+# Keep the changelog pipe enabled: it is the step that loads --release-notes
+# (intentional's CHANGELOG.md section) into the GitHub release body. With
+# --release-notes set it generates no git changelog of its own.
