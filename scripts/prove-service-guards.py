@@ -360,4 +360,7 @@ probe('Listen keeps a cursor ahead of the index', 'index.go',
 probe('later Listen responses refresh attachment URLs', 'index.go',
       '\t\t\th.refreshAttachments(ctx, listed)\n\t\t\tfor _, a := range listed {', '\t\t\tfor _, a := range listed {',
       './internal/service', 'TestListenRefreshesLaterAttachments')
+probe('the sweep rechecks a thread before deleting it', 'registry/registry.go',
+      'if !ok || !r.sweepable(id, e, maxAge) {', 'if !ok || !r.sweepable(id, e, maxAge) && e.Bot == "" {',
+      './internal/service/registry', 'TestSweepKeepsThreadsActiveSinceSelection')
 print(f'PASS all {completed} targeted service mutation probes completed', flush=True)
