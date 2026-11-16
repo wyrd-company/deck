@@ -214,12 +214,14 @@ func (r *Runtime) Checks() health.Checks {
 }
 
 // Shutdown budgets, within the service's 10-second stop: each step ends at
-// its budget, so an outage cannot hold the process.
+// its budget, so an outage cannot hold the process. With the gateway and bot
+// closes (half a second each) and the index's consumer stop (a second),
+// they add up to 8.5 seconds after the transport has joined its calls.
 var (
 	sendBudget    = 2 * time.Second
-	publishBudget = 2 * time.Second
-	flushBudget   = 2 * time.Second
-	drainBudget   = 2 * time.Second
+	publishBudget = 1500 * time.Millisecond
+	flushBudget   = 1500 * time.Millisecond
+	drainBudget   = 1500 * time.Millisecond
 )
 
 // Close stops the runtime in order: gateway sessions stop delivering;
@@ -233,7 +235,7 @@ func (r *Runtime) Close() {
 		within := func(d time.Duration) (context.Context, context.CancelFunc) {
 			return context.WithTimeout(context.Background(), d)
 		}
-		ctx, cancel := within(time.Second)
+		ctx, cancel := within(500 * time.Millisecond)
 		for _, g := range r.Gateways {
 			g.Close(ctx)
 		}
@@ -277,7 +279,7 @@ func (r *Runtime) Close() {
 		if r.Registry != nil {
 			r.Registry.Close()
 		}
-		ctx, cancel = within(time.Second)
+		ctx, cancel = within(500 * time.Millisecond)
 		for _, b := range r.Bots {
 			b.Bot.Close(ctx)
 		}

@@ -239,8 +239,8 @@ proposed-design:
     closes the gateway sessions, drains NATS and exits 0, within 10 seconds.
     The runtime closes in order within budgets: gateway sessions close; sends
     in flight get 2 seconds to finish and are then canceled; waiting activity
-    gets 2 seconds to publish; dirty registry entries get 2 seconds to be
-    written; NATS drains for up to 2 seconds. What a budget cuts short is
+    gets 1.5 seconds to publish; dirty registry entries get 1.5 seconds to be
+    written; NATS drains for up to 1.5 seconds. What a budget cuts short is
     logged; during an outage that is waiting activity and registry writes,
     which recovery or the named risks cover.
   bots: >-
@@ -267,24 +267,24 @@ proposed-design:
     new post, read with the grant check for a first reply), or to the thread's
     snowflake when Discord reports none; it is raised to each message the
     service publishes for the thread and each message recovery reads, and
-    never lowered. The registry's writer writes each
-    change within 100 milliseconds, coalesced per thread, and shutdown
-    flushes dirty entries within 2 seconds; a write that lags or a flush cut
-    short lets recovery publish a message again (risk
-    recovery-replays-published-messages). Reads of the in-memory map never
-    wait on a bucket request: writes run outside its lock, one writer per
-    thread, and a change made while its entry is being written stays dirty
-    for the next write. `stream.generation` is `{"epoch":
-    <Unix nanoseconds>, "created": <the stream's creation time>}`, as
-    activity-index describes; nothing expires it. When `nats.threads.max_age`
-    is set, the service sweeps the bucket every hour and deletes each thread
-    entry whose `active_at` is older than that age; a delete, unlike an
-    expiry, reaches every watcher, so every instance's memory drops the thread
-    with it. Writes use the entry's revision, so concurrent writers retry; a
-    writer whose retry finds the thread registered to another bot applies the
-    routing rule of overlapping-bots instead of writing. The service loads
-    every entry at start and watches the bucket, and its in-memory map is what
-    the gateway filter, routing and the grant checks read.
+    never lowered. The registry's writer writes each change within 100
+    milliseconds, coalesced per thread, and shutdown flushes dirty entries
+    within 1.5 seconds; a write that lags or a flush cut short lets recovery
+    publish a message again (risk recovery-replays-published-messages). Reads
+    of the in-memory map never wait on a bucket request: writes run outside
+    its lock, one writer per thread, and a change made while its entry is
+    being written stays dirty for the next write. `stream.generation` is
+    `{"epoch": <Unix nanoseconds>, "created": <the stream's creation time>}`,
+    as activity-index describes; nothing expires it. When
+    `nats.threads.max_age` is set, the service sweeps the bucket every hour
+    and deletes each thread entry whose `active_at` is older than that age; a
+    delete, unlike an expiry, reaches every watcher, so every instance's
+    memory drops the thread with it. Writes use the entry's revision, so
+    concurrent writers retry; a writer whose retry finds the thread registered
+    to another bot applies the routing rule of overlapping-bots instead of
+    writing. The service loads every entry at start and watches the bucket,
+    and its in-memory map is what the gateway filter, routing and the grant
+    checks read.
   posting: >-
     Post checks the channel in the grant order the gRPC API specifies, taking
     the channel's server from the bot's Discord metadata, and refuses a type

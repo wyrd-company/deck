@@ -25,7 +25,7 @@ const GenerationKey = "stream.generation"
 var (
 	auditInterval = 10 * time.Second
 	catchUpPoll   = time.Second
-	closeWait     = 5 * time.Second
+	closeWait     = time.Second
 )
 
 // Test hooks: muteConsumerTriggers silences the consumer's own triggers so a
