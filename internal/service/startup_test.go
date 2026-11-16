@@ -1,3 +1,10 @@
+//go:build !race
+
+// The race detector reports a data race inside disgo v0.20.0 itself when a
+// gateway session closes (gateway/gateway.go:360 against :491-492), and these
+// tests open and close real sessions against a fake gateway. They run in
+// every ordinary `go test`, including task ci.
+
 package service
 
 import (
@@ -22,6 +29,7 @@ import (
 	"time"
 
 	"github.com/disgoorg/disgo/bot"
+	"github.com/disgoorg/disgo/gateway"
 	"github.com/disgoorg/disgo/rest"
 	pb "github.com/wyrd-company/deck/internal/api/deckv1"
 	"github.com/wyrd-company/deck/internal/config"
@@ -52,24 +60,24 @@ func (s *startupSecrets) ReadSecret(_ context.Context, where string, _ config.Se
 	}
 }
 
-// Task 7 owns Listen. This wrapper supplies an open stream while all unary
-// calls, SSH authentication, startup and runtime teardown use production code.
+// shutdownHandler runs the production Listen and checks, as it returns, that
+// the transport ended the call before the runtime was canceled.
 type shutdownHandler struct {
 	*Handler
 	t *testing.T
 }
 
-func (h *shutdownHandler) Listen(_ *pb.ListenRequest, stream grpc.ServerStreamingServer[pb.ListenResponse]) error {
-	if err := stream.Send(&pb.ListenResponse{}); err != nil {
-		return err
+func (h *shutdownHandler) Listen(r *pb.ListenRequest, stream grpc.ServerStreamingServer[pb.ListenResponse]) error {
+	err := h.Handler.Listen(r, stream)
+	if stream.Context().Err() == nil {
+		h.t.Error("Listen returned before its call ended")
 	}
-	<-stream.Context().Done()
 	select {
 	case <-h.ctx.Done():
 		h.t.Error("runtime canceled before transport joined Listen")
 	case <-time.After(25 * time.Millisecond):
 	}
-	return stream.Context().Err()
+	return err
 }
 
 // Run in a subprocess: an absent SIGTERM handler must kill that process rather
@@ -121,8 +129,9 @@ func TestServiceSIGTERMHelper(t *testing.T) {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	err = run(ctx, cfg, secrets, func(ctx context.Context) (*Runtime, pb.DeckServiceServer, error) {
-		r, err := open(ctx, cfg, secrets, func(token string) (*discord.Client, error) {
-			return discord.New(token, bot.WithRestClientConfigOpts(rest.WithURL(upstream.URL)))
+		options := fakeBots(t, upstream.URL)
+		r, err := open(ctx, cfg, secrets, func(name, token string) (*discord.Client, error) {
+			return discord.New(token, options(name)...)
 		})
 		if err != nil {
 			return nil, nil, err
@@ -233,19 +242,21 @@ func TestServiceSIGTERM(t *testing.T) {
 	client := dialSSHHandler(t, address, host.PublicKey(), key)
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	stream, err := client.Listen(ctx, &pb.ListenRequest{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err = stream.Recv(); err != nil {
-		t.Fatal("Listen did not open", err)
-	}
 	reply := make(chan error, 1)
 	go func() {
 		_, err := client.Reply(ctx, &pb.ReplyRequest{Thread: &pb.ThreadRef{Bot: "a", ThreadId: 100}, Content: content(), Nonce: "shutdown"})
 		reply <- err
 	}()
 	waitMarker("INFLIGHT")
+	// The in-flight reply touched thread 100, so the production Listen keeps
+	// its stream open on it.
+	stream, err := client.Listen(ctx, &pb.ListenRequest{Cursors: []*pb.Cursor{{ThreadId: 100}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first, err := stream.Recv(); err != nil || first.Threads[0].State != pb.ThreadState_THREAD_STATE_TOUCHED {
+		t.Fatal("Listen did not open on the touched thread", first, err)
+	}
 	started := time.Now()
 	if err = cmd.Process.Signal(syscall.SIGTERM); err != nil {
 		t.Fatal(err)
@@ -285,7 +296,37 @@ func (s blockingStartupSecret) ReadSecret(ctx context.Context, where string, _ c
 	<-ctx.Done()
 	return "", ctx.Err()
 }
+
+// fakeBots points every bot client at a fake REST server and a fake gateway
+// per bot, so startup can open sessions without Discord.
+func fakeBots(t *testing.T, restURL string) func(name string) []bot.ConfigOpt {
+	options, _ := fakeBotGateways(t, restURL)
+	return options
+}
+
+// fakeBotGateways also returns the fake gateways, created on first use.
+func fakeBotGateways(t *testing.T, restURL string) (func(name string) []bot.ConfigOpt, map[string]*testutil.Gateway) {
+	t.Helper()
+	gateways := map[string]*testutil.Gateway{}
+	return func(name string) []bot.ConfigOpt {
+		if gateways[name] == nil {
+			gateways[name] = testutil.NewGateway(t, "123", testutil.Guild())
+		}
+		return []bot.ConfigOpt{bot.WithRestClientConfigOpts(rest.WithURL(restURL)), bot.WithGatewayConfigOpts(gateway.WithURL(gateways[name].URL), gateway.WithCompression(gateway.CompressionNone))}
+	}, gateways
+}
+
+// useFakeBots installs fakeBots as the production bot options for a test.
+func useFakeBots(t *testing.T) {
+	t.Helper()
+	upstream := httptest.NewServer(&fakeDiscord{})
+	t.Cleanup(upstream.Close)
+	BotOptions = fakeBots(t, upstream.URL)
+	t.Cleanup(func() { BotOptions = nil })
+}
+
 func TestServiceStartupCancellation(t *testing.T) {
+	useFakeBots(t)
 	natsServer, credentials := testutil.JWTNATS(t)
 	for _, where := range []string{"nats.creds", "bots[0].token", "host_key"} {
 		t.Run(where, func(t *testing.T) {
@@ -332,6 +373,7 @@ func (f startupSecretFunc) ReadSecret(ctx context.Context, where string, ref con
 // returns a genuine failure only after observing the stop; that failure must
 // stay distinct from cancellation and must not expose its upstream body.
 func TestServiceStartupIndependentFailure(t *testing.T) {
+	useFakeBots(t)
 	natsServer, credentials := testutil.JWTNATS(t)
 	for _, where := range []string{"nats.creds", "bots[0].token"} {
 		for _, stop := range []bool{false, true} {

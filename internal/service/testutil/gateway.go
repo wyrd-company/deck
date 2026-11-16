@@ -156,3 +156,12 @@ func (g *Gateway) WaitReady(t *testing.T) {
 		t.Fatal("gateway session not identified")
 	}
 }
+
+// Guild is a GUILD_CREATE payload for server 1 with forum 10, text channel 20
+// and a member 7 named "person".
+func Guild() map[string]any {
+	return map[string]any{"id": "1", "name": "Test server", "channels": []any{
+		map[string]any{"id": "10", "type": 15, "name": "forum", "guild_id": "1"},
+		map[string]any{"id": "20", "type": 0, "name": "text", "guild_id": "1"},
+	}, "threads": []any{}, "members": []any{map[string]any{"user": map[string]any{"id": "7", "username": "person"}, "roles": []any{}, "joined_at": "2026-01-01T00:00:00Z"}}, "roles": []any{}}
+}

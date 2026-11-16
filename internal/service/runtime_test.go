@@ -75,7 +75,7 @@ func TestRuntimeVaultPathsAndSecretIsolation(t *testing.T) {
 	old := slog.Default()
 	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
 	defer slog.SetDefault(old)
-	r, err := open(s.ctx, &cfg, vc, func(token string) (*discord.Client, error) {
+	r, err := open(s.ctx, &cfg, vc, func(_, token string) (*discord.Client, error) {
 		factoryTokens = append(factoryTokens, token)
 		if token != tokens[0] && token != tokens[1] {
 			return nil, errors.New("unexpected token")
@@ -103,7 +103,7 @@ func TestRuntimeVaultPathsAndSecretIsolation(t *testing.T) {
 			t.Fatal("secret present in logs or API output")
 		}
 	}
-	_, err = open(s.ctx, &cfg, vc, func(token string) (*discord.Client, error) { return nil, errors.New(token) })
+	_, err = open(s.ctx, &cfg, vc, func(_, token string) (*discord.Client, error) { return nil, errors.New(token) })
 	if err == nil {
 		t.Fatal("factory failure ignored")
 	}

@@ -235,7 +235,9 @@ func (i *Index) check() {
 		i.stopConsumer()
 		stream, err := EnsureStream(i.ctx, i.js, i.cfg)
 		if err != nil {
-			i.log.Warn("activity stream unavailable", "stream", i.cfg.Stream.Name, "manage", i.cfg.Stream.Manage)
+			if i.ctx.Err() == nil {
+				i.log.Warn("activity stream unavailable", "stream", i.cfg.Stream.Name, "manage", i.cfg.Stream.Manage)
+			}
 			if !retry() {
 				return
 			}
@@ -254,7 +256,9 @@ func (i *Index) check() {
 		i.mu.Unlock()
 		gen, err := i.generation(info.Created, lost)
 		if err != nil {
-			i.log.Warn("stream generation record unavailable")
+			if i.ctx.Err() == nil {
+				i.log.Warn("stream generation record unavailable")
+			}
 			if !retry() {
 				return
 			}

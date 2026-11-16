@@ -1,10 +1,20 @@
+//go:build !race
+
+// The race detector reports a data race inside disgo v0.20.0 itself when a
+// gateway session closes (gateway/gateway.go:360 against :491-492), and these
+// tests open and close real sessions against a fake gateway. They run in
+// every ordinary `go test`, including task ci.
+
 package main
 
 import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"io"
 	"net"
@@ -20,7 +30,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/disgoorg/disgo/bot"
+	"github.com/disgoorg/disgo/gateway"
+	"github.com/disgoorg/disgo/rest"
+	"github.com/wyrd-company/deck/internal/service"
 	"github.com/wyrd-company/deck/internal/service/testutil"
+	"github.com/wyrd-company/deck/internal/transport"
+	"golang.org/x/crypto/ssh"
 )
 
 // Real CLI dispatch, Vault HTTP/KV and JWT NATS; only generated test material
@@ -31,7 +47,16 @@ func TestServiceStartSignalHelper(t *testing.T) {
 		return
 	}
 	natsServer, credentials := testutil.JWTNATS(t)
-	target := map[string]string{"login": "/v1/auth/approle/login", "nats": "/v1/kv/data/deck/nats", "bot": "/v1/kv/data/deck/bots/helper", "host": "/v1/kv/data/deck/service", "second": "/v1/kv/data/deck/nats", "failure": "/unused", "registry": "/unused"}[stage]
+	_, hostPrivate, keyErr := ed25519.GenerateKey(rand.Reader)
+	if keyErr != nil {
+		t.Fatal(keyErr)
+	}
+	hostBlock, keyErr := ssh.MarshalPrivateKey(hostPrivate, "")
+	if keyErr != nil {
+		t.Fatal(keyErr)
+	}
+	hostKey := string(pem.EncodeToMemory(hostBlock))
+	target := map[string]string{"login": "/v1/auth/approle/login", "nats": "/v1/kv/data/deck/nats", "bot": "/v1/kv/data/deck/bots/helper", "host": "/v1/kv/data/deck/service", "second": "/v1/kv/data/deck/nats", "failure": "/unused", "registry": "/unused", "stream": "/unused", "bind": "/unused"}[stage]
 	if target == "" {
 		t.Fatal("invalid stage")
 	}
@@ -54,9 +79,19 @@ func TestServiceStartSignalHelper(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{"auth": map[string]any{"client_token": "generated-test-login"}})
 			return
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"data": map[string]string{"creds": credentials, "token": "MTIz.test-only.signature"}}})
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"data": map[string]string{"creds": credentials, "token": "MTIz.test-only.signature", "host_key": hostKey}}})
 	}))
 	defer upstream.Close()
+	// Bot clients reach a fake Discord REST API and gateway, not Discord.
+	discordREST := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer discordREST.Close()
+	fakeGateway := testutil.NewGateway(t, "123", testutil.Guild())
+	service.BotOptions = func(string) []bot.ConfigOpt {
+		return []bot.ConfigOpt{bot.WithRestClientConfigOpts(rest.WithURL(discordREST.URL)), bot.WithGatewayConfigOpts(gateway.WithURL(fakeGateway.URL), gateway.WithCompression(gateway.CompressionNone))}
+	}
 	dir := t.TempDir()
 	credential := filepath.Join(dir, "credential")
 	if err := os.WriteFile(credential, []byte("generated-test-credential"), 0600); err != nil {
@@ -73,8 +108,20 @@ func TestServiceStartSignalHelper(t *testing.T) {
 	cfg := strings.Replace(string(raw), "address: unix:///run/openbao/agent.sock", "address: "+upstream.URL+"\n"+auth, 1)
 	natsURL := natsServer.ClientURL()
 	var bucketSignal <-chan struct{}
-	if stage == "registry" {
-		natsURL, bucketSignal = signalAtBucket(t, natsURL)
+	switch stage {
+	case "registry":
+		natsURL, bucketSignal = signalAt(t, natsURL, "KV_deck-threads")
+	case "stream":
+		natsURL, bucketSignal = signalAt(t, natsURL, "$JS.API.STREAM.")
+	case "bind":
+		// Hold the SSH bind until the stop arrives; the address stays occupied
+		// by this helper's listener, so the bind itself fails.
+		transport.BeforeBind = func(ctx context.Context) {
+			if err := syscall.Kill(os.Getpid(), syscall.SIGTERM); err != nil {
+				t.Error(err)
+			}
+			<-ctx.Done()
+		}
 	}
 	cfg = strings.Replace(cfg, "nats://nats.example.internal:4222", natsURL, 1)
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -83,6 +130,12 @@ func TestServiceStartSignalHelper(t *testing.T) {
 	}
 	defer listener.Close()
 	cfg = strings.Replace(cfg, `ssh: ":2222"`, `ssh: "`+listener.Addr().String()+`"`, 1)
+	free, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = free.Close()
+	cfg = strings.Replace(cfg, `health: ":8080"`, `health: "`+free.Addr().String()+`"`, 1)
 	path := filepath.Join(dir, "config.yml")
 	if err = os.WriteFile(path, []byte(cfg), 0600); err != nil {
 		t.Fatal(err)
@@ -134,20 +187,47 @@ func TestServiceStartSignalHelper(t *testing.T) {
 		}
 		return
 	}
-	if stage == "registry" {
+	if stage == "bind" {
+		for _, field := range []string{`"level":"ERROR"`, `"step":"open the SSH listener"`, `"field":"listen.ssh"`, `"config":"` + path + `"`, `"msg":"service starting"`, `"msg":"gateway session state"`} {
+			if code != 1 || out.Len() != 0 || !strings.Contains(errs.String(), field) {
+				t.Fatalf("bind failure during stop: code=%d stdout=%q stderr=%q", code, out.String(), errs.String())
+			}
+		}
+		// The log holds no secret the service read: token, NATS credentials,
+		// host key or the Vault credential.
+		for _, secret := range []string{"test-only.signature", credentials, strings.Split(hostKey, "\n")[1], "generated-test-credential", "generated-test-login"} {
+			if strings.Contains(errs.String(), secret) {
+				t.Fatalf("log holds a secret: %q", errs.String())
+			}
+		}
+		return
+	}
+	if stage == "registry" || stage == "stream" {
 		select {
 		case <-bucketSignal:
 		default:
-			t.Fatal("startup did not reach thread-bucket request")
+			t.Fatal("startup did not reach the held NATS request")
 		}
 	}
-	if code != 0 || out.Len() != 0 || errs.Len() != 0 {
+	if code != 0 || out.Len() != 0 || !onlyLogLines(errs.String()) {
 		t.Fatalf("signal during %s: code=%d stdout=%q stderr=%q", stage, code, out.String(), errs.String())
 	}
 }
 
+// onlyLogLines reports whether stderr holds only JSON log lines, none of
+// them an error: a clean stop logs its start and stop and nothing failed.
+func onlyLogLines(stderr string) bool {
+	for _, line := range strings.Split(strings.TrimSpace(stderr), "\n") {
+		var record map[string]any
+		if json.Unmarshal([]byte(line), &record) != nil || record["level"] == "ERROR" {
+			return false
+		}
+	}
+	return true
+}
+
 func TestServiceStartSignal(t *testing.T) {
-	for _, stage := range []string{"login", "nats", "registry", "bot", "host"} {
+	for _, stage := range []string{"login", "nats", "stream", "registry", "bot", "host", "bind"} {
 		t.Run(stage, func(t *testing.T) {
 			executable, err := os.Executable()
 			if err != nil {
@@ -239,10 +319,11 @@ func TestServiceStartRealFailureAfterSignal(t *testing.T) {
 	}
 }
 
-// Forward the real NATS protocol until bucket startup, then signal the child
-// and withhold the request. This pins cancellation during registry.Open rather
-// than a secret read. The subprocess bounds failures of native signal handling.
-func signalAtBucket(t *testing.T, upstream string) (string, <-chan struct{}) {
+// Forward the real NATS protocol until a request naming marker (the thread
+// bucket or the stream API), then signal the child and withhold the request.
+// This pins cancellation during that startup step rather than a secret read.
+// The subprocess bounds failures of native signal handling.
+func signalAt(t *testing.T, upstream, marker string) (string, <-chan struct{}) {
 	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -271,7 +352,7 @@ func signalAtBucket(t *testing.T, upstream string) (string, <-chan struct{}) {
 		reader := bufio.NewReader(client)
 		for {
 			line, err := reader.ReadString('\n')
-			if strings.Contains(line, "KV_deck-threads") {
+			if strings.Contains(line, marker) {
 				if err := syscall.Kill(os.Getpid(), syscall.SIGTERM); err != nil {
 					t.Error(err)
 				}
