@@ -193,6 +193,9 @@ func (h *Handler) Listen(r *pb.ListenRequest, stream grpc.ServerStreamingServer[
 				}
 				return err
 			}
+			// Later responses carry current attachment URLs too: a retained
+			// backlog or a replayed generation can hold expired ones.
+			h.refreshAttachments(ctx, listed)
 			for _, a := range listed {
 				if err = stream.Send(&pb.ListenResponse{Activity: []*pb.Activity{a}, Through: &pb.StreamPosition{Epoch: next.Through.Epoch, Sequence: a.Sequence}}); err != nil {
 					return err

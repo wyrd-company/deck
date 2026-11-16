@@ -480,3 +480,30 @@ func TestListenKeepsACursorAhead(t *testing.T) {
 		t.Fatal("listener sent activity at or below its cursor", next)
 	}
 }
+
+// R1-06: every Listen response carries current attachment URLs, not only
+// the first: a later live activity's expired URL is refreshed.
+func TestListenRefreshesLaterAttachments(t *testing.T) {
+	s := setupIndexed(t)
+	register(t, s.reg, 100, registry.Entry{Bot: "a", ServerID: 1, ChannelID: 10}, "key")
+	start := s.position(t)
+	s.fake.mu.Lock()
+	s.fake.history = func(string, url.Values) (int, any) {
+		m := messageJSON("700", "100", map[string]any{"content": "x"})
+		m["attachments"] = []any{map[string]any{"id": "1", "filename": "f.txt", "size": 1, "url": "https://cdn/current", "proxy_url": "https://cdn/current"}}
+		return 200, []any{m}
+	}
+	s.fake.mu.Unlock()
+	ctx, cancel := context.WithCancel(s.ctx)
+	defer cancel()
+	stream, err := s.client.Listen(ctx, &pb.ListenRequest{Cursors: []*pb.Cursor{at(100, start)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	recv(t, stream)
+	s.publishActivity(t, attached(100, 700, "https://cdn/expired"))
+	got := recv(t, stream)
+	if got.Activity[0].GetMessage().Attachments[0].Url != "https://cdn/current" {
+		t.Fatal("a later Listen response kept the expired URL", got.Activity[0])
+	}
+}
