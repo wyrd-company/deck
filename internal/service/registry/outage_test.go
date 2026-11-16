@@ -222,3 +222,47 @@ func TestFlushBudget(t *testing.T) {
 		t.Fatal("outage flush exceeded its budget", elapsed)
 	}
 }
+
+// slowWatchKV returns its watcher only after the caller's stop: nats.go then
+// closes the update channel, which used to read as a load failure.
+type slowWatchKV struct {
+	jetstream.KeyValue
+	stop func()
+}
+
+func (k slowWatchKV) Watch(ctx context.Context, keys string, opts ...jetstream.WatchOpt) (jetstream.KeyWatcher, error) {
+	w, err := k.KeyValue.Watch(ctx, keys, opts...)
+	k.stop()
+	time.Sleep(5 * time.Millisecond)
+	return w, err
+}
+
+func TestStopDuringLoadIsCancellation(t *testing.T) {
+	_, _, js := testutil.NATS(t)
+	kv, err := js.CreateKeyValue(context.Background(), jetstream.KeyValueConfig{Bucket: "load"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for id := range 50 {
+		if _, err = kv.Put(context.Background(), key(uint64(id+1)), []byte(`{"bot":"bot","keys":{"k":{"state":"sent"}}}`)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	stopped := 0
+	for i := range 60 {
+		ctx, cancel := context.WithCancel(context.Background())
+		r, err := New(ctx, slowWatchKV{KeyValue: kv, stop: cancel}, 0)
+		cancel()
+		if r != nil {
+			r.Close() // the load finished before the stop was seen
+			continue
+		}
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("run %d: stop during load reported %v", i, err)
+		}
+		stopped++
+	}
+	if stopped == 0 {
+		t.Fatal("no run stopped during the load")
+	}
+}

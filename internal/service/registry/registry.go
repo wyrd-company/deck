@@ -132,9 +132,16 @@ func New(ctx context.Context, kv jetstream.KeyValue, maxAge time.Duration) (*Reg
 			return nil, err
 		case e, ok := <-w.Updates():
 			if !ok {
+				// nats.go closes the updates channel when the load is canceled,
+				// and select may pick that before Done: report the stop, not a
+				// failure, whenever the caller's context has ended.
+				err := ctx.Err()
 				_ = w.Stop()
 				r.cancel()
-				return nil, errors.New("registry watch ended during load")
+				if err != nil {
+					return nil, err
+				}
+				return nil, errors.New("nats.threads: registry watch ended during load")
 			}
 			if e == nil {
 				r.wg.Add(2)
