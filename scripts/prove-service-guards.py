@@ -12,7 +12,7 @@ import runpy
 ROOT = Path(__file__).resolve().parent.parent
 helpers = runpy.run_path(str(ROOT / 'scripts/prove-guards.py'))
 mutate, require_pass = helpers['mutate'], helpers['require_pass']
-require_pass(['go', 'test', '-count=1', './internal/service/...'])
+require_pass(['go', 'test', '-count=1', './internal/service/...', './cmd/deck/...'])
 
 
 completed = 0
