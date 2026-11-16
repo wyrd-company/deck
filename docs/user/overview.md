@@ -17,23 +17,37 @@ bot tokens, connects to Discord and publishes activity to NATS JetStream.
 You need the [CLI installed](install.md), an [operational service](service.md),
 and access to an ed25519 Transit key in OpenBao or Vault. If someone operates the
 service for you, ask them for its SSH address and public host-key line, your bot
-name and a granted parent channel ID. Give them the public line from
-`deck config key` so they can register its grants. The
-[authentication guide](authentication.md) explains that exchange and the policies.
+name and a parent channel ID they can grant you. The
+[authentication guide](authentication.md) explains the key exchange and policies.
 
-1. Copy `client.example.yml` from the release archive to a writable directory as
-   `client.yml`. Set `service.address`, `service.host_key`, `vault.address`,
+1. Save the [annotated client example](https://github.com/wyrd-company/deck/blob/main/docs/specifications/assets/configuration/examples/client.yml)
+   in a writable directory as `client.yml`. Homebrew and npm install only the
+   executable, so use that link to obtain the example. APT/RPM packages provide
+   `/usr/share/doc/deck/client.example.yml`; release archives include
+   `client.example.yml`. Set `service.address`, `service.host_key`, `vault.address`,
    `key.mount` and `key.name`. Replace the sample channel alias with your granted
    `BOT/CHANNEL_ID`, and remove sample allow/deny entries and the default persona
    if you do not need them. See [configuration](configuration.md).
-2. Validate and check the available channels:
+2. Validate the configuration and print your client's public key:
 
    ```sh
    deck config validate --config ./client.yml
+   deck config key --config ./client.yml
+   ```
+
+   Send the printed public-key line to the service operator. Wait for them to
+   register it with grants for your bot, server and parent channel, and restart
+   the service. If you operate the service, add the line and grants under `keys`
+   and restart it as [authentication](authentication.md) describes. Continue
+   after registration is confirmed; an unregistered key or missing grant causes
+   an access refusal (exit 3).
+3. Check the available channels:
+
+   ```sh
    deck channels --config ./client.yml
    ```
 
-3. Post with an explicit local session, so the same commands work in a plain shell:
+4. Post with an explicit local session, so the same commands work in a plain shell:
 
    ```sh
    deck post --config ./client.yml --session conversation=first \
@@ -41,7 +55,7 @@ name and a granted parent channel ID. Give them the public line from
    ```
 
    The result prints a thread ID and Discord URL. Open it and ask someone to reply.
-4. Read and answer, replacing the example thread ID with the one just printed:
+5. Read and answer, replacing the example thread ID with the one just printed:
 
    ```sh
    deck listen --config ./client.yml --session conversation=first --timeout 5m

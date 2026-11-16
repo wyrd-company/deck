@@ -135,12 +135,14 @@ starts. Button presses and poll votes in that time are lost.
 
 ## Deleting, recreating or restoring the event stream
 
-The service creates a missing event stream only when it starts. Use one
-procedure to delete, recreate or restore the stream:
+With `nats.stream.manage: true`, the service creates a missing event stream
+only when it starts. Use one procedure to delete, recreate or restore the stream:
 
 1. Stop the service.
 2. Delete the stream, and wait for the delete command to return.
-3. Recreate the stream, or restore it from a snapshot. After a restore, also
+3. Recreate the stream, or restore it from a snapshot. With
+   `nats.stream.manage: false`, you must complete this step before starting the
+   service; it cannot start with a missing stream. After a restore, also
    delete the `stream.generation` key from the thread bucket before starting
    the service. For the default bucket, using an authenticated NATS CLI context:
 
@@ -150,7 +152,8 @@ procedure to delete, recreate or restore the stream:
 
    Substitute `nats.threads.bucket` if configured differently; do not delete
    the bucket or its thread records.
-4. Start the service. It creates the stream if it is still missing.
+4. Start the service. With `nats.stream.manage: true`, it creates the stream
+   if it is still missing.
 
 After a restore, every retained activity is unread again rather than missed.
 Apply the same generation-key reset after restoring storage or losing the newest

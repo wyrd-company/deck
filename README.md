@@ -61,8 +61,8 @@ in place of the HTTPS download; run that proof on a disposable machine.
 `task image:build VERSION=dev` builds and loads the service image locally.
 `task image:build:multiarch` writes `dist/deck-image.tar` as a multi-arch OCI
 archive using Docker Buildx; install QEMU/binfmt emulation when building for a
-foreign CPU. Neither task pushes an image. The image's service
-health command is implemented by the service/gateway work.
+foreign CPU. Neither task pushes an image. The image's HEALTHCHECK runs
+`deck service health --config /etc/deck/config.yml`.
 
 CI builds the release snapshot without publishing and runs
 `task config:home:macos:check` on macOS. That probe builds with `CGO_ENABLED=0`,

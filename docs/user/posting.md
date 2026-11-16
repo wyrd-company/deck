@@ -84,7 +84,7 @@ deck post team --title 'Review the release' --text 'Please review.' \
 A button's `custom_id` comes back in the component activity. deck acknowledges
 it to Discord; your consumer decides what it means. Select menus also use raw
 Discord component JSON. To send as a configured persona, pass `--persona NAME`.
-A forum requiring tags needs one or more `--tag TAG_ID` flags on `post`.
+A forum requiring tags needs one or more `--tag TAG` flags (name or ID) on `post`.
 
 ## Unknown send outcomes
 
