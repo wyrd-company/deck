@@ -56,6 +56,9 @@ class ReleaseNpmPublishTest(unittest.TestCase):
             'npm_config_userconfig': os.devnull,
             'npm_config_offline': 'true',
             'npm_config_update_notifier': 'false',
+            # npm skips its update check by itself when it detects CI; CI=false
+            # turns that detection off, so the setting above is what disables it.
+            'CI': 'false',
             'npm_config_proxy': self.proxy,
             'npm_config_https_proxy': self.proxy,
             'HTTP_PROXY': self.proxy,
