@@ -7,6 +7,7 @@ require (
 	charm.land/wish/v2 v2.0.5
 	github.com/disgoorg/disgo v0.20.0
 	github.com/disgoorg/snowflake/v2 v2.0.3
+	github.com/gorilla/websocket v1.5.3
 	github.com/nats-io/jwt/v2 v2.7.4
 	github.com/nats-io/nats-server/v2 v2.11.9
 	github.com/nats-io/nats.go v1.55.0
@@ -44,7 +45,6 @@ require (
 	github.com/go-logfmt/logfmt v0.6.1 // indirect
 	github.com/google/go-tpm v0.9.5 // indirect
 	github.com/google/uuid v1.6.0 // indirect
-	github.com/gorilla/websocket v1.5.3 // indirect
 	github.com/klauspost/compress v1.20.0 // indirect
 	github.com/kr/pretty v0.1.0 // indirect
 	github.com/lucasb-eyer/go-colorful v1.4.1 // indirect

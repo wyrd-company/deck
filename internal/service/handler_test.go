@@ -59,6 +59,7 @@ type fakeDiscord struct {
 	replyID          string
 	onSend           func()
 	history          func(path string, query url.Values) (int, any)
+	channel          func(id string) (int, any)
 }
 
 func threadJSON(id, parent string) map[string]any {
@@ -84,7 +85,7 @@ func (f *fakeDiscord) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	archived, locked := f.archived, f.locked
 	metadataStatus, metadataCode := f.metadataStatus, f.metadataCode
 	startReject, startLose, historyMore, threadName := f.startReject, f.startLose, f.historyMore, f.threadName
-	replyID, history := f.replyID, f.history
+	replyID, history, channel := f.replyID, f.history, f.channel
 	f.mu.Unlock()
 	w.Header().Set("Content-Type", "application/json")
 	respond := func(v any) { _ = json.NewEncoder(w).Encode(v) }
@@ -94,6 +95,13 @@ func (f *fakeDiscord) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(metadataStatus)
 			respond(map[string]any{"code": metadataCode, "message": "private upstream error"})
 			return
+		}
+		if id := strings.TrimPrefix(path, "/channels/"); channel != nil && !strings.Contains(id, "/") {
+			if code, body := channel(id); body != nil {
+				w.WriteHeader(code)
+				respond(body)
+				return
+			}
 		}
 		switch path {
 		case "/channels/10":
@@ -152,6 +160,10 @@ func (f *fakeDiscord) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method == "DELETE" {
+		w.WriteHeader(204)
+		return
+	}
+	if strings.HasPrefix(path, "/interactions/") {
 		w.WriteHeader(204)
 		return
 	}
@@ -241,7 +253,10 @@ type harness struct {
 	client pb.DeckServiceClient
 }
 
-func setup(t *testing.T) *harness {
+func setup(t *testing.T) *harness { t.Helper(); return setupWith(t, nil) }
+
+// setupWith passes extra disgo options per bot, such as a fake gateway.
+func setupWith(t *testing.T, extra func(name string) []bot.ConfigOpt) *harness {
 	t.Helper()
 	_, _, js := testutil.NATS(t)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -272,7 +287,11 @@ func setup(t *testing.T) *harness {
 	for name, fake := range fakes {
 		server := httptest.NewServer(fake)
 		t.Cleanup(server.Close)
-		client, err := discord.New("MTIz.fake-bot-token.signature", bot.WithRestClientConfigOpts(rest.WithURL(server.URL)))
+		opts := []bot.ConfigOpt{bot.WithRestClientConfigOpts(rest.WithURL(server.URL))}
+		if extra != nil {
+			opts = append(opts, extra(name)...)
+		}
+		client, err := discord.New("MTIz.fake-bot-token.signature", opts...)
 		if err != nil {
 			t.Fatal(err)
 		}
