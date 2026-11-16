@@ -90,9 +90,9 @@ tasks:
     cmds:
       - python3 scripts/prove-service-guards.py
   test:discord:live:
-    desc: Run opt-in API tests against the configured test Discord server
+    desc: Run opt-in API and gateway tests against the configured test Discord server
     cmds:
-      - go test -count=1 -tags discordlive -run '^TestDiscordLive$' -v ./internal/service
+      - go test -count=1 -tags discordlive -run '^TestDiscordLive' -v ./internal/service
   config:home:check:
     desc: Prove passwd-home lookup with the real CLI in bubblewrap (Linux)
     cmds:
