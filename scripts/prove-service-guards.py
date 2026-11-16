@@ -336,9 +336,12 @@ probe_source('a bind failure during a stop stays a failure', 'internal/transport
 probe_source('a Vault failure during a stop stays a failure', 'internal/vault/client.go',
       'if ctx.Err() != nil && errors.Is(err, ctx.Err()) {', 'if ctx.Err() != nil {',
       './internal/vault', 'TestFailureDuringStopIsNotCancellation')
-probe('a missing stream is created only after its deletion ends', 'activity/index.go',
-      '\trecreateDelay = 2 * time.Second', '\trecreateDelay = 0 * time.Second',
-      './internal/service/activity', 'TestRecreationWaitsForTheDeletion')
+probe('only startup creates a missing stream', 'activity/index.go',
+      'if errors.Is(err, jetstream.ErrStreamNotFound) {\n\t\treturn nil, errStreamMissing', 'if errors.Is(err, jetstream.ErrStreamNotFound) {\n\t\treturn i.js.CreateStream(ctx, StreamConfig(i.cfg))',
+      './internal/service/activity', 'TestStreamDeletedWhileRunning')
+probe('restart creates the missing stream at startup', 'runtime.go',
+      'if _, err = activity.EnsureStream(ctx, r.JetStream, cfg.NATS); err != nil {', 'if _, err = r.JetStream.Stream(ctx, cfg.NATS.Stream.Name); err != nil {',
+      './internal/service', 'TestDeletedStreamUntilRestart')
 probe('shutdown joins gateway callbacks before closing their resources', 'runtime.go',
       'if !g.JoinCallbacks(callbackBudget, callbackGrace) {', 'if g == nil {',
       './internal/service', 'TestCloseJoinsComponentAcknowledgements')
