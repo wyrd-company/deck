@@ -42,19 +42,21 @@ Homebrew:
 brew install wyrd-company/tools/deck
 ```
 
+Homebrew's core `deck` formula is a different program with the same name; if
+it is installed, run `brew uninstall deck` first.
+
 npm, with Node.js 22+ and `tar`:
 
 ```sh
 npm install --global @wyrd-company/deck
 ```
 
-APT, after configuring the signing key and repository from [repo.wyrd.foo](https://repo.wyrd.foo):
+APT and RPM: the package is `wyrd-deck`; the command is still `deck`. Add the
+repo.wyrd.foo repository as shown in [Install](docs/user/install.md#apt), then:
 
 ```sh
 sudo apt install wyrd-deck
 ```
-
-RPM, after configuring the repository from [repo.wyrd.foo](https://repo.wyrd.foo):
 
 ```sh
 sudo dnf install wyrd-deck
@@ -71,15 +73,16 @@ paru -S wyrd-deck-bin
 ```
 
 Release archive, after downloading an archive and `checksums.txt` from the same
-[GitHub release](https://github.com/wyrd-company/deck/releases) (Linux x86-64 example):
+[GitHub release](https://github.com/wyrd-company/deck/releases) (Linux x86-64
+example). Each step runs only if the previous one succeeded:
 
 ```sh
 version=1.2.3
 archive="deck_${version}_linux_x86_64.tar.gz"
-grep "  ${archive}$" checksums.txt | sha256sum --check
-tar -xzf "$archive"
-mkdir -p "$HOME/.local/bin"
-install -m 0755 deck "$HOME/.local/bin/deck"
+grep "  ${archive}$" checksums.txt | sha256sum --check &&
+  tar -xzf "$archive" &&
+  mkdir -p "$HOME/.local/bin" &&
+  install -m 0755 deck "$HOME/.local/bin/deck"
 ```
 
 Replace the example version with the release you downloaded; macOS uses `darwin`
