@@ -51,13 +51,13 @@ npm install --global @wyrd-company/deck
 APT, after configuring the signing key and repository from [repo.wyrd.foo](https://repo.wyrd.foo):
 
 ```sh
-sudo apt install deck
+sudo apt install wyrd-deck
 ```
 
 RPM, after configuring the repository from [repo.wyrd.foo](https://repo.wyrd.foo):
 
 ```sh
-sudo dnf install deck
+sudo dnf install wyrd-deck
 ```
 
 Arch Linux, with an AUR helper:

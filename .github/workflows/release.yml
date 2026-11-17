@@ -16,7 +16,7 @@ jobs:
     timeout-minutes: 30
     env:
       # Pin publisher code and the approved deck entry in config/products.json.
-      REPO_WYRD_FOO_PUBLISHER_COMMIT: 6eb5882ed133c54c43791eb035254f8875b962a9
+      REPO_WYRD_FOO_PUBLISHER_COMMIT: e8d0be76d512eb6b9c604d942a1c21a1f3eb03e1
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:

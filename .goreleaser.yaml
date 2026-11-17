@@ -26,7 +26,10 @@ archives:
 nfpms:
   - id: packages
     ids: [deck]
-    package_name: deck
+    # Ubuntu and Debian ship Kong decK as the package deck, which also
+    # installs /usr/bin/deck; ours is wyrd-deck and conflicts with it.
+    package_name: wyrd-deck
+    conflicts: [deck]
     formats: [deb, rpm]
     vendor: Wyrd Company
     homepage: https://github.com/wyrd-company/deck
@@ -37,9 +40,9 @@ nfpms:
     file_name_template: '{{ .PackageName }}_{{ .Version }}_{{ .Os }}_{{ if eq .Arch "amd64" }}x86_64{{ else }}aarch64{{ end }}'
     contents:
       - src: LICENSE
-        dst: /usr/share/licenses/deck/LICENSE
+        dst: /usr/share/licenses/wyrd-deck/LICENSE
       - src: docs/specifications/assets/configuration/examples/client.yml
-        dst: /usr/share/doc/deck/client.example.yml
+        dst: /usr/share/doc/wyrd-deck/client.example.yml
 checksum:
   name_template: checksums.txt
 release:

@@ -44,10 +44,10 @@ products:
             command: npm install --global @wyrd-company/deck
           - method: apt
             os: [linux]
-            command: sudo apt install deck
+            command: sudo apt install wyrd-deck
           - method: rpm
             os: [linux]
-            command: sudo dnf install deck
+            command: sudo dnf install wyrd-deck
           - method: aur
             os: [linux]
             command: paru -S wyrd-deck-bin

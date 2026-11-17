@@ -24,9 +24,12 @@ FORMATS = (
 )
 
 
+# Archives keep the command name; DEB/RPM files carry the package name.
+PACKAGE_FILE_PREFIX = {"archive": "deck", "package": "wyrd-deck"}
+
 # Both must equal the deck entry in repo.wyrd.foo config/products.json.
 PACKAGE = {
-    "name": "deck",
+    "name": "wyrd-deck",
     "binary": "deck",
     "description": "Discord conversations for agents through a secret-holding service",
     "homepage": "https://github.com/wyrd-company/deck",
@@ -56,7 +59,7 @@ def sha256(path: Path) -> str:
 
 def expected_artifacts(version: str) -> list[tuple[str, str, str, str]]:
     return [
-        (kind, artifact_format, arch, f"deck_{version}_linux_{suffix}.{artifact_format}")
+        (kind, artifact_format, arch, f"{PACKAGE_FILE_PREFIX[kind]}_{version}_linux_{suffix}.{artifact_format}")
         for kind, artifact_format, arch, suffix in FORMATS
     ]
 
