@@ -9,8 +9,8 @@ assets:
 products:
   deck:
     name: deck
-    version: 0.1.2
-    docs-version: 0.1.1
+    version: 0.1.3
+    docs-version: 0.1.2
     tagline: Discord conversations for agent sessions.
     blurb: >-
       An agent-friendly Discord client that posts questions, reads replies and
