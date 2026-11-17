@@ -12,6 +12,10 @@ config:
   MD033: false
   # The README starts with badges; the embedded skill starts with agent prose.
   MD041: false
+  # intentional's changelogs repeat section headings (### Fixes) under each
+  # version; a heading must still be unique among its siblings.
+  MD024:
+    siblings_only: true
   # User pages retain a visible H1 alongside their publishing title metadata.
   MD025:
     front_matter_title: ""
