@@ -42,6 +42,27 @@ program; `wyrd-deck` conflicts with them because both install `/usr/bin/deck`.
 These packages install the CLI and an example client configuration; run the
 service with its container image.
 
+### Upgrading from the `deck` package
+
+Releases up to 0.1.2 published this package as `deck`. It conflicts with
+`wyrd-deck`, so switch packages in one step. On Debian or Ubuntu, `apt` lists
+`deck` under "will be REMOVED" and removes it once you confirm:
+
+```sh
+sudo apt install wyrd-deck
+```
+
+On Fedora or another `dnf` system, a plain `dnf install wyrd-deck` stops at
+the conflict. Swap the packages instead, which removes `deck` and installs
+`wyrd-deck`:
+
+```sh
+sudo dnf swap deck wyrd-deck
+```
+
+`sudo dnf install --allowerasing wyrd-deck` does the same. Your configuration
+is not part of either package and stays in place.
+
 ## Release archives
 
 Download an archive and `checksums.txt` from the same

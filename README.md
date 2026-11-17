@@ -60,6 +60,10 @@ RPM, after configuring the repository from [repo.wyrd.foo](https://repo.wyrd.foo
 sudo dnf install wyrd-deck
 ```
 
+Upgrading from the earlier `deck` package: on Fedora, run
+`sudo dnf swap deck wyrd-deck`; `apt install wyrd-deck` replaces it after you
+confirm. See [Install](docs/user/install.md#upgrading-from-the-deck-package).
+
 Arch Linux, with an AUR helper:
 
 ```sh
