@@ -136,6 +136,21 @@ class ReleaseSourceTest(unittest.TestCase):
         disabled = changelog and re.search(r'^\s+disable:\s*(?!false\b)\S', changelog.group(1), re.MULTILINE)
         self.assertFalse(disabled, 'changelog.disable drops --release-notes from the GitHub release')
 
+    def test_docs_publish_follows_release_or_a_manual_run_only(self):
+        workflow = (ROOT / '.github/workflows/publish-docs.yml').read_text()
+        triggers = workflow.split('\non:\n', 1)[1].split('\npermissions:', 1)[0]
+        self.assertEqual(re.findall(r'^  ([a-z_]+):', triggers, re.MULTILINE), ['workflow_run', 'workflow_dispatch'],
+                         'only a Release run or a manual run may publish docs')
+        self.assertIn('      ref:\n', triggers)
+        self.assertIn('        required: true\n', triggers)
+        guard = workflow.split('    if: >-\n', 1)[1].split('    uses:', 1)[0]
+        for condition in ("github.event_name == 'workflow_dispatch'",
+                          "github.event.workflow_run.conclusion == 'success'",
+                          "github.event.workflow_run.event == 'push'",
+                          'github.event.workflow_run.head_repository.full_name == github.repository'):
+            self.assertIn(condition, guard)
+        self.assertIn('ref: ${{ inputs.ref || github.event.workflow_run.head_branch }}', workflow)
+
     def test_workflow_gates_every_publishing_job(self):
         workflow = (ROOT / '.github/workflows/release.yml').read_text()
         compatibility = workflow.split('  compatibility:\n', 1)[1].split('  release:\n', 1)[0]

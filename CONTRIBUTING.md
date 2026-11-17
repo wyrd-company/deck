@@ -120,8 +120,9 @@ Move all three pins together when its approved contract or deck allowlist change
 Secrets needed (configure them separately; no release task creates secrets):
 `FORMULAE_PUBLISH_KEY`, the organization's SSH deploy key with write access to
 `homebrew-tools`, `NPM_TOKEN` with publish access to `@wyrd-company/deck`,
-`REPO_WYRD_FOO_PUBLISHER_APP_ID`, and `REPO_WYRD_FOO_PUBLISHER_PRIVATE_KEY`.
-GitHub supplies `GITHUB_TOKEN` for release assets and GHCR; npm provenance uses
+`REPO_WYRD_FOO_PUBLISHER_APP_ID`, `REPO_WYRD_FOO_PUBLISHER_PRIVATE_KEY`,
+`WYRD_TOOLS_DOCS_PUBLISHER_APP_ID`, and `WYRD_TOOLS_DOCS_PUBLISHER_PRIVATE_KEY`
+(the last two for the wyrd.foo documentation workflow). GitHub supplies `GITHUB_TOKEN` for release assets and GHCR; npm provenance uses
 the workflow's OIDC permission.
 
 Recover a failed Release job with GitHub's **Re-run failed jobs** on the original
@@ -147,10 +148,13 @@ regenerates the 1200×630 PNG from its [SVG source](docs/brand/social-preview.sv
 The light and dark marks, social preview and demo are declared in
 [`docs/user/docs.yml`](docs/user/docs.yml). Intentional projects the `deck` and
 `deck-docs` versions into that file. The operator establishes both baselines
-with intentional. A docs-only intent targets `deck-docs:patch`. Publishing runs only after a successful Release triggered by
-a release-tag push; docs-unit tags alone do not publish. For a docs-only release,
-include it with the next code release. A push to main publishes nothing.
-The workflow needs `WYRD_TOOLS_DOCS_PUBLISHER_APP_ID` and
+with intentional. A docs-only intent targets `deck-docs:patch`. Docs publish
+automatically after a successful Release triggered by a release-tag push. To
+publish documentation without a code release, record only `deck-docs` intents,
+run the normal plan, apply, commit and tag steps (they create only a
+`deck-docs@X.Y.Z` tag), push that tag, then run **Publish to wyrd.foo** manually
+with that tag as `ref`. Pushing a docs tag alone, or pushing to main, publishes
+nothing. The workflow needs `WYRD_TOOLS_DOCS_PUBLISHER_APP_ID` and
 `WYRD_TOOLS_DOCS_PUBLISHER_PRIVATE_KEY`, for the reusable documentation workflow.
 
 With a wyrd.foo checkout and its pnpm dependencies installed, run

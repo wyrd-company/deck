@@ -1,12 +1,21 @@
 name: Publish to wyrd.foo
 
-# Only a successful Release run from a pushed release tag publishes docs.
-# A main-branch push and a pull request publish nothing. The Release workflow
-# itself is tag-only; follow it so wyrd.foo can read its completed GitHub Release.
+# A successful Release run from a pushed release tag publishes docs, and an
+# operator can publish docs alone (for example a deck-docs@X.Y.Z tag after a
+# docs-only release) with a manual run that names the source ref. A main-branch
+# push, a pull request and a docs tag push publish nothing by themselves. The
+# Release workflow is tag-only; following it lets wyrd.foo read its completed
+# GitHub Release.
 on:
   workflow_run:
     workflows: [Release]
     types: [completed]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Tag or commit of deck to publish docs from, such as deck-docs@0.1.3
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -14,10 +23,11 @@ permissions:
 jobs:
   publish:
     if: >-
-      github.event.workflow_run.conclusion == 'success' &&
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.event == 'push' &&
-      github.event.workflow_run.head_repository.full_name == github.repository
+      github.event.workflow_run.head_repository.full_name == github.repository)
     uses: wyrd-company/wyrd.foo/.github/workflows/publish-docs.yml@v2
     with:
-      ref: ${{ github.event.workflow_run.head_branch }}
+      ref: ${{ inputs.ref || github.event.workflow_run.head_branch }}
     secrets: inherit

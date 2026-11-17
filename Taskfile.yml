@@ -258,7 +258,7 @@ tasks:
       - npm test --prefix npm
       - npm pack --dry-run --ignore-scripts ./npm
   release:guards:check:
-    desc: Prove anonymous-source, checksum, HTTPS, stable-version, handoff, npm publish and release-notes guards with restored mutations
+    desc: Prove anonymous-source, checksum, HTTPS, stable-version, handoff, npm publish, release-notes and docs-trigger guards with restored mutations
     cmds:
       - python3 scripts/prove-release-guards.py
   release:snapshot:
