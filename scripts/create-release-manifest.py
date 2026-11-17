@@ -37,7 +37,7 @@ PUBLISH = {
     "apt": {"suite": "stable", "component": "main"},
     "rpm": {"channel": "stable"},
     "aur": {
-        "package": "deck-bin",
+        "package": "wyrd-deck-bin",
     },
 }
 

@@ -32,7 +32,7 @@ class ReleaseTest(unittest.TestCase):
     def test_six_linux_assets_and_exact_formula_hashes(self):
         value = manifest.create_manifest(self.root, '1.2.3', 'a' * 40)
         self.assertEqual(len(value['artifacts']), 6)
-        self.assertEqual(value['publish']['aur']['package'], 'deck-bin')
+        self.assertEqual(value['publish']['aur']['package'], 'wyrd-deck-bin')
         for artifact in value['artifacts']:
             self.assertEqual(artifact['sha256'], manifest.sha256(self.root / artifact['filename']))
         rendered = formula.render(self.root, '1.2.3')

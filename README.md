@@ -63,7 +63,7 @@ sudo dnf install deck
 Arch Linux, with an AUR helper:
 
 ```sh
-paru -S deck-bin
+paru -S wyrd-deck-bin
 ```
 
 Release archive, after downloading an archive and `checksums.txt` from the same

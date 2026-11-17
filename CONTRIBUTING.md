@@ -111,7 +111,7 @@ A main-branch push publishes nothing. A release-tag push:
    Homebrew formula to `wyrd-company/homebrew-tools`, and version-matched
    `@wyrd-company/deck` npm wrapper.
 4. Submits the retained immutable manifest to repo.wyrd.foo, which publishes
-   APT/RPM packages and renders/publishes `deck-bin` for AUR.
+   APT/RPM packages and renders/publishes `wyrd-deck-bin` for AUR.
 5. After Release succeeds, publishes `docs/user/` and product metadata to
    wyrd.foo through its v2 reusable workflow.
 

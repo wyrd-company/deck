@@ -8,7 +8,7 @@ vars:
   LDFLAGS: -s -w -X main.Version={{.VERSION}}
   IMAGE: ghcr.io/wyrd-company/deck
   GORELEASER: go run github.com/goreleaser/goreleaser/v2@v2.17.0
-  PUBLISHER_COMMIT: aa6772776dbe03e974180d3057b5e8868fa3a095
+  PUBLISHER_COMMIT: 6eb5882ed133c54c43791eb035254f8875b962a9
   MARKDOWNLINT: npx --yes markdownlint-cli2@0.18.1
   YAMLLINT: uvx --from yamllint==1.37.1 yamllint
   ACTIONLINT: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
