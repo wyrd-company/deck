@@ -119,6 +119,43 @@ docker logs deck
 docker stop deck
 ```
 
+### Compose
+
+The same container as a Compose service, with the same host paths, ports and
+stop timeout. Save it as `compose.yaml`:
+
+```yaml
+services:
+  deck:
+    image: ghcr.io/wyrd-company/deck:1.2.3
+    container_name: deck
+    restart: unless-stopped
+    stop_grace_period: 15s
+    ports:
+      - "2222:2222"
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - type: bind
+        source: /srv/deck/config.yml
+        target: /etc/deck/config.yml
+        read_only: true
+      - type: bind
+        source: /run/openbao
+        target: /run/openbao
+        read_only: true
+```
+
+The image's HEALTHCHECK applies; Compose needs no `healthcheck` entry. If NATS
+runs in the same Compose project, add it as another service and point the
+configured NATS URLs at its service name, such as `nats://nats:4222`.
+
+```sh
+docker compose up --detach
+docker compose exec deck deck service health --config /etc/deck/config.yml
+docker compose logs deck
+docker compose down
+```
+
 ## Retention
 
 `nats.stream.max_age` keeps activity for seven days by default. Retained button
