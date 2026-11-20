@@ -2,6 +2,7 @@
 """Prove the acceptance checks by breaking one input at a time and restoring it."""
 
 from pathlib import Path
+import re
 import subprocess
 import sys
 
@@ -11,7 +12,9 @@ ROOT = Path(__file__).resolve().parents[1]
 def rejected(path, replacement, command, expected):
     original = path.read_bytes()
     try:
-        path.write_bytes(replacement(original))
+        changed = replacement(original)
+        assert changed != original, f"Mutation did not change {path}"
+        path.write_bytes(changed)
         result = subprocess.run(command, cwd=ROOT, capture_output=True, text=True)
         assert result.returncode != 0, f"Mutation survived: {path}"
         assert expected in result.stdout + result.stderr, result.stdout + result.stderr
@@ -38,10 +41,10 @@ rejected(ROOT / "docs/user/offline-tutorial.md",
          lambda data: data + b"\n[Broken fragment](events.md#absent-heading)\n",
          check, "Missing fragment")
 rejected(ROOT / "docs/user/docs.yml",
-         lambda data: data.replace(b"  - offline-tutorial\n", b"", 1),
+         lambda data: re.sub(rb"(?m)^ *- offline-tutorial\n", b"", data, count=1),
          check, "Navigation includes every published page")
 rejected(ROOT / "docs/user/docs.yml",
-         lambda data: data.replace(b"- examples/message.json\n", b"", 1),
+         lambda data: re.sub(rb"(?m)^ *- examples/message.json\n", b"", data, count=1),
          check, "Download not published")
 subprocess.run(generate, cwd=ROOT, check=True)
 subprocess.run(check, cwd=ROOT, check=True)
