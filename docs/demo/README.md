@@ -17,3 +17,14 @@ directory, verifies JSON results and cursor changes, resets the store, then
 records. It deletes that directory on exit, including failures. The adapter has
 no network dialer or credential-reading implementation. It cannot use the live
 bot fixture, and the recording does not depend on a session's ambient identifiers.
+
+## Acceptance captures
+
+`bash docs/demo/capture-help.sh` builds the real CLI and renders its `--help`
+output to `docs/user/assets/cli-help.png` with VHS and DejaVu Sans Mono,
+using the committed `help.tape`.
+`task demo` regenerates `docs/user/assets/demo.gif`. Both use synthetic inputs.
+
+The acceptance branch can also record without Docker: `bash docs/demo/record-local.sh`
+uses installed VHS 0.12.1, ttyd, Chromium and ffmpeg with the same committed tape
+and fixture, after checking the fixture through `task demo:check`.

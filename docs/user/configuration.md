@@ -7,8 +7,8 @@ order: 2
 # Configure deck
 
 The CLI and service each read one YAML file. Start with the complete annotated
-[client example](https://github.com/wyrd-company/deck/blob/main/docs/specifications/assets/configuration/examples/client.yml)
-or [service example](https://github.com/wyrd-company/deck/blob/main/docs/specifications/assets/configuration/examples/service.yml)
+[client example](examples/client.yml)
+or [service example](examples/service.yml)
 linked above, or use the copies included in a release archive. The examples
 contain public sample keys and invented IDs; replace them with your own before
 connecting.
@@ -111,4 +111,12 @@ All application settings come from these files. deck does not interpolate
 `HOME`, or `XDG_CONFIG_HOME` as configuration. Only the names explicitly listed
 in `session.variables` are read for session identity. The complete field and
 validation contract is the
-[configuration specification](https://github.com/wyrd-company/deck/blob/main/docs/specifications/configuration.yml).
+[client schema reference](client-reference.md) and
+[service schema reference](service-reference.md).
+
+![The real deck command interface](assets/cli-help.png)
+
+![Synthetic offline conversation through deck](assets/demo.gif)
+
+The recording follows posting, listening, reading, replying and resolving a
+local session; the [walkthrough](offline-tutorial.md) describes each action.

@@ -26,11 +26,11 @@ key:
 ```
 
 This is part of the client configuration, not a complete file. See the
-[annotated client example](https://github.com/wyrd-company/deck/blob/main/docs/specifications/assets/configuration/examples/client.yml)
+[annotated client example](examples/client.yml)
 for the other required fields. For a direct Vault connection, configure
 `vault.auth.token_file` or `vault.auth.approle`; a socket proxy can authenticate
 requests itself. deck reads no `VAULT_*`, `BAO_*`, proxy, or TLS environment
-settings. See the [configuration specification](https://github.com/wyrd-company/deck/blob/main/docs/specifications/configuration.yml)
+settings. See the [client schema reference](client-reference.md)
 for supported addresses, CA configuration and authentication.
 
 The client's Vault policy needs `read` on `identities/keys/agent` and `update`
@@ -99,5 +99,12 @@ service's configured public line; its configured name can stay the same. A
 connection pins the Transit version it first read, so a concurrent rotation
 cannot change the identity signing that handshake. After rotating the host
 key, update the clients' pins before connecting. See the
-[transport design](https://github.com/wyrd-company/deck/blob/main/docs/technical-designs/transport.yml) for protocol and timeout
+[event delivery and trust](delivery-explanation.md) for protocol and timeout
 details.
+
+![The real deck command interface](assets/cli-help.png)
+
+![Synthetic offline conversation through deck](assets/demo.gif)
+
+The recording follows posting, listening, reading, replying and resolving a
+local session; the [walkthrough](offline-tutorial.md) describes each action.

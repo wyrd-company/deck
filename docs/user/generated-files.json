@@ -1,0 +1,17 @@
+[
+  "activity-reference.md",
+  "api-reference.md",
+  "cli-reference.md",
+  "client-reference.md",
+  "definitions/activity.schema.json",
+  "definitions/client.schema.json",
+  "definitions/deck/v1/deck.proto",
+  "definitions/service.schema.json",
+  "examples/client.yml",
+  "examples/component.json",
+  "examples/deck-post.json",
+  "examples/message.json",
+  "examples/poll-vote.json",
+  "examples/service.yml",
+  "service-reference.md"
+]

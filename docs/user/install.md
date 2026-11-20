@@ -51,7 +51,7 @@ their own `deck` and `deck-bin` packages, which are a different program;
 The APT and RPM packages also install an example client configuration at
 `/usr/share/doc/wyrd-deck/client.example.yml`. The AUR package installs the
 CLI only; start from the
-[annotated client example](https://github.com/wyrd-company/deck/blob/main/docs/specifications/assets/configuration/examples/client.yml).
+[annotated client example](examples/client.yml).
 Run the service with its container image.
 
 ### APT
@@ -135,7 +135,7 @@ example configurations, README and license.
 ## Configure the CLI
 
 Copy the archive's `client.example.yml` or the repository's
-[annotated example](https://github.com/wyrd-company/deck/blob/main/docs/specifications/assets/configuration/examples/client.yml)
+[annotated example](examples/client.yml)
 to `~/.config/deck/config.yml`, edit its service address, Transit identity and
 channel settings, then validate it:
 
@@ -152,7 +152,7 @@ registration and grants, and [posting](posting.md) to start a conversation.
 
 The image is `ghcr.io/wyrd-company/deck`, for Linux amd64 and arm64. Pin an exact
 release tag for a deployment. Configure the
-[service example](https://github.com/wyrd-company/deck/blob/main/docs/specifications/assets/configuration/examples/service.yml),
+[service example](examples/service.yml),
 then mount it read-only:
 
 ```sh
@@ -173,7 +173,14 @@ and needs no data volume. The default exposed ports are SSH 2222 and health 8080
 The image runs `deck service start --config /etc/deck/config.yml`. Its healthcheck
 runs `deck service health --config /etc/deck/config.yml` every 10 seconds, with
 three retries and a 60-second startup period. Health requires every gateway,
-NATS and the activity index to be ready. The exact behavior is specified by the
-[service design](https://github.com/wyrd-company/deck/blob/main/docs/technical-designs/service.yml).
+NATS and the activity index to be ready. See the
+[service operations guide](service.md) for recovery steps.
 
 Continue with [your first message](overview.md#send-your-first-message).
+
+![The real deck command interface](assets/cli-help.png)
+
+![Synthetic offline conversation through deck](assets/demo.gif)
+
+The recording follows posting, listening, reading, replying and resolving a
+local session; the [walkthrough](offline-tutorial.md) describes each action.

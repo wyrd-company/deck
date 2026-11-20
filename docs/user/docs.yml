@@ -6,6 +6,18 @@ assets:
   - assets/icon-dark.svg
   - assets/favicon.svg
   - assets/social-preview.png
+  - assets/cli-help.png
+  - generated-files.json
+  - definitions/client.schema.json
+  - definitions/service.schema.json
+  - definitions/activity.schema.json
+  - definitions/deck/v1/deck.proto
+  - examples/client.yml
+  - examples/service.yml
+  - examples/component.json
+  - examples/deck-post.json
+  - examples/message.json
+  - examples/poll-vote.json
 products:
   deck:
     name: deck
@@ -58,3 +70,41 @@ products:
         install:
           - method: docker
             command: docker pull ghcr.io/wyrd-company/deck:latest
+    nav:
+    - section: Users
+      groups:
+      - group: Tutorials
+        pages:
+        - offline-tutorial
+        - overview
+      - group: How-to guides
+        pages:
+        - install
+        - configuration
+        - authentication
+        - posting
+        - reading
+        - service
+      - group: Explanation
+        pages:
+        - sessions-explanation
+      - group: Reference
+        pages:
+        - cli-reference
+        - client-reference
+        - service-reference
+    - section: Developers
+      groups:
+      - group: Tutorials
+        pages:
+        - validate-event-tutorial
+      - group: How-to guides
+        pages:
+        - events
+      - group: Explanation
+        pages:
+        - delivery-explanation
+      - group: Reference
+        pages:
+        - activity-reference
+        - api-reference

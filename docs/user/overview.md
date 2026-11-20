@@ -20,7 +20,7 @@ service for you, ask them for its SSH address and public host-key line, your bot
 name and a parent channel ID they can grant you. The
 [authentication guide](authentication.md) explains the key exchange and policies.
 
-1. Save the [annotated client example](https://github.com/wyrd-company/deck/blob/main/docs/specifications/assets/configuration/examples/client.yml)
+1. Save the [annotated client example](examples/client.yml)
    in a writable directory as `client.yml`. Homebrew and npm install only the
    executable, so use that link to obtain the example. APT/RPM packages provide
    `/usr/share/doc/wyrd-deck/client.example.yml`; release archives include
@@ -85,3 +85,10 @@ authentication, host-key and local failures; 2 means invalid input; 3 means a
 target or grant refusal; 4 means unavailable or an unknown send outcome; and 5
 means a listen timeout. Inspect an unknown send before retrying it with
 the nonce printed in its diagnostic.
+
+![The real deck command interface](assets/cli-help.png)
+
+![Synthetic offline conversation through deck](assets/demo.gif)
+
+The recording follows posting, listening, reading, replying and resolving a
+local session; the [walkthrough](offline-tutorial.md) describes each action.

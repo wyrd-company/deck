@@ -162,3 +162,19 @@ With a wyrd.foo checkout and its pnpm dependencies installed, run
 assets, links and publishing metadata without publishing. Before the initial
 release baselines exist, this reports the missing tags/changelog as warnings.
 The publisher uses strict checks when a release actually publishes.
+
+## Scratch acceptance for skills issue 27
+
+This branch is an unmerged acceptance exercise, not deck's compliance delivery.
+`task docs:user:generate` generates schema, API and parser-help reference, raw
+definition copies, and example downloads under `docs/user/`.
+`task docs:user:check` detects missing, stale and obsolete generated output,
+checks audience/kind navigation and downloadable assets, rejects design links,
+and validates the published examples. `task check` reaches it via `docs:check`.
+Run the wyrd.foo publisher in offline validation mode separately, with
+`task docs:validate WYRD_FOO_DIR=/path/to/wyrd.foo -- --offline`.
+The [capture scripts](docs/demo/README.md) reproduce the embedded terminal image
+and synthetic conversation recording. The native recorder accepts
+`VHS_NO_SANDBOX=true` in a container and `LD_LIBRARY_PATH` when Chromium
+needs local libraries. `uv run --no-project --with pyyaml==6.0.3 --with
+jsonschema==4.26.0 python3 scripts/prove-user-docs.py` proves seven check guards.

@@ -7,8 +7,8 @@ order: 6
 The service publishes activity for touched Discord threads to the configured
 JetStream subject prefix, followed by server, channel and thread IDs: messages,
 button and select-menu uses, and poll votes. Threads nobody touched through deck
-publish nothing. The [events specification](https://github.com/wyrd-company/deck/blob/main/docs/specifications/events.yml)
-defines the payload and delivery guarantees.
+publish nothing. The [activity reference](activity-reference.md)
+defines the payload; [event delivery](delivery-explanation.md) explains retries.
 
 Delivery is at least once. A message can arrive twice, for example when the
 service reads back messages it missed while stopped, so consumers should
@@ -35,7 +35,7 @@ payloads exit 2. Resolve has no unread report.
 Keep the relay's configured `store.path` pointed at the same local store as the
 sessions. A thread is associated only once the first successful send result has
 been recorded, so activity during that first send can be unread without yet
-resolving to a session. The [client design](https://github.com/wyrd-company/deck/blob/main/docs/technical-designs/client.yml)
+resolving to a session. The [sessions explanation](sessions-explanation.md)
 explains that window and the local storage contract.
 
 ## Subscribe and resolve
@@ -60,7 +60,7 @@ snake_case fields and string IDs. A message activity looks like:
 
 Other activities carry `component` or `poll_vote` instead of `message`; inspect
 `component.custom_id` or `poll_vote.removed` in the
-[event schema](https://github.com/wyrd-company/deck/blob/main/docs/specifications/assets/events/activity.schema.json).
+[event schema](definitions/activity.schema.json).
 Use a durable JetStream consumer for a relay that must catch up after downtime;
 a plain NATS subscription sees only live traffic. Acknowledge an event only
 after the wake request has succeeded, and deduplicate redelivery by `id`.

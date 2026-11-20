@@ -198,5 +198,12 @@ files are gone, so waiting for it is enough. This has not been verified on a
 clustered NATS server. A service that restarts while someone else's deletion is
 still running can still collide with it.
 
-The complete startup, retention and health contract is in the
-[service design](https://github.com/wyrd-company/deck/blob/main/docs/technical-designs/service.yml).
+For the accepted retention and connection settings, see the generated
+[service schema reference](service-reference.md).
+
+![The real deck command interface](assets/cli-help.png)
+
+![Synthetic offline conversation through deck](assets/demo.gif)
+
+The recording follows posting, listening, reading, replying and resolving a
+local session; the [walkthrough](offline-tutorial.md) describes each action.

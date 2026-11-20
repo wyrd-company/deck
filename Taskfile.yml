@@ -169,10 +169,20 @@ tasks:
       WYRD_FOO_DIR: '{{.WYRD_FOO_DIR | default "../wyrd.foo"}}'
     cmds:
       - node "{{.WYRD_FOO_DIR}}/publisher/cli.ts" validate . {{.CLI_ARGS}}
+  docs:user:generate:
+    desc: Generate acceptance reference and published definitions
+    cmds:
+      - python3 scripts/user-docs.py
+  docs:user:check:
+    desc: Detect drift in generated user documentation
+    cmds:
+      - python3 scripts/user-docs.py --check
+      - uv run --no-project --with pyyaml==6.0.3 --with jsonschema==4.26.0 python3 scripts/check-user-docs.py
   docs:check:
     desc: Validate design documents, schemas, fixtures and proto
     cmds:
       - bash docs/check.sh
+      - task: docs:user:check
   config:check:
     desc: Validate both annotated example configs without network access
     cmds:

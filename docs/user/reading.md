@@ -45,5 +45,12 @@ Text output escapes control characters in titles, names and content. Message
 line breaks remain indented; JSON output preserves the original values.
 
 A listen timeout exits 5 and an interrupt exits 130. The
-[CLI specification](https://github.com/wyrd-company/deck/blob/main/docs/specifications/command-line-interface.yml) defines the
-output, other exit statuses and cursor guarantees.
+[command reference](cli-reference.md) lists the
+commands and exit statuses; [sessions](sessions-explanation.md) explains read cursors.
+
+![The real deck command interface](assets/cli-help.png)
+
+![Synthetic offline conversation through deck](assets/demo.gif)
+
+The recording follows posting, listening, reading, replying and resolving a
+local session; the [walkthrough](offline-tutorial.md) describes each action.

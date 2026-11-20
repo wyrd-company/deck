@@ -106,10 +106,16 @@ channel must be checked in Discord before choosing a new nonce.
 
 Each session command reports unread activity on stderr, or in `unread` with
 `--json`. Use [reading](reading.md) to handle replies. `deck skill` prints the
-embedded agent instructions. The [CLI specification](https://github.com/wyrd-company/deck/blob/main/docs/specifications/command-line-interface.yml)
-defines every flag and output field; `deck post --help` and `deck reply --help`
+embedded agent instructions. The [command reference](cli-reference.md)
+lists commands and flags; `deck post --help` and `deck reply --help`
 are available without configuration.
 
-The [API specification](https://github.com/wyrd-company/deck/blob/main/docs/specifications/grpc-api.yml) defines content limits,
-nonce behavior and response fields. [Configuration](https://github.com/wyrd-company/deck/blob/main/docs/specifications/configuration.yml)
-defines personas and bot grants.
+The [API reference](api-reference.md) describes content and response fields; this guide explains repeat behavior. [Client configuration](client-reference.md) defines personas, and
+[service configuration](service-reference.md) defines bot grants.
+
+![The real deck command interface](assets/cli-help.png)
+
+![Synthetic offline conversation through deck](assets/demo.gif)
+
+The recording follows posting, listening, reading, replying and resolving a
+local session; the [walkthrough](offline-tutorial.md) describes each action.
