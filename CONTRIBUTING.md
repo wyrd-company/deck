@@ -170,11 +170,20 @@ This branch is an unmerged acceptance exercise, not deck's compliance delivery.
 definition copies, and example downloads under `docs/user/`.
 `task docs:user:check` detects missing, stale and obsolete generated output,
 checks audience/kind navigation and downloadable assets, rejects design links,
-and validates the published examples. `task check` reaches it via `docs:check`.
-Run the wyrd.foo publisher in offline validation mode separately, with
-`task docs:validate WYRD_FOO_DIR=/path/to/wyrd.foo -- --offline`.
+and validates the published examples. It calls the actual publisher's `computeRepo`
+and fails if any listed asset is absent from its computed product files.
+`task check` reaches it via `docs:check`; supply a wyrd.foo checkout with its
+dependencies installed: `task check WYRD_FOO_DIR=/path/to/wyrd.foo`. Direct script
+invocations need the same path in the `WYRD_FOO_DIR` environment variable. CI
+prepares a pinned publisher snapshot. The publisher only computes files here;
+the check writes no published content.
+
+From that wyrd.foo checkout, run `task validate:repo -- /path/to/deck --offline`
+separately. Warnings do not fail validation. Before pushing a release tag use
+`task validate:repo -- /path/to/deck --strict`; strict validation reads GitHub
+Releases and cannot use `--offline`.
 The [capture scripts](docs/demo/README.md) reproduce the embedded terminal image
 and synthetic conversation recording. The native recorder accepts
 `VHS_NO_SANDBOX=true` in a container and `LD_LIBRARY_PATH` when Chromium
 needs local libraries. `uv run --no-project --with pyyaml==6.0.3 --with
-jsonschema==4.26.0 python3 scripts/prove-user-docs.py` proves seven check guards.
+jsonschema==4.26.0 python3 scripts/prove-user-docs.py` proves eight check guards.

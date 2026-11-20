@@ -2,8 +2,10 @@
 """Check the acceptance pages, published assets and example payloads."""
 
 import json
+import os
 from pathlib import Path
 import re
+import subprocess
 
 from jsonschema import Draft202012Validator, FormatChecker
 import yaml
@@ -67,4 +69,8 @@ for example in sorted((ROOT / "examples").glob("*.json")):
 for name in ("client", "service"):
     schema = json.loads((ROOT / f"definitions/{name}.schema.json").read_text())
     Draft202012Validator(schema, format_checker=FormatChecker()).validate(yaml.safe_load((ROOT / f"examples/{name}.yml").read_text()))
+publisher = os.environ.get("WYRD_FOO_DIR")
+assert publisher, "Set WYRD_FOO_DIR to a wyrd.foo checkout with installed dependencies"
+subprocess.run(["node", str(ROOT.parents[1] / "scripts/check-published-assets.mjs"),
+                str(ROOT.parents[1]), str(Path(publisher).resolve())], check=True)
 print(f"PASS: {len(pages)} pages in audience/kind navigation; {len(assets)} assets exist; no design links; all published examples validate")

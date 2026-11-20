@@ -7,7 +7,6 @@ assets:
   - assets/favicon.svg
   - assets/social-preview.png
   - assets/cli-help.png
-  - generated-files.json
   - definitions/client.schema.json
   - definitions/service.schema.json
   - definitions/activity.schema.json

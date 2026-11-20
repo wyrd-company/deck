@@ -174,7 +174,11 @@ tasks:
     cmds:
       - python3 scripts/user-docs.py
   docs:user:check:
-    desc: Detect drift in generated user documentation
+    desc: Detect drift and verify actual published user documentation
+    vars:
+      WYRD_FOO_DIR: '{{.WYRD_FOO_DIR | default "../wyrd.foo"}}'
+    env:
+      WYRD_FOO_DIR: '{{.WYRD_FOO_DIR}}'
     cmds:
       - python3 scripts/user-docs.py --check
       - uv run --no-project --with pyyaml==6.0.3 --with jsonschema==4.26.0 python3 scripts/check-user-docs.py

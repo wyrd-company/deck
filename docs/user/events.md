@@ -60,7 +60,10 @@ snake_case fields and string IDs. A message activity looks like:
 
 Other activities carry `component` or `poll_vote` instead of `message`; inspect
 `component.custom_id` or `poll_vote.removed` in the
-[event schema](definitions/activity.schema.json).
+[event schema](definitions/activity.schema.json). Download complete examples for
+[a component interaction](examples/component.json),
+[deck's own post](examples/deck-post.json) and
+[a poll vote](examples/poll-vote.json) to validate your consumer against each kind.
 Use a durable JetStream consumer for a relay that must catch up after downtime;
 a plain NATS subscription sees only live traffic. Acknowledge an event only
 after the wake request has succeeded, and deduplicate redelivery by `id`.

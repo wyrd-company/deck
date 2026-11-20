@@ -46,6 +46,9 @@ rejected(ROOT / "docs/user/docs.yml",
 rejected(ROOT / "docs/user/docs.yml",
          lambda data: re.sub(rb"(?m)^ *- examples/message.json\n", b"", data, count=1),
          check, "Download not published")
+rejected(ROOT / "docs/user/docs.yml",
+         lambda data: data.replace(b"assets:\n", b"assets:\n  - generated-files.json\n", 1),
+         check, "Listed asset not published: generated-files.json")
 subprocess.run(generate, cwd=ROOT, check=True)
 subprocess.run(check, cwd=ROOT, check=True)
-print("PASS: 7/7 targeted mutations rejected; restored sources and outputs pass")
+print("PASS: 8/8 targeted mutations rejected; restored sources and outputs pass")

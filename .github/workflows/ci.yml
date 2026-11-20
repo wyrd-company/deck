@@ -36,7 +36,15 @@ jobs:
             --output "$RUNNER_TEMP/openbao.tar.gz"
           echo "582b1f3c2fdc5afd443b2d57a225ef654de75adea609fdb66731fd582a9cbc96  $RUNNER_TEMP/openbao.tar.gz" | sha256sum --check
           tar -xzf "$RUNNER_TEMP/openbao.tar.gz" -C "$(go env GOPATH)/bin" bao
+      - name: Prepare the publisher used by the scratch documentation check
+        run: |
+          git clone --filter=blob:none --no-checkout https://github.com/wyrd-company/wyrd.foo.git "$RUNNER_TEMP/wyrd.foo"
+          git -C "$RUNNER_TEMP/wyrd.foo" checkout 7730de01a7c2cad51f9abe906e31865d9ce7fa0f
+          npm install --global pnpm@12.16.1
+          pnpm --dir "$RUNNER_TEMP/wyrd.foo" install --frozen-lockfile --ignore-scripts
       - name: Validate repository
+        env:
+          WYRD_FOO_DIR: ${{ runner.temp }}/wyrd.foo
         run: task check
 
   release-snapshot:
