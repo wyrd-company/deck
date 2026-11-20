@@ -79,6 +79,7 @@ def expected():
     commands = re.findall(r'"([a-z-]+)":\s*"[^"]*"', options)
     commands += ["config validate", "config key", "service start", "service validate", "service health", "service host-key"]
     body = "Generated from the running CLI's parser and help.\n\n"
+    body += "![The real deck help interface](assets/cli-help.png)\n\n"
     with tempfile.TemporaryDirectory(prefix="agent.", dir="/tmp") as temporary:
         binary = Path(temporary) / "deck"
         subprocess.run(["go", "build", "-o", str(binary), "./cmd/deck"], cwd=ROOT, check=True)

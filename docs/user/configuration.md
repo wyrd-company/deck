@@ -113,10 +113,3 @@ in `session.variables` are read for session identity. The complete field and
 validation contract is the
 [client schema reference](client-reference.md) and
 [service schema reference](service-reference.md).
-
-![The real deck command interface](assets/cli-help.png)
-
-![Synthetic offline conversation through deck](assets/demo.gif)
-
-The recording follows posting, listening, reading, replying and resolving a
-local session; the [walkthrough](offline-tutorial.md) describes each action.

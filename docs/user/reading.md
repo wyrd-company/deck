@@ -47,10 +47,3 @@ line breaks remain indented; JSON output preserves the original values.
 A listen timeout exits 5 and an interrupt exits 130. The
 [command reference](cli-reference.md) lists the
 commands and exit statuses; [sessions](sessions-explanation.md) explains read cursors.
-
-![The real deck command interface](assets/cli-help.png)
-
-![Synthetic offline conversation through deck](assets/demo.gif)
-
-The recording follows posting, listening, reading, replying and resolving a
-local session; the [walkthrough](offline-tutorial.md) describes each action.

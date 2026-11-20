@@ -177,10 +177,3 @@ NATS and the activity index to be ready. See the
 [service operations guide](service.md) for recovery steps.
 
 Continue with [your first message](overview.md#send-your-first-message).
-
-![The real deck command interface](assets/cli-help.png)
-
-![Synthetic offline conversation through deck](assets/demo.gif)
-
-The recording follows posting, listening, reading, replying and resolving a
-local session; the [walkthrough](offline-tutorial.md) describes each action.

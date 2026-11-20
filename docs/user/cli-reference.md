@@ -7,6 +7,8 @@ product: deck
 
 Generated from the running CLI's parser and help.
 
+![The real deck help interface](assets/cli-help.png)
+
 ## deck
 
 ```text

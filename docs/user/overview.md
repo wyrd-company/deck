@@ -85,10 +85,3 @@ authentication, host-key and local failures; 2 means invalid input; 3 means a
 target or grant refusal; 4 means unavailable or an unknown send outcome; and 5
 means a listen timeout. Inspect an unknown send before retrying it with
 the nonce printed in its diagnostic.
-
-![The real deck command interface](assets/cli-help.png)
-
-![Synthetic offline conversation through deck](assets/demo.gif)
-
-The recording follows posting, listening, reading, replying and resolving a
-local session; the [walkthrough](offline-tutorial.md) describes each action.

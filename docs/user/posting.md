@@ -112,10 +112,3 @@ are available without configuration.
 
 The [API reference](api-reference.md) describes content and response fields; this guide explains repeat behavior. [Client configuration](client-reference.md) defines personas, and
 [service configuration](service-reference.md) defines bot grants.
-
-![The real deck command interface](assets/cli-help.png)
-
-![Synthetic offline conversation through deck](assets/demo.gif)
-
-The recording follows posting, listening, reading, replying and resolving a
-local session; the [walkthrough](offline-tutorial.md) describes each action.

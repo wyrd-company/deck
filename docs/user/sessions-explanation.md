@@ -18,7 +18,5 @@ during a session's first send may already be unread before that session can be
 resolved. The store belongs on the client's machine: the service holds grants
 and thread activity, while the client owns session affinity and read cursors.
 
-![The deck command interface](assets/cli-help.png)
-
 See [reading](reading.md) to work with unread messages and
 [the event delivery model](delivery-explanation.md) to build a relay.

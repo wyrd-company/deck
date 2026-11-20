@@ -101,10 +101,3 @@ cannot change the identity signing that handshake. After rotating the host
 key, update the clients' pins before connecting. See the
 [event delivery and trust](delivery-explanation.md) for protocol and timeout
 details.
-
-![The real deck command interface](assets/cli-help.png)
-
-![Synthetic offline conversation through deck](assets/demo.gif)
-
-The recording follows posting, listening, reading, replying and resolving a
-local session; the [walkthrough](offline-tutorial.md) describes each action.
